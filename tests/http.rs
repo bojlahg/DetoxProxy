@@ -527,6 +527,38 @@ async fn log_contains_payload_id_not_pii() {
     assert!(!text.contains("7707083893"), "log leaked PII: {text}");
 }
 
+#[tokio::test]
+async fn log_contains_stage_timings() {
+    let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = buf.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || {
+                let w = writer.clone();
+                std::io::BufWriter::new(TestWriter(w))
+            })
+            .json()
+            .finish(),
+    );
+
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+    post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "timing-check"}),
+        &[],
+    )
+    .await;
+
+    std::thread::sleep(Duration::from_millis(100));
+    let data = buf.lock().unwrap().clone();
+    let text = String::from_utf8_lossy(&data).to_string();
+    assert!(text.contains("detect_us"), "log missing detect_us: {text}");
+    assert!(text.contains("total_us"), "log missing total_us: {text}");
+    assert!(!text.contains("7707083893"), "log leaked PII: {text}");
+}
+
 struct TestWriter(Arc<std::sync::Mutex<Vec<u8>>>);
 impl std::io::Write for TestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
