@@ -803,3 +803,55 @@ async fn graceful_shutdown() {
         .await
         .expect("server did not shut down by itself");
 }
+
+#[tokio::test]
+async fn server_does_not_shutdown_without_signal() {
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+  shutdown_timeout_ms: 300
+  shutdown_grace_ms: 50
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let state = build_state(cfg);
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let listener = listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    });
+    let serve_task = tokio::spawn(async move {
+        detox_proxy::server::serve_with_signal(listener, app, state, std::future::pending::<()>())
+            .await
+            .expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let (st, _) = get(&base, "/healthz").await;
+    assert_eq!(st, 200, "server must stay alive without a shutdown signal");
+    assert!(!serve_task.is_finished(), "server shut down without a signal");
+}

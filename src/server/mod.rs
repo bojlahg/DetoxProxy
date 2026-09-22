@@ -1101,21 +1101,30 @@ where
     let grace = Duration::from_millis(state.config.load().server.shutdown_grace_ms);
     let timeout = Duration::from_millis(state.config.load().server.shutdown_timeout_ms);
 
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let signal_state = state.clone();
     let signal = async move {
         signal.await;
         signal_state.shutting_down.store(true, Ordering::SeqCst);
         tracing::info!("shutdown started");
         tokio::time::sleep(grace).await;
+        let _ = tx.send(());
     };
 
     let processed_before = state.processed.load(Ordering::SeqCst);
     let serve = axum::serve(listener, app).with_graceful_shutdown(signal);
-    let result = tokio::time::timeout(timeout, serve).await;
+    let serve_task = tokio::spawn(async move { serve.await });
+
+    // Wait for the shutdown signal. Without it the server runs indefinitely.
+    let _ = rx.await;
+
+    // The timeout applies only after the signal: wait for in-flight requests to drain.
+    let result = tokio::time::timeout(timeout, serve_task).await;
     let processed_after = state.processed.load(Ordering::SeqCst);
     tracing::info!(processed = processed_after - processed_before, "shutdown complete");
     match result {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(e.into()),
         Ok(Err(e)) => Err(e.into()),
         Err(_) => Ok(()),
     }

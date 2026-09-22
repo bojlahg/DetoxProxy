@@ -240,7 +240,6 @@ impl Detector {
                     continue;
                 }
             }
-            let t0 = std::time::Instant::now();
             match spec.id.as_str() {
                 "fio" => candidates.extend(self.detect_fio(text, opts, spec)),
                 "birth_date" | "passport_issue_date" => {
@@ -253,7 +252,6 @@ impl Detector {
                 "card_holder" => candidates.extend(self.detect_card_holder(text, opts, spec)),
                 _ => self.detect_regex_type(text, opts, spec, &mut candidates),
             }
-            eprintln!("DBGTIME {} {:?}", spec.id, t0.elapsed());
         }
 
         self.apply_neighbor_boost(text, &mut candidates);
