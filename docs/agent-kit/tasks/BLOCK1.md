@@ -903,3 +903,34 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/detect/mod.rs, src/morph/mod.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T09b">
+Привет. Плотный текст обрабатывается нелинейно: «Клиент ИНН 7707083893. » × 40 — 1 мс, × 400 — 38 мс (release, `tests/perf_guard.rs`, сейчас падает с ratio 38). На сервере из-за этого кейс `long` в check_process даёт p99 выше 100 мс.
+
+Причина найдена: несколько проверок контекста для каждого кандидата берут **весь текст до него** (`&text[..start]`), часто ещё и с `to_lowercase()`. На 400 сущностях это 400 проходов по всё более длинному префиксу — квадрат.
+
+Места (src/detect/mod.rs):
+1. `has_cvv_pin_marker` — `text[..start].to_lowercase()` + `rfind`. Маркер по правилу не дальше 30 символов: хватит `context_window_before(text, start, 60)`.
+2. `nearest_address_marker` — то же, `text[..start].to_lowercase()`. Замени на `context_window_before(text, start, 200)`.
+3. `strong_biography_marker_before` — `split_whitespace().collect()` по всему префиксу ради последних 4 слов. Бери окно `context_window_before(text, start, 100)` и уже из него 4 слова.
+4. `in_guillemets` — `rfind('«')` / `find('»')` по всему тексту до и после. Ограничь окном 80 символов в каждую сторону (`context_window_before` / `context_window_after`), логика «открывающая без закрывающей между» та же, но внутри окна.
+5. `extend_with_city` — `rfind("г.")` по всему префиксу. Окно 60 символов.
+6. `field_label_matches` — `rfind` границы предложения по всему префиксу; ограничь окном 200 символов (если границы в окне нет — начало окна).
+
+Внимание к смещениям: `context_window_before` возвращает срез, позиции внутри него надо переводить обратно в смещения `text` (`start - window.len() + pos`), если дальше код режет `text` по найденной позиции (в `has_cvv_pin_marker` так и есть: `&text[marker_end..start]`).
+
+Поищи ещё такие места сам: `grep -n '\[\.\.start\]\|\[end\.\.\]' src/detect/mod.rs` — всё, что сканирует префикс/суффикс без ограничения, переведи на окно. `is_sentence_start` и `preceded_by_*` трогать не надо: они смотрят только на конец префикса (`trim_end`, `rev().find`) и уже линейны.
+
+Тест `tests/perf_guard.rs` обнови:
+- время в микросекундах (`as_micros`), лучшее из 5 прогонов;
+- размеры × 400 и × 4000;
+- `assert!(t4000 <= t400 * 15)` — линейность;
+- `assert!(t400 <= 15_000)` — абсолютный бюджет 15 мс на 400 сущностей;
+- убери `#[ignore]` и комментарий «Fails until T09…» (в debug тест и так ничего не проверяет).
+
+Качество не должно просесть: пороги в `tests/eval_floors.txt` не трогай.
+
+Приёмка: `! grep -rn 'map(|(i, _)| i + 1)' src/ && cargo clippy --all-targets -- -D warnings && cargo clippy --lib -- -W clippy::cognitive_complexity -W clippy::too_many_lines 2>&1 | (! grep -E "src.(detect|morph|server|mask).mod.rs") && cargo test && cargo build --release && cargo test --release --test perf_guard -- --nocapture && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh && bash tools/eval_accept.sh`
+
+Файлы: src/detect/mod.rs, tests/perf_guard.rs. Каталог logs/ не трогай.
+</task>
