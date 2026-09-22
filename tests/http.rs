@@ -52,7 +52,7 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
 
 fn load_root_config() -> Config {
     let text = std::fs::read_to_string("config.yaml").expect("read config.yaml");
-    let cfg = Config::from_yaml(&text).expect("parse config");
+    let mut cfg = Config::from_yaml(&text).expect("parse config");
     cfg.validate().expect("validate config");
     cfg
 }
@@ -230,6 +230,88 @@ async fn process_system_unknown_403_and_chatbot_hash() {
 }
 
 #[tokio::test]
+async fn api_key_required_for_system() {
+    std::env::set_var("DETOX_TEST_API_KEY", "super-secret-key-42");
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+  - id: secured
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+    api_key_env: DETOX_TEST_API_KEY
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let debug_str = format!("{:?}", cfg.system("secured").expect("secured system"));
+    assert!(!debug_str.contains("super-secret-key-42"), "Debug leaked key: {debug_str}");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "k1"});
+
+    let (st, json, _) = post_json(&base, "/process", &body, &[("X-System-Id", "secured")]).await;
+    assert_eq!(st, 401);
+    assert_eq!(json["error"], "unauthorized");
+    assert_eq!(json["code"], "unauthorized");
+    let body_str = serde_json::to_string(&json).unwrap();
+    assert!(!body_str.contains("super-secret-key-42"), "401 leaked key: {body_str}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &body,
+        &[("X-System-Id", "secured"), ("X-Api-Key", "wrong-key")],
+    )
+    .await;
+    assert_eq!(st, 401);
+    let body_str = serde_json::to_string(&json).unwrap();
+    assert!(!body_str.contains("super-secret-key-42"), "401 leaked key: {body_str}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &body,
+        &[("X-System-Id", "secured"), ("X-Api-Key", "super-secret-key-42")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert!(json["result"].as_str().unwrap().contains("<<INN_1>>"));
+
+    let (st, _json, _) = post_json(&base, "/process", &body, &[("X-System-Id", "autotest")]).await;
+    assert_eq!(st, 200);
+
+    std::env::remove_var("DETOX_TEST_API_KEY");
+}
+
+#[tokio::test]
 async fn v1_mask_unmask_roundtrip_and_not_found() {
     let cfg = load_root_config();
     let base = spawn_app(build_state(cfg)).await;
@@ -308,7 +390,7 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 "#;
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let base = spawn_app(build_state(cfg)).await;
 
@@ -350,7 +432,7 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 "#;
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let state = build_state(cfg);
     let base = spawn_app(state.clone()).await;
@@ -487,7 +569,7 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 "#;
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let base = spawn_app(build_state(cfg)).await;
 
@@ -560,7 +642,7 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 "#;
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let base = spawn_app(build_state(cfg)).await;
     let sys = &[("X-System-Id", "metrics-test")];
@@ -716,7 +798,7 @@ allowlist_file: data/allowlist.yaml
 "#;
     std::fs::write(&cfg_path, cfg_text).expect("write config");
 
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let base = spawn_app(build_state_with_path(cfg, cfg_path.clone())).await;
 
@@ -841,7 +923,7 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 "#;
-    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    let mut cfg = Config::from_yaml(cfg_text).expect("parse");
     cfg.validate().expect("validate");
     let state = build_state(cfg);
     let app = build_router(state.clone());

@@ -197,13 +197,43 @@ fn system_for(headers: &HeaderMap, cfg: &crate::config::Config) -> Result<Arc<Sy
         .map(|s| s.to_string())
         .unwrap_or_else(|| cfg.default_system.clone());
     match cfg.system(&id) {
-        Some(sys) if sys.enabled => Ok(Arc::new(sys.clone())),
+        Some(sys) if sys.enabled => {
+            if let Some(expected) = &sys.api_key {
+                let provided = headers
+                    .get("x-api-key")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                    metrics::counter!("pii_rejected_total", "reason" => "unauthorized").increment(1);
+                    return Err(Box::new(unauthorized_response()));
+                }
+            }
+            Ok(Arc::new(sys.clone()))
+        }
         _ => Err(Box::new(error_response(
             StatusCode::FORBIDDEN,
             "system not allowed",
             "forbidden",
         ))),
     }
+}
+
+/// Constant-time byte comparison: lengths are checked separately, then bytes are xored.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// 401 response for a missing or wrong API key. The key value never appears in the body.
+fn unauthorized_response() -> Response {
+    let body = serde_json::json!({ "error": "unauthorized", "code": "unauthorized" });
+    (StatusCode::UNAUTHORIZED, Json(body)).into_response()
 }
 
 fn detect_options<'a>(sys: &'a SystemConfig) -> DetectOptions<'a> {
@@ -989,7 +1019,7 @@ async fn body_limit_middleware(
 /// the config, registry and detector snapshots. On any error the previous state is kept.
 fn reload_config(state: &Arc<AppState>) -> Result<u64, String> {
     let text = std::fs::read_to_string(&state.config_path).map_err(|e| format!("read config: {e}"))?;
-    let cfg = crate::config::Config::from_yaml(&text).map_err(|e| format!("parse config: {e}"))?;
+    let mut cfg = crate::config::Config::from_yaml(&text).map_err(|e| format!("parse config: {e}"))?;
     cfg.validate().map_err(|e| format!("validate config: {e}"))?;
 
     let pii_types = std::fs::read_to_string(&cfg.pii_types_file).map_err(|e| format!("read pii_types: {e}"))?;
@@ -1146,7 +1176,7 @@ fn shutdown_result(
 /// Reads and validates the config file.
 fn load_config(config_path: &std::path::Path) -> anyhow::Result<crate::config::Config> {
     let text = std::fs::read_to_string(config_path)?;
-    let cfg = crate::config::Config::from_yaml(&text)?;
+    let mut cfg = crate::config::Config::from_yaml(&text)?;
     cfg.validate()?;
     Ok(cfg)
 }
