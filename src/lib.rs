@@ -4,6 +4,7 @@ pub mod config;
 pub mod detect;
 pub mod llm;
 pub mod mask;
+pub mod morph;
 pub mod obs;
 pub mod registry;
 pub mod server;
