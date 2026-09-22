@@ -10,6 +10,8 @@
 hard_negatives:clean>=197
 overlap_conflicts:address>=12
 overlap_conflicts:inn>=15
+# T40: 15-digit cards next to an inflected card word ("оплата картой") are cards.
+overlap_conflicts:card_number>=11
 multi_entity:fio>=78
 multi_entity:birth_date>=37
 multi_entity:address>=30
