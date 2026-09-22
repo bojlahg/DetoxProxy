@@ -362,6 +362,8 @@ fn build_state(cfg: Config) -> Arc<AppState> {
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: std::path::PathBuf::from("config.yaml"),
+        shutting_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        processed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     })
 }
 

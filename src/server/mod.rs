@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,6 +36,8 @@ pub struct AppState {
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub heavy: Arc<tokio::sync::Semaphore>,
     pub config_path: PathBuf,
+    pub shutting_down: Arc<AtomicBool>,
+    pub processed: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -917,6 +921,9 @@ fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: St
 }
 
 async fn readyz(State(state): State<Arc<AppState>>) -> StatusCode {
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     let cfg = state.config.load();
     if cfg.systems.is_empty() || state.registry.load().types().is_empty() {
         StatusCode::SERVICE_UNAVAILABLE
@@ -945,6 +952,7 @@ async fn inflight_middleware(
     };
     metrics::gauge!("pii_inflight").set(state.inflight.available_permits() as f64);
     let resp = next.run(req).await;
+    state.processed.fetch_add(1, Ordering::SeqCst);
     drop(permit);
     metrics::gauge!("pii_inflight").set(state.inflight.available_permits() as f64);
     resp
@@ -1058,6 +1066,8 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: config_path.clone(),
+        shutting_down: Arc::new(AtomicBool::new(false)),
+        processed: Arc::new(AtomicU64::new(0)),
     });
 
     store.spawn_sweeper(Duration::from_secs(5));
@@ -1070,8 +1080,45 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
             let _ = tcp.set_nodelay(true);
         });
     tracing::info!(listen = %cfg.server.listen, "server started");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    serve_with_signal(listener, app, state, shutdown_signal()).await?;
     Ok(())
+}
+
+/// Serves the app and shuts down gracefully when `signal` fires. On signal the `/readyz` flag is
+/// set, the server waits `shutdown_grace_ms` (so a load balancer can drain traffic), then stops
+/// accepting new connections and waits up to `shutdown_timeout_ms` for in-flight requests.
+pub async fn serve_with_signal<L, F>(
+    listener: L,
+    app: Router,
+    state: Arc<AppState>,
+    signal: F,
+) -> anyhow::Result<()>
+where
+    L: axum::serve::Listener + Send + 'static,
+    L::Addr: std::fmt::Debug,
+    F: Future<Output = ()> + Send + 'static,
+{
+    let grace = Duration::from_millis(state.config.load().server.shutdown_grace_ms);
+    let timeout = Duration::from_millis(state.config.load().server.shutdown_timeout_ms);
+
+    let signal_state = state.clone();
+    let signal = async move {
+        signal.await;
+        signal_state.shutting_down.store(true, Ordering::SeqCst);
+        tracing::info!("shutdown started");
+        tokio::time::sleep(grace).await;
+    };
+
+    let processed_before = state.processed.load(Ordering::SeqCst);
+    let serve = axum::serve(listener, app).with_graceful_shutdown(signal);
+    let result = tokio::time::timeout(timeout, serve).await;
+    let processed_after = state.processed.load(Ordering::SeqCst);
+    tracing::info!(processed = processed_after - processed_before, "shutdown complete");
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Ok(()),
+    }
 }
 
 /// Reads and validates the config file.

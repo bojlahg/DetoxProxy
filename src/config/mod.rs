@@ -61,6 +61,13 @@ pub struct ServerConfig {
     /// Max concurrent heavy (blocking) detection tasks; extra requests wait for a permit.
     #[serde(default = "default_heavy_max_concurrency")]
     pub heavy_max_concurrency: usize,
+    /// Pause after the shutdown signal before stopping to accept new connections, so a load
+    /// balancer can drain traffic.
+    #[serde(default = "default_shutdown_grace_ms")]
+    pub shutdown_grace_ms: u64,
+    /// Max time to wait for in-flight requests to finish during graceful shutdown.
+    #[serde(default = "default_shutdown_timeout_ms")]
+    pub shutdown_timeout_ms: u64,
 }
 fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
@@ -72,6 +79,8 @@ fn default_inline_max_bytes() -> usize { 16384 }
 fn default_heavy_max_concurrency() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
+fn default_shutdown_grace_ms() -> u64 { 500 }
+fn default_shutdown_timeout_ms() -> u64 { 10_000 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
