@@ -651,3 +651,19 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Файлы: src/server/mod.rs, src/config/mod.rs (новые поля с default), src/main.rs, tests/http.rs. После плана сразу пиши код.
 </task>
+
+<task id="T18">
+Привет. Метрики для разбора автопрогона — без единого значения ПД. Всё в src/server/mod.rs (или src/obs/mod.rs, если там удобнее), существующие метрики не переименовывать.
+
+1. `pii_payload_bytes` — гистограмма размера входного текста в байтах, метки `system`, `direction`; бакеты 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304.
+2. `pii_requests_without_entities_total{system}` — маскирование, где не найдено ни одной сущности (payload непустой).
+3. `pii_unmask_unresolved_tokens_total{system}` — при восстановлении: сколько в тексте нашлось подстрок формата наших токенов (`<<LABEL_...>>`, с учётом регистра/пробелов, как в unmask), для которых нет соответствия. Плюс `pii_unmask_requests_with_unresolved_total{system}` — число таких запросов.
+4. `pii_process_retry_total{system}` — /process пришёл с тем же payload_id и исходным текстом (повтор маскирования, отдали сохранённую маску).
+5. `pii_entities_per_request` — гистограмма числа сущностей на запрос маскирования, бакеты 0,1,2,3,5,8,13,21,50,100.
+
+Тесты в tests/http.rs: после одного маскирования без ПДн, одного с ПДн, одного повтора и одного восстановления с чужим токеном `<<INN_99>>` в /metrics есть все пять метрик с ожидаемыми значениями; в /metrics нет ни одного значения ПД из тестовых текстов.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21,22,23`.
+
+Файлы: src/server/mod.rs, src/obs/mod.rs, tests/http.rs. Каталог logs/ не удалять и не чистить — там логи запуска. После плана сразу пиши код.
+</task>
