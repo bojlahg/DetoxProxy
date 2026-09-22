@@ -83,6 +83,63 @@ async fn get(base: &str, path: &str) -> (u16, String) {
 }
 
 #[tokio::test]
+async fn process_isolation_between_systems() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "X"}),
+        &[("X-System-Id", "autotest")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+    assert!(!masked.contains("7707083893"));
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН <<INN_1>>", "payload_id": "X"}),
+        &[("X-System-Id", "strict")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let result = json["result"].as_str().unwrap().to_string();
+    assert!(!result.contains("7707083893"), "strict leaked autotest data: {result}");
+}
+
+#[tokio::test]
+async fn v1_mask_unmask_isolation_between_systems() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/mask",
+        &serde_json::json!({"text": "ИНН 7707083893", "session_id": "S"}),
+        &[("X-System-Id", "autotest")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["text"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/unmask",
+        &serde_json::json!({"text": masked, "session_id": "S"}),
+        &[("X-System-Id", "strict")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let result = json["text"].as_str().unwrap().to_string();
+    assert!(!result.contains("7707083893"), "strict leaked autotest data: {result}");
+}
+
+#[tokio::test]
 async fn process_mask_unmask_retry_distorted() {
     let cfg = load_root_config();
     let base = spawn_app(build_state(cfg)).await;

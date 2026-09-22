@@ -116,6 +116,10 @@ fn error_response(status: StatusCode, message: &str, kind: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
+fn store_key(system: &str, id: &str) -> String {
+    format!("{}\u{1f}{}", system, id)
+}
+
 fn hash_id(id: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -254,7 +258,8 @@ async fn process_handler(
             return Ok((ProcessResponse { result: String::new() }, HashMap::new()));
         }
 
-        let existing = state.store.get(&payload_id);
+        let key = store_key(&sys.id, &payload_id);
+        let existing = state.store.get(&key);
         let entry = match existing {
             Some(e) => e,
             None => {
@@ -262,7 +267,7 @@ async fn process_handler(
                 let res = mask_with(&payload, &entities, &state.registry, &mask_options(&sys), numbering(&sys));
                 let original_hash = hash_id(&payload);
                 state.store.insert_with_hash(
-                    &payload_id,
+                    &key,
                     res.text.clone(),
                     res.mappings.clone(),
                     original_hash,
@@ -350,7 +355,7 @@ async fn mask_handler(
         };
         let entities = state.detector.detect(&req.text, &detect_options(&sys));
         let existing = if sys.session_mode == crate::config::SessionMode::Stateful {
-            state.store.get(&session_id)
+            state.store.get(&store_key(&sys.id, &session_id))
         } else {
             None
         };
@@ -372,7 +377,7 @@ async fn mask_handler(
                 merged.push(m.clone());
             }
         }
-        state.store.insert_with_hash(&session_id, res.text.clone(), merged, hash_id(&req.text));
+        state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
         let out_entities = res
             .entities
             .iter()
@@ -441,7 +446,7 @@ async fn unmask_handler(
             Ok(r) => r,
             Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
         };
-        match state.store.get(&req.session_id) {
+        match state.store.get(&store_key(&sys.id, &req.session_id)) {
             Some(entry) => {
                 let restored = unmask(&req.text, &entry.mappings);
                 Ok((false, UnmaskResponse { text: restored }))
