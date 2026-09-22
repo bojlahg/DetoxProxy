@@ -1344,6 +1344,36 @@ fn inflect_person_word(nom: &str, gender: Gender, is_patr: bool, is_name: bool, 
     }
 }
 
+/// Index of the case of `word` relative to its nominative form `nom`, or `None`.
+///
+/// Returns `Some(0)` when `word` equals the nominative, `Some(case_index(case))`
+/// for the first matching oblique case, and `None` when no case matches.
+fn word_case_index(word: &str, nom: &str, gender: Gender, is_patr: bool, is_name: bool) -> Option<usize> {
+    if nom == word {
+        return Some(0);
+    }
+    for case in [Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+        let inflected = inflect_person_word(nom, gender, is_patr, is_name, case);
+        if let Some(inf) = inflected {
+            if inf.to_lowercase() == word {
+                return Some(case_index(case));
+            }
+        }
+    }
+    None
+}
+
+/// Index of the highest-voted case; ties resolve to the smaller index.
+fn argmax(votes: &[usize; 6]) -> usize {
+    let mut best = 0;
+    for (i, v) in votes.iter().enumerate() {
+        if *v > votes[best] {
+            best = i;
+        }
+    }
+    best
+}
+
 /// Detect the grammatical case of a full name phrase.
 pub fn detect_person_case(value: &str) -> Case {
     let ws = words(value);
@@ -1360,27 +1390,11 @@ pub fn detect_person_case(value: &str) -> Case {
     for (i, w) in ws.iter().enumerate() {
         let w_clean = w.trim_end_matches('.').to_lowercase();
         let nom = final_nom[i].to_lowercase();
-        if nom == w_clean {
-            votes[0] += 1;
-            continue;
-        }
-        for case in [Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
-            let inflected = inflect_person_word(&final_nom[i], gender, is_patr[i], is_name[i], case);
-            if let Some(inf) = inflected {
-                if inf.to_lowercase() == w_clean {
-                    votes[case_index(case)] += 1;
-                    break;
-                }
-            }
+        if let Some(k) = word_case_index(&w_clean, &nom, gender, is_patr[i], is_name[i]) {
+            votes[k] += 1;
         }
     }
-    let mut best = 0;
-    for (i, v) in votes.iter().enumerate() {
-        if *v > votes[best] {
-            best = i;
-        }
-    }
-    best_case(best)
+    best_case(argmax(&votes))
 }
 
 /// Map the index of the highest-voted case back to a `Case`.
@@ -1414,13 +1428,7 @@ pub fn detect_place_case(value: &str) -> Case {
             }
         }
     }
-    let mut best = 0;
-    for (i, v) in votes.iter().enumerate() {
-        if *v > votes[best] {
-            best = i;
-        }
-    }
-    best_case(best)
+    best_case(argmax(&votes))
 }
 
 /// Apply the case style (upper/title/lower) of `original` to `phrase`.
