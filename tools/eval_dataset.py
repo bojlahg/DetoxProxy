@@ -36,7 +36,7 @@ def detect(base, text):
         try:
             body = json.loads(urllib.request.urlopen(req, timeout=20).read())
             break
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except OSError:  # URLError and TimeoutError both derive from OSError
             time.sleep(0.5 * (attempt + 1))
     else:
         raise RuntimeError("detect failed")
@@ -51,6 +51,97 @@ def detect(base, text):
 
 def overlap(a0, a1, b0, b1):
     return max(0, min(a1, b1) - max(a0, b0))
+
+
+def score_row(row, pred, counters, per_type, fp_types, misses, extras):
+    """Compares one row's gold entities with the predictions and updates the counters."""
+    gold = [(TYPE_MAP[e["type"]], e["start"], e["end"]) for e in row["entities"] if e["type"] in TYPE_MAP]
+    ignored = [(e["start"], e["end"]) for e in row["entities"] if e["type"] not in TYPE_MAP]
+    pred = [p for p in pred if not any(overlap(p[1], p[2], s, t) for s, t in ignored)]
+    for g in gold:
+        typed = any(p[0] == g[0] and overlap(p[1], p[2], g[1], g[2]) for p in pred)
+        untyped = any(overlap(p[1], p[2], g[1], g[2]) for p in pred)
+        counters["gold"] += 1
+        counters["found_typed"] += typed
+        counters["found_any"] += untyped
+        per_type[g[0]]["gold"] += 1
+        per_type[g[0]]["found"] += typed
+        if not untyped:
+            misses.append((row["id"], g[0], row["text"][g[1]:g[2]], row["text"]))
+    for p in pred:
+        ok = any(overlap(p[1], p[2], g[1], g[2]) for g in gold)
+        counters["pred"] += 1
+        counters["pred_ok"] += ok
+        if not ok:
+            fp_types[p[0]] += 1
+            extras.append((row["id"], p[0], row["text"][p[1]:p[2]], row["text"]))
+    gold_chars = {i for _, s, t in gold for i in range(s, t)}
+    pred_chars = {i for _, s, t in pred for i in range(s, t)}
+    counters["gchars"] += len(gold_chars)
+    counters["pchars"] += len(pred_chars)
+    counters["both"] += len(gold_chars & pred_chars)
+    counters["rows"] += 1
+    counters["neg_rows"] += not gold
+    counters["neg_rows_clean"] += (not gold and not pred)
+
+
+def evaluate_file(path, base, workers, limit):
+    """Runs the detector over one dataset file. Returns (counters, per_type, fp_types, misses, extras)."""
+    rows = [json.loads(l) for l in open(path, encoding="utf-8")]
+    if limit:
+        rows = rows[:limit]
+    with ThreadPoolExecutor(workers) as ex:
+        preds = list(ex.map(lambda r: detect(base, r["text"]), rows))
+    counters = collections.Counter()
+    per_type = collections.defaultdict(collections.Counter)
+    fp_types = collections.Counter()
+    misses, extras = [], []
+    for row, pred in zip(rows, preds):
+        score_row(row, pred, counters, per_type, fp_types, misses, extras)
+    return counters, per_type, fp_types, misses, extras
+
+
+def file_stats(counters, per_type, fp_types):
+    """Metrics addressable from --require: <type>, fp.<type>, clean."""
+    st = {t: v["found"] for t, v in per_type.items()}
+    st.update({f"fp.{t}": n for t, n in fp_types.items()})
+    st["clean"] = counters["neg_rows_clean"]
+    return st
+
+
+def report_file(log, name, counters, per_type, fp_types, misses, extras, errors):
+    log("")
+    log(f"## {name} — {counters['rows']} строк")
+    log(report_line(counters))
+    if counters["neg_rows"]:
+        log(f"строк без ПДн: {counters['neg_rows']}, из них без единой маски: {counters['neg_rows_clean']}")
+    log("по типам (recall typed): " + ", ".join(
+        f"{t} {v['found']}/{v['gold']}" for t, v in sorted(per_type.items(), key=lambda x: -x[1]["gold"])))
+    if fp_types:
+        log("лишние маски по типам: " + ", ".join(f"{t} {n}" for t, n in fp_types.most_common()))
+    if not errors:
+        return
+    for title, items in (("пропуски", misses), ("лишние", extras)):
+        if items:
+            log(f"{title} (первые {errors}):")
+            for id_, t, span, text in items[:errors]:
+                log(f"  {id_} {t} {span!r} | {text[:160]}")
+
+
+def check_requirements(require, stats):
+    """Returns the list of unmet requirements from the --require string."""
+    failed = []
+    for req in filter(None, (x.strip() for x in require.split(","))):
+        m = re.fullmatch(r"([\w-]+):([\w.]+)(>=|<=)(\d+)", req)
+        if not m:
+            sys.exit(f"bad --require item: {req}")
+        fname, metric, op, n = m.group(1), m.group(2), m.group(3), int(m.group(4))
+        if fname not in stats:
+            sys.exit(f"--require names a file that was not evaluated: {fname}")
+        value = stats[fname].get(metric, 0)
+        if not (value >= n if op == ">=" else value <= n):
+            failed.append(f"{req} (actual {value})")
+    return failed
 
 
 def main():
@@ -74,75 +165,21 @@ def main():
     total = collections.Counter()
     stats = {}
     for f in files:
-        rows = [json.loads(l) for l in open(f, encoding="utf-8")]
-        if a.limit:
-            rows = rows[:a.limit]
-        with ThreadPoolExecutor(a.workers) as ex:
-            preds = list(ex.map(lambda r: detect(base, r["text"]), rows))
-        c = collections.Counter()
-        per_type = collections.defaultdict(collections.Counter)
-        fp_types = collections.Counter()
-        misses, extras = [], []
-        for r, pred in zip(rows, preds):
-            gold = [(TYPE_MAP[e["type"]], e["start"], e["end"]) for e in r["entities"] if e["type"] in TYPE_MAP]
-            ignored = [(e["start"], e["end"]) for e in r["entities"] if e["type"] not in TYPE_MAP]
-            pred = [p for p in pred if not any(overlap(p[1], p[2], s, t) for s, t in ignored)]
-            for g in gold:
-                typed = any(p[0] == g[0] and overlap(p[1], p[2], g[1], g[2]) for p in pred)
-                untyped = any(overlap(p[1], p[2], g[1], g[2]) for p in pred)
-                c["gold"] += 1; c["found_typed"] += typed; c["found_any"] += untyped
-                per_type[g[0]]["gold"] += 1; per_type[g[0]]["found"] += typed
-                if not untyped:
-                    misses.append((r["id"], g[0], r["text"][g[1]:g[2]], r["text"]))
-            for p in pred:
-                ok = any(overlap(p[1], p[2], g[1], g[2]) for g in gold)
-                c["pred"] += 1; c["pred_ok"] += ok
-                if not ok:
-                    fp_types[p[0]] += 1
-                    extras.append((r["id"], p[0], r["text"][p[1]:p[2]], r["text"]))
-            gold_chars = set(i for _, s, t in gold for i in range(s, t))
-            pred_chars = set(i for _, s, t in pred for i in range(s, t))
-            c["gchars"] += len(gold_chars); c["pchars"] += len(pred_chars); c["both"] += len(gold_chars & pred_chars)
-            c["rows"] += 1
-            c["neg_rows"] += not gold
-            c["neg_rows_clean"] += (not gold and not pred)
-        total.update(c)
+        counters, per_type, fp_types, misses, extras = evaluate_file(f, base, a.workers, a.limit)
+        total.update(counters)
         name = f.replace("\\", "/").split("/")[-1]
-        st = {t: v["found"] for t, v in per_type.items()}
-        st.update({f"fp.{t}": n for t, n in fp_types.items()})
-        st["clean"] = c["neg_rows_clean"]
-        stats[name.replace(".jsonl", "")] = st
-        log(f"\n## {name} — {c['rows']} строк")
-        log(report_line(c))
-        if c["neg_rows"]:
-            log(f"строк без ПДн: {c['neg_rows']}, из них без единой маски: {c['neg_rows_clean']}")
-        log("по типам (recall typed): " + ", ".join(
-            f"{t} {v['found']}/{v['gold']}" for t, v in sorted(per_type.items(), key=lambda x: -x[1]["gold"])))
-        if fp_types:
-            log("лишние маски по типам: " + ", ".join(f"{t} {n}" for t, n in fp_types.most_common()))
-        for title, items in (("пропуски", misses), ("лишние", extras)):
-            if items and a.errors:
-                log(f"{title} (первые {a.errors}):")
-                for id_, t, span, text in items[:a.errors]:
-                    log(f"  {id_} {t} {span!r} | {text[:160]}")
-    log("\n## Итого")
+        stats[name.replace(".jsonl", "")] = file_stats(counters, per_type, fp_types)
+        report_file(log, name, counters, per_type, fp_types, misses, extras, a.errors)
+    log("")
+    log("## Итого")
     log(report_line(total))
-    failed = []
-    for req in filter(None, (x.strip() for x in a.require.split(","))):
-        m = re.fullmatch(r"([\w-]+):([\w.]+)(>=|<=)(\d+)", req)
-        if not m:
-            sys.exit(f"bad --require item: {req}")
-        fname, metric, op, n = m.group(1), m.group(2), m.group(3), int(m.group(4))
-        if fname not in stats:
-            sys.exit(f"--require names a file that was not evaluated: {fname}")
-        v = stats[fname].get(metric, 0)
-        if not (v >= n if op == ">=" else v <= n):
-            failed.append(f"{req} (actual {v})")
+    failed = check_requirements(a.require, stats)
     if a.require:
-        log("\n## Требования")
+        log("")
+        log("## Требования")
         log("все выполнены" if not failed else "НЕ выполнены: " + "; ".join(failed))
     if a.report:
-        open(a.report, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+        open(a.report, "w", encoding="utf-8", newline=chr(10)).write(chr(10).join(lines) + chr(10))
     sys.exit(1 if failed else 0)
 
 
