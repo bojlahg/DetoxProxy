@@ -819,17 +819,16 @@ impl Detector {
         }
         let spec = self.registry.get("fio");
         let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
-        if endings.iter().any(|e| {
-            if let Some(stripped) = lower.strip_suffix(e.as_str()) {
-                if !stripped.is_empty() && self.dicts.contains("surnames", stripped) {
-                    return true;
-                }
-            }
-            false
-        }) {
+        if self.surname_matches_any_suffix(lower, endings) {
             return true;
         }
         let suffixes = spec.map(|s| s.surname_case_suffixes.as_slice()).unwrap_or(&[]);
+        self.surname_matches_any_suffix(lower, suffixes)
+    }
+
+    /// True if stripping any of the given suffixes from `lower` leaves a non-empty stem
+    /// that is present in the surnames dictionary.
+    fn surname_matches_any_suffix(&self, lower: &str, suffixes: &[String]) -> bool {
         suffixes.iter().any(|s| {
             if let Some(stripped) = lower.strip_suffix(s.as_str()) {
                 if !stripped.is_empty() && self.dicts.contains("surnames", stripped) {
