@@ -33,6 +33,25 @@ static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
 /// Street prefixes used to decide whether an `address` value inflects as a street.
 const STREET_MARKERS: [&str; 4] = ["ул.", "улица", "проспект", "пр."];
 
+/// All six grammatical cases, used for per-part person inflection.
+const ALL_CASES: [morph::Case; 6] = [
+    morph::Case::Nom,
+    morph::Case::Gen,
+    morph::Case::Dat,
+    morph::Case::Acc,
+    morph::Case::Ins,
+    morph::Case::Prep,
+];
+
+/// Oblique cases (all but nominative), used for full-value inflection.
+const OBLIQUE_CASES: [morph::Case; 5] = [
+    morph::Case::Gen,
+    morph::Case::Dat,
+    morph::Case::Acc,
+    morph::Case::Ins,
+    morph::Case::Prep,
+];
+
 /// Maps a PII type to the morphological kind used for inflection. Returns `None` for types
 /// that are never inflected (their case suffix is ignored and the original is returned).
 fn kind_for_type(type_id: &str, original: &str) -> Option<morph::Kind> {
@@ -359,15 +378,135 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
         })
         .to_string();
 
-    let mut non_token: Vec<&Mapping> = mappings
-        .iter()
-        .filter(|m| !TOKEN_RE.is_match(&m.masked) && m.masked != "[removed]")
-        .collect();
-    non_token.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
-    for m in non_token {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut exact: Vec<&Mapping> = Vec::new();
+    for m in mappings {
+        if TOKEN_RE.is_match(&m.masked) || m.masked == "[removed]" {
+            continue;
+        }
+        if is_inflectable_mask(&m.masked) {
+            pairs.extend(unmask_pairs(m));
+        } else {
+            exact.push(m);
+        }
+    }
+    pairs.sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
+    for (from, to) in pairs {
+        result = replace_inflected(&result, &from, &to);
+    }
+    exact.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
+    for m in exact {
         result = result.replace(&m.masked, &m.original);
     }
     result
+}
+
+/// Builds (substitution, original) pairs for an inflectable non-token mapping: the exact
+/// nominative form, the oblique cases of the full value, and for persons the individual name
+/// parts in all cases.
+fn unmask_pairs(m: &Mapping) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let Some(kind) = kind_for_type(&m.type_id, &m.original) else {
+        pairs.push((m.masked.clone(), m.original.clone()));
+        return pairs;
+    };
+    pairs.push((m.masked.clone(), m.original.clone()));
+    for case in OBLIQUE_CASES {
+        if let (Some(masked_inf), Some(orig_inf)) =
+            (morph::inflect(&m.masked, kind, case), morph::inflect(&m.original, kind, case))
+        {
+            pairs.push((masked_inf, orig_inf));
+        }
+    }
+    if kind == morph::Kind::Person {
+        pairs.extend(person_part_pairs(m));
+    }
+    pairs
+}
+
+/// True if a masked value is eligible for the inflection path: every word is at least 3 letters
+/// long and contains neither `*` nor `.`. Initials ("С. П. И."), stars masks and `[removed]`
+/// are rejected so they are restored only by exact match.
+fn is_inflectable_mask(masked: &str) -> bool {
+    masked.split_whitespace().all(|w| {
+        w.chars().count() >= 3 && !w.contains('*') && !w.contains('.')
+    })
+}
+
+/// Builds (substitution, original) pairs for the individual parts of a person's name:
+/// surname, given name, patronymic, and "given name patronymic", each in all six cases.
+/// Parts shorter than 3 letters are skipped.
+fn person_part_pairs(m: &Mapping) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let (Some(mp), Some(op)) = (morph::parse_person(&m.masked), morph::parse_person(&m.original)) else {
+        return pairs;
+    };
+    let m_parts = [mp.surname.clone(), mp.name.clone(), mp.patronymic.clone()];
+    let o_parts = [op.surname.clone(), op.name.clone(), op.patronymic.clone()];
+    for (m_part, o_part) in m_parts.iter().zip(o_parts.iter()) {
+        if m_part.chars().count() < 3 || o_part.chars().count() < 3 {
+            continue;
+        }
+        for case in ALL_CASES {
+            if let (Some(mi), Some(oi)) = (
+                morph::inflect(m_part, morph::Kind::Person, case),
+                morph::inflect(o_part, morph::Kind::Person, case),
+            ) {
+                pairs.push((mi, oi));
+            }
+        }
+    }
+    if !mp.name.is_empty() && !mp.patronymic.is_empty() && !op.name.is_empty() && !op.patronymic.is_empty() {
+        let m_np = format!("{} {}", mp.name, mp.patronymic);
+        let o_np = format!("{} {}", op.name, op.patronymic);
+        for case in ALL_CASES {
+            if let (Some(mi), Some(oi)) = (
+                morph::inflect(&m_np, morph::Kind::Person, case),
+                morph::inflect(&o_np, morph::Kind::Person, case),
+            ) {
+                pairs.push((mi, oi));
+            }
+        }
+    }
+    pairs
+}
+
+/// Replaces whole-word occurrences of `from` in `text` (case-insensitive, Cyrillic-aware) with
+/// `to`, transferring the per-word case style of the matched text onto `to`.
+fn replace_inflected(text: &str, from: &str, to: &str) -> String {
+    if from.is_empty() {
+        return text.to_string();
+    }
+    let from_lower: Vec<char> = from.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect();
+    let text_chars: Vec<char> = text.chars().collect();
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < text_chars.len() {
+        let matches = text_chars.len() - i >= from_lower.len()
+            && text_chars[i..i + from_lower.len()]
+                .iter()
+                .zip(from_lower.iter())
+                .all(|(tc, fc)| tc.to_lowercase().next().unwrap_or(*tc) == *fc);
+        if matches {
+            let before_ok = i == 0 || !is_word_char(text_chars[i - 1]);
+            let after_ok = i + from_lower.len() >= text_chars.len()
+                || !is_word_char(text_chars[i + from_lower.len()]);
+            if before_ok && after_ok {
+                let found: String = text_chars[i..i + from_lower.len()].iter().collect();
+                result.push_str(&morph::apply_original_styles(&found, to));
+                i += from_lower.len();
+                continue;
+            }
+        }
+        result.push(text_chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// True if `c` is a word character (Cyrillic/Latin letter or digit).
+fn is_word_char(c: char) -> bool {
+    c.is_alphabetic() || c.is_ascii_digit()
 }
 
 /// Counts token-format substrings (`<<LABEL_N>>`, case/whitespace tolerant as in `unmask`) in `text`

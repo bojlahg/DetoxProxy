@@ -1,4 +1,5 @@
 use detox_proxy::mask::{mask, mask_with_seed, unmask, MaskOptions, Numbering};
+use detox_proxy::morph::{self, Case, Kind};
 use detox_proxy::registry::Registry;
 use detox_proxy::types::{Entity, MaskMode, Mapping};
 use std::collections::HashMap;
@@ -387,4 +388,100 @@ fn address_parts_preserved_and_replaced() {
     assert!(!out.contains("Баумана"), "street must be replaced, got {out}");
     let restored = unmask(&res.text, &res.mappings);
     assert_eq!(restored, text, "round-trip failed");
+}
+
+#[test]
+fn unmask_inflects_pseudonym_dative() {
+    let reg = load();
+    let text = "Клиент Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "fio").unwrap();
+    let dat = morph::inflect(&m.masked, Kind::Person, Case::Dat).unwrap();
+    let response = format!("Передайте {}, что заявка одобрена", dat);
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "Передайте Сидорову Петру Ивановичу, что заявка одобрена");
+}
+
+#[test]
+fn unmask_inflects_pseudonym_surname_genitive() {
+    let reg = load();
+    let text = "Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "fio").unwrap();
+    let gen = morph::inflect(&m.masked, Kind::Person, Case::Gen).unwrap();
+    let surname_gen = gen.split_whitespace().next().unwrap().to_string();
+    let response = format!("У {} есть долг", surname_gen);
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "У Сидорова есть долг");
+}
+
+#[test]
+fn unmask_inflects_pseudonym_name_patronymic() {
+    let reg = load();
+    let text = "Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "fio").unwrap();
+    let nom = morph::inflect(&m.masked, Kind::Person, Case::Nom).unwrap();
+    let words: Vec<&str> = nom.split_whitespace().collect();
+    let response = format!("Уважаемый {} {}", words[1], words[2]);
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "Уважаемый Пётр Иванович");
+}
+
+#[test]
+fn unmask_inflects_pseudonym_uppercase() {
+    let reg = load();
+    let text = "Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "fio").unwrap();
+    let dat = morph::inflect(&m.masked, Kind::Person, Case::Dat).unwrap();
+    let response = dat.to_uppercase();
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "СИДОРОВУ ПЕТРУ ИВАНОВИЧУ");
+}
+
+#[test]
+fn unmask_inflects_pseudonym_birth_place() {
+    let reg = load();
+    let text = "Казань";
+    let s = text.find("Казань").unwrap();
+    let res = mask(text, &[ent("birth_place", s, s + "Казань".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "birth_place").unwrap();
+    let prep = morph::inflect(&m.masked, Kind::Place, Case::Prep).unwrap();
+    let response = format!("родился в {}", prep);
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "родился в Казани");
+}
+
+#[test]
+fn unmask_leaves_non_substitution_and_restores_exact() {
+    let reg = load();
+    let text = "Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &pseudonym_opts(&HashMap::new()));
+    let m = res.mappings.iter().find(|m| m.type_id == "fio").unwrap();
+    let response = format!("Клиент {} и его друг", m.masked);
+    let restored = unmask(&response, &res.mappings);
+    assert_eq!(restored, "Клиент Сидоров Пётр Иванович и его друг");
+}
+
+#[test]
+fn stars_fio_roundtrip_byte_exact() {
+    let reg = load();
+    let text = "Клиент Сидоров Пётр Иванович";
+    let s = text.find("Сидоров Пётр Иванович").unwrap();
+    let overrides = HashMap::new();
+    let opts = MaskOptions {
+        default_mode: MaskMode::Stars,
+        overrides: &overrides,
+        combination_rule: false,
+    };
+    let res = mask(text, &[ent("fio", s, s + "Сидоров Пётр Иванович".len())], &reg, &opts);
+    assert!(res.text.contains("С. П. И."), "stars FIO must be initials, got {}", res.text);
+    let restored = unmask(&res.text, &res.mappings);
+    assert_eq!(restored, text, "stars FIO round-trip must restore byte-exact");
 }
