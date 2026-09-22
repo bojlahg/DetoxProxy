@@ -948,11 +948,12 @@ impl Detector {
     /// a CVV.
     fn has_cvv_pin_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> bool {
         let markers = &spec.context_words;
-        let prefix = &text[..start];
-        let lower = prefix.to_lowercase();
+        let window = context_window_before(text, start, 60);
+        let window_start = start - window.len();
+        let lower = window.to_lowercase();
         for m in markers {
             if let Some(pos) = lower.rfind(m) {
-                let marker_end = pos + m.len();
+                let marker_end = window_start + pos + m.len();
                 let between = &text[marker_end..start];
                 if self.marker_between_ok(between, spec) {
                     return true;
@@ -1034,11 +1035,12 @@ impl Detector {
     /// contains any of the given markers. A passport series label ("серия") is ambiguous and
     /// decided by the nearest document-type marker.
     fn field_label_matches(&self, text: &str, colon_end: usize, spec: &TypeSpec) -> bool {
-        let prefix = &text[..colon_end];
-        let boundary = prefix
+        let window = context_window_before(text, colon_end, 200);
+        let window_start = colon_end - window.len();
+        let boundary = window
             .rfind(['.', ';', '\n', '!', '?'])
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map(|i| window_start + i + 1)
+            .unwrap_or(window_start);
         let phrase = &text[boundary..colon_end];
         let lower = phrase.to_lowercase();
         if is_series_label_phrase(&lower) {
@@ -1108,19 +1110,20 @@ impl Detector {
     fn nearest_address_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> Option<bool> {
         let pii = self.effective_pii_markers(spec);
         let non_pii = self.effective_non_pii_markers(spec);
-        let prefix = &text[..start];
-        let lower = prefix.to_lowercase();
+        let window = context_window_before(text, start, 200);
+        let window_start = start - window.len();
+        let lower = window.to_lowercase();
         let mut best_pii: Option<usize> = None;
         let mut best_non_pii: Option<usize> = None;
         for m in &pii {
             if let Some(pos) = lower.rfind(m) {
-                let end = pos + m.len();
+                let end = window_start + pos + m.len();
                 best_pii = Some(best_pii.map_or(end, |b| b.max(end)));
             }
         }
         for m in &non_pii {
             if let Some(pos) = lower.rfind(m) {
-                let end = pos + m.len();
+                let end = window_start + pos + m.len();
                 best_non_pii = Some(best_non_pii.map_or(end, |b| b.max(end)));
             }
         }
@@ -1324,8 +1327,9 @@ impl Detector {
     /// Extends a street-address span to include a preceding city ("г. Москва, " or
     /// "Москва, "). Returns the widened span.
     fn extend_with_city(&self, text: &str, start: usize, end: usize) -> (usize, usize) {
-        let prefix = &text[..start];
-        let trimmed = prefix.trim_end();
+        let window = context_window_before(text, start, 60);
+        let window_start = start - window.len();
+        let trimmed = window.trim_end();
         // "г. Москва, " — city marker + city name + comma.
         if let Some(pos) = trimmed.rfind("г.") {
             let after = &trimmed[pos + "г.".len()..];
@@ -1333,7 +1337,7 @@ impl Detector {
             if let Some(comma) = after.find(',') {
                 let city = &after[..comma].trim();
                 if self.looks_like_city_name(city) {
-                    return (pos, end);
+                    return (window_start + pos, end);
                 }
             }
         }
@@ -1349,7 +1353,7 @@ impl Detector {
                 .unwrap_or(0);
             let city = &before[city_start..];
             if self.looks_like_city_name(city) {
-                return (city_start, end);
+                return (window_start + city_start, end);
             }
         }
         (start, end)
@@ -1680,14 +1684,8 @@ impl Detector {
 
     fn card_number_before_within(&self, text: &str, start: usize, window: usize) -> bool {
         let patterns = self.registry.patterns("card_number");
-        for re in patterns {
-            for m in re.find_iter(text) {
-                if m.end() <= start && start - m.end() <= window {
-                    return true;
-                }
-            }
-        }
-        false
+        let before = context_window_before(text, start, window);
+        patterns.iter().any(|re| re.is_match(before))
     }
 
     /// True if a card-holder marker ("держатель", "cardholder", "владелец карты",
@@ -1768,8 +1766,8 @@ impl Detector {
             "музей",
             "император",
         ];
-        let prefix = &text[..start];
-        let trimmed = prefix.trim_end();
+        let window = context_window_before(text, start, 100);
+        let trimmed = window.trim_end();
         let words: Vec<&str> = trimmed.split_whitespace().collect();
         let tail: Vec<&str> = words.iter().rev().take(4).rev().copied().collect();
         let tail_lower = tail.join(" ").to_lowercase();
@@ -2063,8 +2061,8 @@ fn is_standalone_word(haystack: &str, start: usize, end: usize) -> bool {
 /// start with no closing » between it and start, and a closing » after end with no opening
 /// « between end and it).
 fn in_guillemets(text: &str, start: usize, end: usize) -> bool {
-    let before = &text[..start];
-    let after = &text[end..];
+    let before = context_window_before(text, start, 80);
+    let after = context_window_after(text, end, 80);
     let open = before.rfind('«');
     let close = after.find('»');
     match (open, close) {

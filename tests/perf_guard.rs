@@ -1,5 +1,3 @@
-// Fails until T09 makes context checks linear in the number of entities.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,7 +18,6 @@ fn detector() -> Detector {
 }
 
 #[test]
-#[ignore]
 fn dense_text_detect_and_mask_within_budget() {
     if cfg!(debug_assertions) {
         return;
@@ -46,11 +43,11 @@ fn dense_text_detect_and_mask_within_budget() {
 
     fn best_time(det: &Detector, reg: &Registry, opts: &DetectOptions<'_>, mask_opts: &MaskOptions<'_>, text: &str) -> u128 {
         let mut best = u128::MAX;
-        for _ in 0..3 {
+        for _ in 0..5 {
             let start = Instant::now();
             let entities = det.detect(text, opts);
             let _res = mask(text, &entities, reg, mask_opts);
-            let elapsed = start.elapsed().as_millis();
+            let elapsed = start.elapsed().as_micros();
             if elapsed < best {
                 best = elapsed;
             }
@@ -58,12 +55,16 @@ fn dense_text_detect_and_mask_within_budget() {
         best
     }
 
-    let t40 = best_time(&det, &reg, &opts, &mask_opts, &"Клиент ИНН 7707083893. ".repeat(40));
     let t400 = best_time(&det, &reg, &opts, &mask_opts, &"Клиент ИНН 7707083893. ".repeat(400));
-    let ratio = t400 as f64 / t40 as f64;
+    let t4000 = best_time(&det, &reg, &opts, &mask_opts, &"Клиент ИНН 7707083893. ".repeat(4000));
 
     assert!(
-        ratio <= 20.0,
-        "detect+mask scaling is superlinear: t40={t40} ms, t400={t400} ms, ratio={ratio:.1} (expected <= 20.0 for linear scaling)"
+        t400 <= 15_000,
+        "detect+mask exceeds the absolute budget: t400={t400} us (expected <= 15000 us)"
+    );
+    assert!(
+        t4000 <= t400 * 15,
+        "detect+mask scaling is superlinear: t400={t400} us, t4000={t4000} us, ratio={:.1} (expected <= 15.0 for linear scaling)",
+        t4000 as f64 / t400 as f64
     );
 }
