@@ -617,3 +617,18 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Файлы: src/detect/mod.rs, data/pii_types.yaml, tests/traps.rs. После плана сразу пиши код.
 </task>
+
+<task id="T16">
+Привет. Небольшая дыра в изоляции. Хранилище соответствий (src/store) ключуется только по `payload_id` / `session_id`. Если две разные системы-потребителя (заголовок X-System-Id) пришлют одинаковый payload_id, система B отправит маску системы A и получит исходные данные A.
+
+Сделать: во всех местах src/server/mod.rs, где вызывается `state.store.get` / `insert` / `insert_with_hash`, ключ — `format!("{}\u{1f}{}", system_id, payload_id)` (разделитель \u{1f}, чтобы нельзя было подобрать коллизию через сам payload_id). Для /v1/mask и /v1/unmask так же с session_id. В лог по-прежнему пишется только payload_id (не составной ключ). Вынеси построение ключа в одну функцию `fn store_key(system: &str, id: &str) -> String`.
+
+Тесты — в tests/http.rs:
+- система autotest маскирует «ИНН 7707083893» с payload_id X → «ИНН <<INN_1>>»; система strict (X-System-Id: strict) шлёт «ИНН <<INN_1>>» с тем же X → в ответе НЕТ 7707083893;
+- та же проверка для /v1/mask + /v1/unmask с одинаковым session_id и разными системами;
+- в рамках одной системы round-trip по-прежнему работает (старые тесты не менять).
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21`.
+
+Файлы: src/server/mod.rs, tests/http.rs. Больше ничего. После плана сразу пиши код.
+</task>
