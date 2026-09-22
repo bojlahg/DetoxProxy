@@ -697,18 +697,21 @@ fn rebuild_digits(original: &str, digits: &[u32]) -> String {
 }
 
 /// Generate a valid INN (10 or 12 digits) preserving the original length and separators.
+/// The first digit is never 0 (a real INN does not start with 0).
 fn pseudonym_inn(original: &str, rng: &mut impl rand::Rng) -> String {
     let count = original.chars().filter(|c| c.is_ascii_digit()).count();
     let mut out: Vec<u32> = Vec::with_capacity(count);
     if count == 10 {
-        for _ in 0..9 {
+        out.push(rng.gen_range(1..10));
+        for _ in 1..9 {
             out.push(rng.gen_range(0..10));
         }
         let coeffs = [2, 4, 10, 3, 5, 9, 4, 6, 8];
         let sum: u32 = coeffs.iter().zip(&out).map(|(&c, &d)| c * d).sum();
         out.push((sum % 11) % 10);
     } else if count == 12 {
-        for _ in 0..10 {
+        out.push(rng.gen_range(1..10));
+        for _ in 1..10 {
             out.push(rng.gen_range(0..10));
         }
         let c1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8];
@@ -744,13 +747,15 @@ fn pseudonym_snils(original: &str, rng: &mut impl rand::Rng) -> String {
 }
 
 /// Generate a valid Luhn card number preserving the original length and separators.
+/// The first digit is 2, 4 or 5 (MIR/Visa/Mastercard).
 fn pseudonym_card(original: &str, rng: &mut impl rand::Rng) -> String {
     let count = original.chars().filter(|c| c.is_ascii_digit()).count();
     if count < 2 {
         return original.to_string();
     }
     let mut out: Vec<u32> = Vec::with_capacity(count);
-    for _ in 0..count - 1 {
+    out.push([2u32, 4, 5][rng.gen_range(0..3)]);
+    for _ in 1..count - 1 {
         out.push(rng.gen_range(0..10));
     }
     out.push(luhn_check(&out) as u32);

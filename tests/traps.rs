@@ -467,3 +467,49 @@ async fn mask_empty_entities_and_mappings_fields() {
     assert!(s.contains("\"entities\":[]"), "mask must include empty entities: {s}");
     assert!(s.contains("\"mappings\":[]"), "mask must include empty mappings: {s}");
 }
+
+#[test]
+fn document_number_not_address_or_passport() {
+    let entities = detect("Накладная 9876 543210 оформлена утром", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "address"), "document number must not be an address: {:?}", entities);
+    assert!(!has_type(&entities, "passport"), "document number must not be a passport: {:?}", entities);
+    // Control: a real passport is still masked.
+    let entities = detect("Паспорт клиента 45 03 123456 выдан вчера", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "passport"), "real passport must be found: {:?}", entities);
+}
+
+#[test]
+fn imei_not_card_number() {
+    let entities = detect("IMEI 356938035643809 выбит под крышкой", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "card_number"), "IMEI must not be a card: {:?}", entities);
+    // Control: a real card is still masked.
+    let entities = detect("Карта 4276 5500 1122 3347 заблокирована", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "card_number"), "real card must be found: {:?}", entities);
+}
+
+#[test]
+fn toll_free_800_not_phone() {
+    let entities = detect("Горячая линия 8 800 200-00-00 работает круглосуточно", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "phone"), "8-800 must not be a phone: {:?}", entities);
+    // Control: a real phone is still masked.
+    let entities = detect("Телефон клиента +7 (900) 123-45-67", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "phone"), "real phone must be found: {:?}", entities);
+}
+
+#[test]
+fn quoted_brand_name_not_fio() {
+    let entities = detect("Магазин «Мария Ра» открылся в микрорайоне", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "fio"), "brand name must not be a fio: {:?}", entities);
+    // Control: a real fio is still masked.
+    let entities = detect("Заявитель Морозов Андрей Петрович подписал заявление", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "fio"), "real fio must be found: {:?}", entities);
+}
+
+#[test]
+fn reception_address_not_masked() {
+    let entities = detect("Приёмная находится на ул. Ленина, д. 10", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "address"), "reception address must not be masked: {:?}", entities);
+    // Control: a real resident address is still masked.
+    let entities = detect("Проживает: г. Казань, ул. Баумана, д. 14, кв. 8", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "real address must be found: {:?}", entities);
+}

@@ -344,3 +344,29 @@ fn phone_mobile_code_in_9xx() {
         "mobile code must be in 900-999, got {code} in {out}"
     );
 }
+
+#[test]
+fn inn_pseudonym_not_starting_with_zero() {
+    let reg = load();
+    let text = "ИНН 7707083893";
+    let s = text.find("7707083893").unwrap();
+    let out = mask_pseudo(&reg, text, vec![ent("inn", s, s + 10)]);
+    let digits: String = out.chars().filter(|c| c.is_ascii_digit()).collect();
+    assert_eq!(digits.len(), 10);
+    assert!(inn_valid(&digits), "pseudonym INN must pass validator, got {out}");
+    assert_ne!(digits.chars().next().unwrap(), '0', "INN must not start with 0, got {out}");
+}
+
+#[test]
+fn card_pseudonym_starts_with_2_4_5() {
+    let reg = load();
+    let text = "карта 4111 1111 1111 1111";
+    let s = text.find("4111 1111 1111 1111").unwrap();
+    let out = mask_pseudo(&reg, text, vec![ent("card_number", s, s + "4111 1111 1111 1111".len())]);
+    let card = out.strip_prefix("карта ").unwrap();
+    let digits: String = card.chars().filter(|c| c.is_ascii_digit()).collect();
+    assert_eq!(digits.len(), 16);
+    assert!(luhn(&digits), "pseudonym card must pass Luhn, got {out}");
+    let first = digits.chars().next().unwrap();
+    assert!(matches!(first, '2' | '4' | '5'), "card must start with 2/4/5, got {out}");
+}

@@ -407,6 +407,11 @@ impl Detector {
         if self.regex_wrong_document_type(text, start, spec) {
             return None;
         }
+        // A number right after a document marker (накладная, партия, счёт-фактура, артикул,
+        // инвентарный номер, тикет, заказ) is a document number, not a passport.
+        if spec.id == "passport" && self.has_document_marker_before(text, start) {
+            return None;
+        }
         let (conf, skip_context_boost) =
             self.regex_confidence(span, spec, has_context, text, start, end)?;
         let conf = self.regex_final_confidence(span, spec, has_context, skip_context_boost, conf);
@@ -463,6 +468,23 @@ impl Detector {
         start: usize,
         end: usize,
     ) -> Option<(f32, bool)> {
+        // A 15-digit number is not a bank card (cards are 16, rarely 13/14/18/19) unless a
+        // card marker is present (e.g. "карта 427640003331517"). This rejects IMEI-like
+        // numbers that pass Luhn.
+        if spec.id == "card_number"
+            && digit_count(span) == 15
+            && !self.has_card_marker(text, start, end)
+        {
+            return None;
+        }
+        // A toll-free 8-800 / +7 800 number with a service marker (горячая линия, служба
+        // поддержки, колл-центр) is a service line, not a personal phone.
+        if spec.id == "phone"
+            && phone_code_is_800(span)
+            && self.has_service_marker_near(text, start, end)
+        {
+            return None;
+        }
         let mut conf = 0.4f32;
         let mut skip_context_boost = false;
         if spec.id == "snils" {
@@ -584,6 +606,11 @@ impl Detector {
         let (has_pii, has_non_pii) = self.fio_context(text, spec, window, start, end);
         // Non-PII marker without PII marker suppresses the candidate.
         if has_non_pii && !has_pii {
+            return None;
+        }
+        // A name in guillemets after a brand marker (e.g. "Магазин «Мария Ра»") is a
+        // brand name, not a FIO.
+        if in_guillemets(text, start, end) && self.has_brand_marker_before(text, start) {
             return None;
         }
         // A single-word FIO that is a public person's surname, near a birth marker,
@@ -1449,6 +1476,13 @@ impl Detector {
     ) -> Option<Entity> {
         let start = group[0].0;
         let end = group[group.len() - 1].1;
+        // A non-PII marker inside the span (e.g. "Накладная 9876 543210") marks it as a
+        // document number, not an address.
+        let span_lower = text[start..end].to_lowercase();
+        let non_pii = self.effective_non_pii_markers(spec);
+        if non_pii.iter().any(|m| contains_word_boundary(&span_lower, m)) {
+            return None;
+        }
         // A full address by structure (city + street + house, or street + house +
         // apartment) is confident on its own (0.7) without a marker. Only a non-pii
         // marker (отделение, офис...) lowers it.
@@ -1683,6 +1717,31 @@ impl Detector {
         markers.iter().any(|m| before.contains(m.as_str()) || after.contains(m.as_str()))
     }
 
+    /// True if a document marker (накладная, партия, счёт-фактура, артикул, инвентарный
+    /// номер, тикет, заказ) appears as a standalone word within a window before `start`.
+    /// A number right after such a marker is a document number, not a passport.
+    fn has_document_marker_before(&self, text: &str, start: usize) -> bool {
+        let before = context_window_before(text, start, 60).to_lowercase();
+        DOCUMENT_MARKERS.iter().any(|m| contains_word_boundary(&before, m))
+    }
+
+    /// True if a brand marker (магазин, компания, ООО, кафе, сеть, поезд, бренд) appears
+    /// as a standalone word within a window before `start`.
+    fn has_brand_marker_before(&self, text: &str, start: usize) -> bool {
+        let before = context_window_before(text, start, 40).to_lowercase();
+        BRAND_MARKERS.iter().any(|m| contains_word_boundary(&before, m))
+    }
+
+    /// True if a service marker (горячая линия, служба поддержки, колл-центр) appears as a
+    /// standalone word within a window around the span.
+    fn has_service_marker_near(&self, text: &str, start: usize, end: usize) -> bool {
+        let before = context_window_before(text, start, 40).to_lowercase();
+        let after = context_window_after(text, end, 40).to_lowercase();
+        SERVICE_MARKERS
+            .iter()
+            .any(|m| contains_word_boundary(&before, m) || contains_word_boundary(&after, m))
+    }
+
     /// True if a strong PII marker (client, passport, phone, etc.) is near the span. Birth
     /// markers ("родился") are excluded: they also appear in biographical references.
     fn strong_pii_marker(&self, text: &str, start: usize, end: usize) -> bool {
@@ -1816,6 +1875,21 @@ const DRIVER_LICENSE_DOC_MARKERS: &[&str] = &[
     "права", "прав", "водительское", "водительского", "водительские", "водительских",
     "удостоверение", "удостоверения", "удостоверению", "удостоверением", "ву", "в/у",
 ];
+
+/// Document/order markers: a numeric sequence right after one of these is a document
+/// number, not a passport or an address.
+const DOCUMENT_MARKERS: &[&str] = &[
+    "накладная", "партия", "счёт-фактура", "артикул", "инвентарный номер", "тикет", "заказ",
+];
+
+/// Brand markers: a name in guillemets right after one of these is a brand name, not a FIO.
+const BRAND_MARKERS: &[&str] = &[
+    "магазин", "компания", "ооо", "кафе", "сеть", "поезд", "бренд",
+];
+
+/// Service markers: a toll-free 8-800 number near one of these is a service line, not a
+/// personal phone.
+const SERVICE_MARKERS: &[&str] = &["горячая линия", "служба поддержки", "колл-центр"];
 
 /// True if the word is a passport series label ("серия" in any case).
 fn is_series_label(word: &str) -> bool {
@@ -1983,6 +2057,24 @@ fn is_standalone_word(haystack: &str, start: usize, end: usize) -> bool {
             .map(|c| c.is_alphanumeric())
             .unwrap_or(false);
     before_ok && after_ok
+}
+
+/// True if the byte range [start, end) lies inside guillemets «...» (an opening « before
+/// start with no closing » between it and start, and a closing » after end with no opening
+/// « between end and it).
+fn in_guillemets(text: &str, start: usize, end: usize) -> bool {
+    let before = &text[..start];
+    let after = &text[end..];
+    let open = before.rfind('«');
+    let close = after.find('»');
+    match (open, close) {
+        (Some(o), Some(c)) => {
+            let last_close = before.rfind('»');
+            let next_open = after.find('«');
+            (last_close.is_none_or(|lc| lc < o)) && (next_open.is_none_or(|no| no > c))
+        }
+        _ => false,
+    }
 }
 
 /// Threshold check honoring the trap policy: prefer_mask uses >=, prefer_skip uses >.
@@ -2329,6 +2421,18 @@ fn cyrillic_words(text: &str) -> Vec<(usize, usize, String, bool)> {
         out.push((m.start(), m.end(), lower, is_cap));
     }
     out
+}
+
+/// Counts ASCII digits in a span.
+fn digit_count(span: &str) -> usize {
+    span.chars().filter(|c| c.is_ascii_digit()).count()
+}
+
+/// True if a phone span is a toll-free 8-800 / +7 800 number (the 3-digit code right after
+/// the leading 7/8 is 800).
+fn phone_code_is_800(span: &str) -> bool {
+    let digits: Vec<char> = span.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.len() >= 4 && digits[1..4] == ['8', '0', '0']
 }
 
 fn validator_passes(v: Validator, span: &str) -> bool {
