@@ -1,8 +1,88 @@
+use crate::config::TrapPolicy;
 use crate::registry::{Registry, TypeSpec, Validator};
 use crate::types::Entity;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+
+/// Allow-list of public persons and organizations that must NOT be treated as personal data.
+/// A full-name match is a negative signal (−0.3); an organization near an address is −0.3.
+#[derive(Debug, Clone, Default)]
+pub struct Allowlist {
+    /// Normalized full names (lowercased, spaces collapsed, dots removed) as sorted word multisets.
+    public_persons: Vec<Vec<String>>,
+    /// Organization names, lowercased.
+    organizations: Vec<String>,
+}
+
+impl Allowlist {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn from_yaml(text: &str) -> Result<Self, serde_yaml_ng::Error> {
+        #[derive(serde::Deserialize)]
+        struct Root {
+            #[serde(default)]
+            public_persons: Vec<String>,
+            #[serde(default)]
+            organizations: Vec<String>,
+        }
+        let root: Root = serde_yaml_ng::from_str(text)?;
+        let public_persons = root
+            .public_persons
+            .iter()
+            .map(|p| normalize_name_words(p))
+            .collect();
+        let organizations = root.organizations.iter().map(|o| o.to_lowercase()).collect();
+        Ok(Self { public_persons, organizations })
+    }
+
+    /// True if the normalized words of a detected FIO (2+ words) are a subset of a public person's
+    /// full name. A single surname alone is not a match.
+    fn matches_person_subset(&self, words: &[String]) -> bool {
+        if words.len() < 2 {
+            return false;
+        }
+        let set: HashSet<&String> = words.iter().collect();
+        self.public_persons.iter().any(|p| {
+            let pset: HashSet<&String> = p.iter().collect();
+            set.iter().all(|w| pset.contains(w))
+        })
+    }
+
+    /// True if the word appears as a surname in any public person's full name.
+    fn is_public_surname(&self, word: &str) -> bool {
+        self.public_persons.iter().any(|p| p.iter().any(|w| w == word))
+    }
+
+    /// True if any organization name appears within `window` chars around byte range [start, end).
+    /// Orgs that are also non-PII markers are excluded (the marker penalty already handles them).
+    fn org_near(&self, text: &str, start: usize, end: usize, window: usize, exclude: &[String]) -> bool {
+        if self.organizations.is_empty() {
+            return false;
+        }
+        let before = context_window_before(text, start, window).to_lowercase();
+        let after = context_window_after(text, end, window).to_lowercase();
+        self.organizations.iter().any(|org| {
+            if exclude.iter().any(|m| org.contains(m)) {
+                return false;
+            }
+            before.contains(org) || after.contains(org)
+        })
+    }
+}
+
+/// Normalizes a full name: lowercase, collapse whitespace, drop dots (initials).
+fn normalize_name_words(s: &str) -> Vec<String> {
+    let mut words: Vec<String> = s
+        .split_whitespace()
+        .map(|w| w.chars().filter(|c| !matches!(c, '.' | ',')).collect::<String>().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    words.sort();
+    words
+}
 
 /// Named word lists (surnames, first names, patronymics, cities, public persons...). Lowercased.
 pub struct Dictionaries {
@@ -49,6 +129,8 @@ pub struct DetectOptions<'a> {
     pub min_confidence: f32,
     /// Substrings that must never be reported (bank office addresses, service phones).
     pub allow_substrings: &'a [String],
+    /// How to resolve a conflict between PII and non-PII markers.
+    pub trap_policy: TrapPolicy,
 }
 
 pub struct Detector {
@@ -56,11 +138,32 @@ pub struct Detector {
     dicts: std::sync::Arc<Dictionaries>,
     /// Birth dates older than this many years get a confidence penalty.
     historical_date_years: u32,
+    /// Public persons and organizations that must not be treated as PII.
+    allowlist: std::sync::Arc<Allowlist>,
 }
 
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
-        Self { registry, dicts, historical_date_years: 120 }
+        Self {
+            registry,
+            dicts,
+            historical_date_years: 120,
+            allowlist: std::sync::Arc::new(Allowlist::empty()),
+        }
+    }
+
+    /// Like `new` but with an allow-list of public persons and organizations.
+    pub fn with_allowlist(
+        registry: std::sync::Arc<Registry>,
+        dicts: std::sync::Arc<Dictionaries>,
+        allowlist: Allowlist,
+    ) -> Self {
+        Self {
+            registry,
+            dicts,
+            historical_date_years: 120,
+            allowlist: std::sync::Arc::new(allowlist),
+        }
     }
 
     /// Sets the historical-date threshold (years). Defaults to 120.
@@ -98,7 +201,34 @@ impl Detector {
             }
         }
 
+        self.apply_neighbor_boost(text, &mut candidates);
         resolve_overlaps(candidates)
+    }
+
+    /// Boosts FIO confidence by +0.2 when another confident entity (passport, INN, phone, card)
+    /// with confidence >= 0.9 is in the same sentence.
+    fn apply_neighbor_boost(&self, text: &str, candidates: &mut [Entity]) {
+        let confident: Vec<&Entity> = candidates
+            .iter()
+            .filter(|e| e.type_id != "fio" && e.confidence >= 0.9)
+            .collect();
+        if confident.is_empty() {
+            return;
+        }
+        let boosts: Vec<(usize, bool)> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.type_id == "fio")
+            .map(|(i, e)| {
+                let boosted = confident.iter().any(|c| same_sentence(text, e.start, c.start));
+                (i, boosted)
+            })
+            .collect();
+        for (i, boosted) in boosts {
+            if boosted {
+                candidates[i].confidence = (candidates[i].confidence + 0.2).min(1.0);
+            }
+        }
     }
 
     /// Generic regex-based detection used by all non-special types.
@@ -132,6 +262,10 @@ impl Detector {
                 if spec.validator != Validator::None {
                     if validator_passes(spec.validator, span) {
                         conf += 0.3;
+                    } else if spec.id == "card_number" && self.has_card_marker(text, start, end) {
+                        // A 16-digit card in 4x4 format after a card marker is masked even
+                        // when Luhn fails (synthetic jury numbers), at confidence 0.6.
+                        conf = 0.6;
                     } else {
                         continue;
                     }
@@ -143,9 +277,15 @@ impl Detector {
                 if spec.context_required && !has_context {
                     continue;
                 }
+                // A non-PII marker (e.g. "пример", "тест") suppresses the candidate outright, since it
+                // marks the value as not real data.
+                let has_non_pii = self.has_non_pii_context(text, start, end, spec);
+                if has_non_pii {
+                    continue;
+                }
                 conf = conf.min(1.0);
 
-                if conf < opts.min_confidence {
+                if !passes_threshold(conf, opts) {
                     continue;
                 }
 
@@ -174,9 +314,14 @@ impl Detector {
                 if !self.is_city(&t.lower) {
                     return true;
                 }
-                // A city token is kept when followed by initials (a FIO pattern),
-                // e.g. "г. Пушкин И. С.".
-                all_tokens.get(i + 1).map(|n| n.is_initial).unwrap_or(false)
+                // A city token is kept when followed by initials (a FIO pattern,
+                // e.g. "г. Пушкин И. С."), or when it is not preceded by a city marker
+                // (e.g. "Александр Сергеевич Пушкин" — "Пушкин" is a surname here).
+                let followed_by_initial = all_tokens.get(i + 1).map(|n| n.is_initial).unwrap_or(false);
+                if followed_by_initial {
+                    return true;
+                }
+                !preceded_by_city_marker(text, t.start)
             })
             .map(|(_, t)| NameToken {
                 start: t.start,
@@ -220,24 +365,50 @@ impl Detector {
                 let start = window[0].start;
                 let end = window[window.len() - 1].end;
                 let has_pii = self.has_pii_context(text, start, end, spec);
-                let has_non_pii = self.has_non_pii_context(text, start, end, spec);
+                let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
+                // A leading word that is itself a non-PII marker (e.g. "Поэт Александр Пушкин")
+                // counts as non-PII context even though it is inside the span.
+                if !has_non_pii {
+                    let non_pii = self.effective_non_pii_markers(spec);
+                    if non_pii.iter().any(|m| m == &window[0].lower) {
+                        has_non_pii = true;
+                    }
+                }
                 // Non-PII marker without PII marker suppresses the candidate.
                 if has_non_pii && !has_pii {
                     continue;
                 }
+                // A single-word FIO that is a public person's surname, near a birth marker,
+                // is a biographical reference (e.g. "Пушкин родился 6 июня 1799"), not a client.
+                if comps == 1
+                    && self.allowlist.is_public_surname(&window[0].lower)
+                    && self.has_birth_marker(text, start, end)
+                {
+                    continue;
+                }
                 let mut conf: f32 = match comps {
-                    3 => 0.9,
-                    2 => 0.7,
+                    3 => 0.6,
+                    2 => 0.5,
                     _ => 0.5,
                 };
-                if has_pii {
+                // Marker conflict is resolved by the trap policy.
+                if has_pii && has_non_pii {
+                    match opts.trap_policy {
+                        TrapPolicy::PreferMask => conf += 0.3,
+                        TrapPolicy::PreferSkip => conf -= 0.3,
+                    }
+                } else if has_pii {
                     conf += 0.3;
+                } else if has_non_pii {
+                    conf -= 0.3;
                 }
-                if has_non_pii {
+                // A span whose words are a subset of a public person's name is a negative signal.
+                let span_words = normalize_name_words(&text[start..end]);
+                if self.allowlist.matches_person_subset(&span_words) {
                     conf -= 0.3;
                 }
                 conf = conf.clamp(0.0, 1.0);
-                if conf < opts.min_confidence {
+                if !passes_threshold(conf, opts) {
                     continue;
                 }
                 candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -290,17 +461,43 @@ impl Detector {
     }
 
     fn has_pii_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
-        if spec.pii_context.is_empty() {
+        let markers = self.effective_pii_markers(spec);
+        if markers.is_empty() {
             return false;
         }
-        has_context_word_around(text, start, end, spec.context_window, &spec.pii_context)
+        has_context_word_around(text, start, end, spec.context_window, &markers)
     }
 
     fn has_non_pii_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
-        if spec.non_pii_context.is_empty() {
+        let markers = self.effective_non_pii_markers(spec);
+        if markers.is_empty() {
             return false;
         }
-        has_context_word_around(text, start, end, spec.context_window, &spec.non_pii_context)
+        has_context_word_around(text, start, end, spec.context_window, &markers)
+    }
+
+    /// Effective PII markers for a type: per-type `pii_markers`, else per-type `pii_context`,
+    /// else the global `context.pii_markers`.
+    fn effective_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
+        if !spec.pii_markers.is_empty() {
+            spec.pii_markers.clone()
+        } else if !spec.pii_context.is_empty() {
+            spec.pii_context.clone()
+        } else {
+            self.registry.context().pii_markers.clone()
+        }
+    }
+
+    /// Effective non-PII markers for a type: per-type `non_pii_markers`, else per-type
+    /// `non_pii_context`, else the global `context.non_pii_markers`.
+    fn effective_non_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
+        if !spec.non_pii_markers.is_empty() {
+            spec.non_pii_markers.clone()
+        } else if !spec.non_pii_context.is_empty() {
+            spec.non_pii_context.clone()
+        } else {
+            self.registry.context().non_pii_markers.clone()
+        }
     }
 
     /// Dates: only with a marker within the window before; future dates rejected; old dates penalized.
@@ -311,15 +508,14 @@ impl Detector {
             for m in re.find_iter(text) {
                 let start = m.start();
                 let mut end = m.end();
-                // Extend the span to include a trailing " г." or " года" right after the year.
+                // Extend the span to include a trailing suffix (e.g. " г.", " года") right after the year.
                 let after = &text[end..];
-                if let Some(rest) = after.strip_prefix(" г.") {
-                    if rest.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
-                        end += " г.".len();
-                    }
-                } else if let Some(rest) = after.strip_prefix(" года") {
-                    if rest.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
-                        end += " года".len();
+                for suffix in &spec.date_suffixes {
+                    if let Some(rest) = after.strip_prefix(suffix.as_str()) {
+                        if rest.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
+                            end += suffix.len();
+                            break;
+                        }
                     }
                 }
                 let span = &text[start..end];
@@ -340,7 +536,7 @@ impl Detector {
                 if age_exceeds(span, self.historical_date_years) {
                     conf -= 0.3;
                 }
-                if conf < opts.min_confidence {
+                if !passes_threshold(conf, opts) {
                     continue;
                 }
                 candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -361,13 +557,13 @@ impl Detector {
                     let span = &text[start..end];
                     // Only accept a place that looks like a toponym (city marker or city name),
                     // or when the marker itself strongly implies a place follows.
-                    let strong_marker = matches!(marker.as_str(), "место рождения" | "уроженец" | "уроженка");
+                    let strong_marker = spec.strong_markers.iter().any(|m| m == marker);
                     if !strong_marker && !self.looks_like_place(span) {
                         search_from = marker_end;
                         continue;
                     }
                     let conf = 0.7f32;
-                    if conf >= opts.min_confidence {
+                    if passes_threshold(conf, opts) {
                         candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
                     }
                 }
@@ -450,14 +646,26 @@ impl Detector {
             if count >= 2 {
                 let start = group[0].0;
                 let end = group[group.len() - 1].1;
-                let mut conf: f32 = if count >= 3 { 0.9 } else { 0.7 };
-                let window = context_window_before(text, start, spec.context_window);
-                let window_lower = window.to_lowercase();
-                if spec.context_words.iter().any(|w| window_lower.contains(w)) {
-                    conf += 0.1;
+                let mut conf: f32 = 0.5;
+                let has_pii = self.has_pii_context(text, start, end, spec);
+                let has_non_pii = self.has_non_pii_context(text, start, end, spec);
+                if has_pii && has_non_pii {
+                    match opts.trap_policy {
+                        TrapPolicy::PreferMask => conf += 0.3,
+                        TrapPolicy::PreferSkip => conf -= 0.3,
+                    }
+                } else if has_pii {
+                    conf += 0.3;
+                } else if has_non_pii {
+                    conf -= 0.3;
                 }
-                conf = conf.min(1.0);
-                if conf >= opts.min_confidence {
+                // An organization near the address is a negative signal.
+                let non_pii = self.effective_non_pii_markers(spec);
+                if self.allowlist.org_near(text, start, end, 60, &non_pii) {
+                    conf -= 0.3;
+                }
+                conf = conf.clamp(0.0, 1.0);
+                if passes_threshold(conf, opts) {
                     candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
                 }
             }
@@ -570,6 +778,22 @@ impl Detector {
         }
         false
     }
+
+    /// True if a card marker ("карта", "card", "номер карты", "№ карты") is near the span.
+    fn has_card_marker(&self, text: &str, start: usize, end: usize) -> bool {
+        const MARKERS: [&str; 4] = ["карта", "card", "номер карты", "№ карты"];
+        let before = context_window_before(text, start, 40).to_lowercase();
+        let after = context_window_after(text, end, 40).to_lowercase();
+        MARKERS.iter().any(|m| before.contains(m) || after.contains(m))
+    }
+
+    /// True if a birth marker ("родился", "родилась", "дата рождения", "д.р", "г.р") is near.
+    fn has_birth_marker(&self, text: &str, start: usize, end: usize) -> bool {
+        const MARKERS: [&str; 5] = ["родился", "родилась", "дата рождения", "д.р", "г.р"];
+        let before = context_window_before(text, start, 40).to_lowercase();
+        let after = context_window_after(text, end, 40).to_lowercase();
+        MARKERS.iter().any(|m| before.contains(m) || after.contains(m))
+    }
 }
 
 /// A capitalized Cyrillic word or an initial (single uppercase letter, optional period).
@@ -616,6 +840,24 @@ fn preceded_by_street_marker(text: &str, start: usize) -> bool {
     STREET_MARKERS.contains(&last_word.to_lowercase().as_str())
 }
 
+/// True if the token at `start` is preceded by a city marker ("г.", "город").
+fn preceded_by_city_marker(text: &str, start: usize) -> bool {
+    let prefix = &text[..start];
+    let trimmed = prefix.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let last_word_start = trimmed
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, _)| i + 1)
+        .unwrap_or(0);
+    let last_word = &trimmed[last_word_start..];
+    let last_word = last_word.trim_end_matches('.');
+    matches!(last_word.to_lowercase().as_str(), "г" | "город")
+}
+
 /// True if two name tokens are separated only by spaces or periods (initials).
 fn tokens_adjacent(text: &str, a: &NameToken, b: &NameToken) -> bool {
     let between = &text[a.end..b.start];
@@ -635,6 +877,22 @@ fn has_context_word_around(text: &str, start: usize, end: usize, window: usize, 
     let before = context_window_before(text, start, window).to_lowercase();
     let after = context_window_after(text, end, window).to_lowercase();
     words.iter().any(|w| before.contains(w) || after.contains(w))
+}
+
+/// Threshold check honoring the trap policy: prefer_mask uses >=, prefer_skip uses >.
+/// A small epsilon absorbs f32 rounding so that 0.6 - 0.3 == 0.3 compares as exactly 0.3.
+fn passes_threshold(conf: f32, opts: &DetectOptions<'_>) -> bool {
+    const EPS: f32 = 1e-6;
+    match opts.trap_policy {
+        TrapPolicy::PreferMask => conf + EPS >= opts.min_confidence,
+        TrapPolicy::PreferSkip => conf > opts.min_confidence + EPS,
+    }
+}
+
+/// True if two byte offsets are in the same sentence (no '.' or newline between them).
+fn same_sentence(text: &str, a: usize, b: usize) -> bool {
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    !text[lo..hi].contains(['.', '\n'])
 }
 
 /// Returns the slice of up to `window` chars immediately before byte offset `start`.

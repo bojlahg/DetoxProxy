@@ -7,6 +7,18 @@ use std::collections::HashSet;
 #[serde(rename_all = "snake_case")]
 pub enum Validator { None, Luhn, Inn, Snils, Date, Phone, Email }
 
+/// Global context markers applied to every type unless a type overrides them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextSpec {
+    /// Words that lower confidence when found near a candidate (e.g. "поэт", "отделение", "пример").
+    #[serde(default)]
+    pub non_pii_markers: Vec<String>,
+    /// Words that raise confidence when found near a candidate (e.g. "клиент", "паспорт").
+    #[serde(default)]
+    pub pii_markers: Vec<String>,
+}
+
 /// Declarative description of one PII type. Loaded from YAML; adding a type needs no code.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,6 +65,18 @@ pub struct TypeSpec {
     /// Non-PII markers that lower confidence when found near a candidate (e.g. "поэт", "писатель").
     #[serde(default)]
     pub non_pii_context: Vec<String>,
+    /// Per-type override for the global `context.non_pii_markers`; empty = use global.
+    #[serde(default)]
+    pub non_pii_markers: Vec<String>,
+    /// Per-type override for the global `context.pii_markers`; empty = use global.
+    #[serde(default)]
+    pub pii_markers: Vec<String>,
+    /// Trailing suffixes that extend a date span (e.g. " г.", " года").
+    #[serde(default)]
+    pub date_suffixes: Vec<String>,
+    /// Markers that strongly imply a place follows (birth_place), even without a toponym.
+    #[serde(default)]
+    pub strong_markers: Vec<String>,
 }
 fn default_context_window() -> usize { 40 }
 fn default_validator() -> Validator { Validator::None }
@@ -72,6 +96,7 @@ pub enum RegistryError {
 pub struct Registry {
     specs: Vec<TypeSpec>,
     compiled: Vec<Vec<regex::Regex>>,
+    context: ContextSpec,
 }
 
 impl Registry {
@@ -79,12 +104,14 @@ impl Registry {
         #[derive(Deserialize)]
         struct Root {
             types: Vec<TypeSpec>,
+            #[serde(default)]
+            context: ContextSpec,
         }
         let root: Root = serde_yaml_ng::from_str(text)?;
-        Self::from_specs(root.types)
+        Self::from_specs(root.types, root.context)
     }
 
-    pub fn from_specs(specs: Vec<TypeSpec>) -> Result<Self, RegistryError> {
+    pub fn from_specs(specs: Vec<TypeSpec>, context: ContextSpec) -> Result<Self, RegistryError> {
         let mut seen = HashSet::new();
         for spec in &specs {
             if !seen.insert(spec.id.clone()) {
@@ -104,11 +131,15 @@ impl Registry {
             }
             compiled.push(pats);
         }
-        Ok(Self { specs, compiled })
+        Ok(Self { specs, compiled, context })
     }
 
     pub fn types(&self) -> &[TypeSpec] {
         &self.specs
+    }
+
+    pub fn context(&self) -> &ContextSpec {
+        &self.context
     }
 
     pub fn get(&self, id: &str) -> Option<&TypeSpec> {

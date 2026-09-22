@@ -1,3 +1,4 @@
+use pii_guard::config::TrapPolicy;
 use pii_guard::detect::{DetectOptions, Detector, Dictionaries};
 use pii_guard::registry::Registry;
 use pii_guard::types::Entity;
@@ -15,6 +16,7 @@ fn detect(text: &str) -> Vec<Entity> {
         enabled_types: None,
         min_confidence: 0.0,
         allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
     };
     detector().detect(text, &opts)
 }

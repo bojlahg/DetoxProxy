@@ -1,6 +1,75 @@
 # PII type registry. Adding a new type needs no code: patterns, context words and
 # validator are data. Patterns are case-insensitive and unicode.
 # Types with empty `patterns` are detected by dictionaries/context in a later task (T05).
+# Global context markers apply to every type unless a type overrides them via
+# `non_pii_markers` / `pii_markers`.
+context:
+  non_pii_markers:
+    - поэт
+    - писатель
+    - писательница
+    - композитор
+    - художник
+    - учёный
+    - режиссёр
+    - актёр
+    - актриса
+    - президент
+    - император
+    - царь
+    - князь
+    - памятник
+    - музей
+    - улица имени
+    - площадь имени
+    - роман
+    - стихотворение
+    - произведение
+    - автор
+    - книга
+    - герой
+    - персонаж
+    - фильм
+    - отделение
+    - офис
+    - филиал
+    - головной офис
+    - адрес банка
+    - юридический адрес
+    - горячая линия
+    - приёмная
+    - пример
+    - тест
+    - тестовый
+    - образец
+    - шаблон
+  pii_markers:
+    - клиент
+    - клиентка
+    - гражданин
+    - гражданка
+    - заявитель
+    - заёмщик
+    - держатель
+    - пользователь
+    - сотрудник
+    - сотрудница
+    - абонент
+    - пациент
+    - фио
+    - паспорт
+    - родился
+    - родилась
+    - проживает
+    - зарегистрирован
+    - прописан
+    - телефон
+    - тел
+    - прошу
+    - мой
+    - моя
+    - мне
+    - я
 types:
   - id: fio
     name: Full name
@@ -16,6 +85,7 @@ types:
     name: Birth date
     token_label: BDATE
     context_words: [родился, родилась, дата рождения, д.р, г.р, "др:", day of birth]
+    date_suffixes: [" г.", " года"]
     patterns:
       - '\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
       - '\b\d{4}-\d{2}-\d{2}\b'
@@ -26,6 +96,7 @@ types:
     name: Birth place
     token_label: BPLACE
     context_words: [место рождения, родился, родилась, уроженец, уроженка]
+    strong_markers: [место рождения, уроженец, уроженка]
     patterns: []
 
   - id: passport
@@ -68,6 +139,7 @@ types:
     name: Passport issue date
     token_label: ISSDATE
     context_words: [дата выдачи, выдан, выдана, выдано, выдачи]
+    date_suffixes: [" г.", " года"]
     patterns:
       - '\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
       - '\b\d{4}-\d{2}-\d{2}\b'

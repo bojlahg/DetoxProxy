@@ -1,3 +1,4 @@
+use pii_guard::config::TrapPolicy;
 use pii_guard::detect::{DetectOptions, Detector, Dictionaries};
 use pii_guard::registry::Registry;
 use pii_guard::types::Entity;
@@ -14,6 +15,7 @@ fn detect(text: &str) -> Vec<Entity> {
         enabled_types: None,
         min_confidence: 0.0,
         allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
     };
     detector().detect(text, &opts)
 }
@@ -47,8 +49,9 @@ fn card_number_variants() {
 }
 
 #[test]
-fn card_number_invalid_luhn_not_found() {
-    assert_not_found("карта 4276 3800 1234 5674", "card_number");
+fn card_number_invalid_luhn_with_marker_found() {
+    assert_span("карта 4276 3800 1234 5674", "card_number", "4276 3800 1234 5674");
+    assert_not_found("4276 3800 1234 5674", "card_number");
 }
 
 #[test]
@@ -140,6 +143,7 @@ fn allow_substrings_drops_phone() {
         enabled_types: None,
         min_confidence: 0.0,
         allow_substrings: &allow,
+        trap_policy: TrapPolicy::PreferMask,
     };
     let entities = detector().detect("горячая линия 8 800 555-35-35", &opts);
     assert!(!entities.iter().any(|e| e.type_id == "phone"), "phone not dropped: {:?}", entities);
@@ -151,6 +155,7 @@ fn min_confidence_cuts_non_validated() {
         enabled_types: None,
         min_confidence: 0.95,
         allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
     };
     let entities = detector().detect("паспорт 4509 123456", &opts);
     assert!(
@@ -177,6 +182,7 @@ fn detect_performance() {
         enabled_types: None,
         min_confidence: 0.0,
         allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
     };
     let det = detector();
     let start = std::time::Instant::now();

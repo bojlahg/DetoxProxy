@@ -52,6 +52,7 @@ struct MaskResponse {
     text: String,
     session_id: String,
     entities: Vec<MaskEntity>,
+    mappings: Vec<crate::types::Mapping>,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +162,7 @@ fn detect_options<'a>(sys: &'a SystemConfig) -> DetectOptions<'a> {
         enabled_types,
         min_confidence: sys.min_confidence,
         allow_substrings: &sys.allow_substrings,
+        trap_policy: sys.trap_policy,
     }
 }
 
@@ -390,6 +392,7 @@ async fn mask_handler(
             text: res.text,
             session_id,
             entities: out_entities,
+            mappings: res.mappings,
         })
     })
     .await;
@@ -625,7 +628,10 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         }
         _ => Arc::new(crate::detect::Dictionaries::empty()),
     };
-    let detector = crate::detect::Detector::new(registry.clone(), dicts);
+    let allowlist_text = std::fs::read_to_string(&cfg.allowlist_file)?;
+    let allowlist = crate::detect::Allowlist::from_yaml(&allowlist_text)?;
+    let detector = crate::detect::Detector::with_allowlist(registry.clone(), dicts, allowlist)
+        .with_historical_date_years(cfg.server.historical_date_years);
 
     let store = crate::store::MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),

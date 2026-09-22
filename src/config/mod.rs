@@ -20,6 +20,17 @@ pub enum TokenNumbering {
     Hash,
 }
 
+/// How to resolve a conflict when both PII and non-PII markers are near a candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrapPolicy {
+    /// Treat the candidate as PII (leak is worse than over-masking).
+    #[default]
+    PreferMask,
+    /// Treat the candidate as non-PII.
+    PreferSkip,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum TypeSelection {
@@ -72,6 +83,8 @@ pub struct SystemConfig {
     pub min_confidence: f32,
     #[serde(default)]
     pub allow_substrings: Vec<String>,
+    #[serde(default)]
+    pub trap_policy: TrapPolicy,
     #[serde(default = "default_session_mode")]
     pub session_mode: SessionMode,
     #[serde(default = "default_token_numbering")]

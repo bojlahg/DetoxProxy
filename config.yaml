@@ -32,6 +32,18 @@ systems:
     session_mode: stateful
     token_numbering: hash
     hash_salt: "chatbot-salt-2026"
+  - id: strict
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: true
+    min_confidence: 0.3
+    allow_substrings: []
+    trap_policy: prefer_skip
+    session_mode: stateless
+    token_numbering: sequential
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 dictionaries_dir: data/dict
