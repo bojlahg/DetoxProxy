@@ -153,6 +153,30 @@
     <div class="meta" id="unmaskMeta"></div>
     <div class="out" id="unmaskOut"><span class="placeholder">Результат восстановления появится здесь</span></div>
   </div>
+
+  <div class="card">
+    <div class="hint" style="margin-bottom:10px">Система → DetoxProxy: маскирование → LLM → DetoxProxy: восстановление → Система</div>
+    <div class="field">
+      <label for="llmReq">Запрос к LLM</label>
+      <textarea id="llmReq">Напиши письмо с отказом Иванову Ивану Ивановичу, ИНН 500100732259, тел. +7 912 345-67-89</textarea>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="llmBtn">Отправить в LLM</button>
+    </div>
+    <div class="meta" id="llmMeta"></div>
+    <div class="field" style="margin-top:12px">
+      <label for="llmSent">Ушло в LLM</label>
+      <div class="out" id="llmSent"><span class="placeholder">Замаскированный запрос появится здесь</span></div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label for="llmModel">Ответила LLM</label>
+      <div class="out" id="llmModel"><span class="placeholder">Ответ модели появится здесь</span></div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label for="llmUser">Получил пользователь</label>
+      <div class="out" id="llmUser"><span class="placeholder">Восстановленный ответ появится здесь</span></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -172,6 +196,12 @@
   const detectSrc = document.getElementById("detectSrc");
   const unmaskOut = document.getElementById("unmaskOut");
   const unmaskMeta = document.getElementById("unmaskMeta");
+  const llmReq = document.getElementById("llmReq");
+  const llmBtn = document.getElementById("llmBtn");
+  const llmMeta = document.getElementById("llmMeta");
+  const llmSent = document.getElementById("llmSent");
+  const llmModel = document.getElementById("llmModel");
+  const llmUser = document.getElementById("llmUser");
 
   let currentPayloadId = null;
 
@@ -332,9 +362,69 @@
     });
   }
 
+  function sendToLlm() {
+    const content = llmReq.value;
+    llmBtn.disabled = true;
+    setText(llmSent, "…");
+    setText(llmModel, "…");
+    setText(llmUser, "…");
+    setMeta(llmMeta, null, null, null);
+    const started = performance.now();
+    fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-System-Id": systemEl.value,
+        "X-Detox-Debug": "1"
+      },
+      body: JSON.stringify({
+        model: "demo",
+        messages: [{ role: "user", content: content }]
+      })
+    }).then(function (resp) {
+      const ms = Math.round(performance.now() - started);
+      return resp.text().then(function (text) {
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) { json = null; }
+        return { status: resp.status, ms: ms, text: text, json: json };
+      });
+    }).then(function (res) {
+      llmBtn.disabled = false;
+      setMeta(llmMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
+      if (res.status >= 200 && res.status < 300 && res.json) {
+        if (res.json.detox && res.json.detox.masked_messages && res.json.detox.masked_messages.length > 0) {
+          setText(llmSent, res.json.detox.masked_messages[0].content);
+        } else {
+          setText(llmSent, "нет данных");
+        }
+        if (res.json.detox && typeof res.json.detox.model_output === "string") {
+          setText(llmModel, res.json.detox.model_output);
+        } else {
+          setText(llmModel, "нет данных");
+        }
+        if (res.json.choices && res.json.choices[0] && res.json.choices[0].message) {
+          setText(llmUser, res.json.choices[0].message.content);
+        } else {
+          setText(llmUser, "нет данных");
+        }
+      } else {
+        setText(llmSent, errorMessage(res));
+        setText(llmModel, "");
+        setText(llmUser, "");
+      }
+    }).catch(function (err) {
+      llmBtn.disabled = false;
+      setMeta(llmMeta, null, 0, String(err));
+      setText(llmSent, String(err));
+      setText(llmModel, "");
+      setText(llmUser, "");
+    });
+  }
+
   maskBtn.addEventListener("click", mask);
   detectBtn.addEventListener("click", detect);
   unmaskBtn.addEventListener("click", unmask);
+  llmBtn.addEventListener("click", sendToLlm);
 })();
 </script>
 </body>

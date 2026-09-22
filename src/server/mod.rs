@@ -933,6 +933,11 @@ async fn chat_completions_handler(
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"),
     };
     let want_stream = req.stream.unwrap_or(false);
+    let want_debug = headers
+        .get("x-detox-debug")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
 
     let (masked, mask_us) = mask_chat_request(&state, &sys, &req, &rid);
     let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
@@ -972,11 +977,17 @@ async fn chat_completions_handler(
     };
 
     let t0 = Instant::now();
-    let restored = unmask(&model_text, &masked.mappings);
+    let restored = if sys.unmask_enabled {
+        unmask(&model_text, &masked.mappings)
+    } else {
+        model_text.clone()
+    };
     let unmask_us = t0.elapsed().as_micros() as u64;
     let model = req.model.clone().unwrap_or_default();
 
-    let mut resp = build_chat_response(want_stream, &rid, model, restored);
+    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text);
+
+    let mut resp = build_chat_response(want_stream, &rid, model, restored, detox);
     resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
     resp.headers_mut()
         .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
@@ -986,6 +997,33 @@ async fn chat_completions_handler(
     let log = RequestLog { latency_ms: latency, timing: t };
     log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, status);
     resp
+}
+
+/// Builds the `detox` debug view when the client requested it for a non-streaming response.
+/// Contains only masked texts and the raw model output — never original PII values.
+fn build_detox_debug(
+    want_debug: bool,
+    want_stream: bool,
+    req: &crate::llm::ChatRequest,
+    masked: &crate::llm::MaskedMessages,
+    model_text: String,
+) -> Option<crate::llm::DetoxDebug> {
+    if !want_debug || want_stream {
+        return None;
+    }
+    let masked_messages: Vec<crate::llm::MaskedMessage> = req
+        .messages
+        .iter()
+        .zip(masked.texts.iter())
+        .map(|(m, t)| crate::llm::MaskedMessage {
+            role: m.role.clone(),
+            content: t.clone(),
+        })
+        .collect();
+    Some(crate::llm::DetoxDebug {
+        masked_messages,
+        model_output: model_text,
+    })
 }
 
 /// Masks all chat messages, persists the shared mapping table and returns the masked result
@@ -1041,7 +1079,13 @@ fn build_upstream_body(
 }
 
 /// Builds the client response as SSE (streaming) or JSON (non-streaming).
-fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: String) -> Response {
+fn build_chat_response(
+    want_stream: bool,
+    rid: &str,
+    model: String,
+    restored: String,
+    detox: Option<crate::llm::DetoxDebug>,
+) -> Response {
     if want_stream {
         let chunk = serde_json::json!({
             "id": rid,
@@ -1072,6 +1116,7 @@ fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: St
                 },
                 finish_reason: "stop",
             }],
+            detox,
         };
         Json(json).into_response()
     }

@@ -323,3 +323,85 @@ async fn case_hints_disabled_no_system_message() {
         "upstream must NOT receive the case-hints system message"
     );
 }
+
+#[tokio::test]
+async fn chatbot_demo_keeps_tokens_no_restore() {
+    let cfg = base_cfg();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Клиент Иванов Иван Иванович, ИНН 7707083893"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[("X-System-Id", "chatbot")]).await;
+    assert_eq!(st, 200, "body: {text}");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    let content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(content.contains("<<"), "content: {content}");
+    assert!(!content.contains("Иванов"), "content: {content}");
+    assert!(!content.contains("7707083893"), "content: {content}");
+}
+
+#[tokio::test]
+async fn autotest_demo_restores_values() {
+    let cfg = base_cfg();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Клиент Иванов Иван Иванович, ИНН 7707083893"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[("X-System-Id", "autotest")]).await;
+    assert_eq!(st, 200, "body: {text}");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    let content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(content.contains("Иванов Иван Иванович"), "content: {content}");
+    assert!(content.contains("7707083893"), "content: {content}");
+}
+
+#[tokio::test]
+async fn debug_header_adds_detox_field() {
+    let cfg = base_cfg();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Клиент Иванов Иван Иванович, ИНН 7707083893"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")]).await;
+    assert_eq!(st, 200, "body: {text}");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    assert!(json["detox"].is_object(), "detox missing: {text}");
+    let masked = json["detox"]["masked_messages"][0]["content"].as_str().unwrap();
+    assert!(masked.contains("<<FIO_1"), "masked: {masked}");
+    assert!(!masked.contains("Иванов"), "masked leaked original: {masked}");
+    let model_out = json["detox"]["model_output"].as_str().unwrap();
+    assert!(model_out.contains("<<FIO_1"), "model_output: {model_out}");
+}
+
+#[tokio::test]
+async fn no_debug_header_no_detox_field() {
+    let cfg = base_cfg();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Клиент Иванов Иван Иванович, ИНН 7707083893"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[("X-System-Id", "autotest")]).await;
+    assert_eq!(st, 200, "body: {text}");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    assert!(json.get("detox").is_none(), "detox should be absent: {text}");
+}
