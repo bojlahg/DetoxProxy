@@ -840,3 +840,31 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/store/mod.rs, src/server/mod.rs, config.yaml, tests/store.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T26">
+Привет. Корректное завершение сервиса (src/server/mod.rs). Сейчас по SIGTERM процесс умирает сразу и рвёт текущие запросы — при перезапуске во время нагрузочной проверки это ошибки у проверяющего.
+
+Сделать:
+1. `axum::serve(...).with_graceful_shutdown(signal)` — сигнал по SIGTERM (unix) и Ctrl+C (кроссплатформенно, `tokio::signal::ctrl_c`).
+2. Как только сигнал получен: `/readyz` начинает отвечать 503 (флаг `AtomicBool` в AppState), `/healthz` продолжает 200. Пауза `server.shutdown_grace_ms` (новое поле, default 500) перед тем, как перестать принимать новые соединения — чтобы балансировщик успел увести трафик.
+3. Дождаться завершения текущих запросов, но не дольше `server.shutdown_timeout_ms` (default 10000).
+4. В лог — `shutdown started` и `shutdown complete` с числом обработанных за время ожидания запросов. Значений ПД в логе нет.
+5. В systemd-юните это уже работает по умолчанию (systemd шлёт SIGTERM) — менять ничего не нужно, но проверь, что процесс завершается с кодом 0.
+
+Тесты в tests/http.rs: поднять сервис в тесте, отправить сигнал завершения через тот же механизм (вынеси shutdown-сигнал в параметр, чтобы тест мог его дёрнуть), убедиться: (а) начатый долгий запрос (большой текст) доходит до ответа 200; (б) после сигнала `/readyz` отвечает 503; (в) сервер завершается сам.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21`.
+
+Файлы: src/server/mod.rs, src/config/mod.rs, tests/http.rs. Каталог logs/ не трогай.
+</task>
+
+<task id="T27">
+Привет. Только тесты, код продукта не трогай (если найдёшь баг — опиши в REPORT.md, не чини).
+
+1. `tests/unicode_safety.rs` идёт 107 секунд в debug и тормозит каждую приёмку. Ускорь до < 15 секунд, сохранив смысл: бери из каждого файла tests/data/*.jsonl и tests/data/holdout/*.jsonl не первые 40 строк подряд, а 15 штук с равномерным шагом (`step_by`), и для варианта с U+202F — только 5 из них; тексты длиннее 4 КБ пропускай (их проверяет отдельный тест на один большой текст с NBSP). Ручные строки и проверки границ символов оставь все.
+2. Новый тест `tests/perf_guard.rs`: плотный текст — «Клиент ИНН 7707083893. » × 400 (≈9 КБ, 400 сущностей). В release-сборке `Detector::detect` + `mask` должны укладываться в 120 мс (лучшее из 3 прогонов); в debug тест ничего не проверяет (`if cfg!(debug_assertions) { return; }`). Сейчас это ~150 мс в release, то есть тест должен падать — так и оставь: он фиксирует известную проблему, чинить её будет задача T09. В начале файла комментарий: `// Fails until T09 makes context checks linear in the number of entities.` Из-за этого добавь атрибут `#[ignore]`, чтобы обычный `cargo test` был зелёным, а запуск — `cargo test --release --test perf_guard -- --ignored --nocapture`.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && timeout 30 cargo test --test unicode_safety && cargo test && git diff --quiet -- src`.
+
+Файлы: tests/unicode_safety.rs, tests/perf_guard.rs. Каталог logs/ не трогай.
+</task>

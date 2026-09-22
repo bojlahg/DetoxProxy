@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -44,6 +45,8 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path,
+        shutting_down: Arc::new(AtomicBool::new(false)),
+        processed: Arc::new(AtomicU64::new(0)),
     })
 }
 
@@ -740,4 +743,63 @@ allowlist_file: data/allowlist.yaml
     assert!(json["result"].as_str().unwrap().contains("<<INN_1>>"));
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn graceful_shutdown() {
+    let cfg = load_root_config();
+    let state = build_state(cfg);
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let listener = listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    });
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let serve_task = tokio::spawn(async move {
+        detox_proxy::server::serve_with_signal(listener, app, state, async move {
+            let _ = rx.await;
+        })
+        .await
+        .expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let client = reqwest::Client::new();
+    let big = "Клиент ИНН 7707083893, тел. +7 912 345-67-89. ".repeat(1000);
+    let big_task = {
+        let client = client.clone();
+        let base = base.clone();
+        tokio::spawn(async move {
+            client
+                .post(format!("{}/process", base))
+                .json(&serde_json::json!({"payload": big, "payload_id": "shutdown-big"}))
+                .send()
+                .await
+                .expect("send big")
+        })
+    };
+
+    tx.send(()).expect("send signal");
+
+    let mut readyz_503 = false;
+    for _ in 0..50 {
+        let (st, _) = get(&base, "/readyz").await;
+        if st == 503 {
+            readyz_503 = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(readyz_503, "readyz did not become 503 after signal");
+
+    let (st, _) = get(&base, "/healthz").await;
+    assert_eq!(st, 200, "healthz must stay 200 during shutdown");
+
+    let big_resp = big_task.await.expect("join big");
+    assert_eq!(big_resp.status().as_u16(), 200, "in-flight request must complete");
+
+    let _ = tokio::time::timeout(Duration::from_secs(15), serve_task)
+        .await
+        .expect("server did not shut down by itself");
 }

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,6 +36,8 @@ pub struct AppState {
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub heavy: Arc<tokio::sync::Semaphore>,
     pub config_path: PathBuf,
+    pub shutting_down: Arc<AtomicBool>,
+    pub processed: Arc<AtomicU64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -783,7 +787,7 @@ async fn chat_completions_handler(
     let want_stream = req.stream.unwrap_or(false);
 
     let masked = mask_chat_request(&state, &sys, &req, &rid);
-    let upstream_body = build_upstream_body(&body, &masked, &req);
+    let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
 
     let api_key = llm_cfg
         .api_key_env
@@ -852,20 +856,27 @@ fn mask_chat_request(
     masked
 }
 
-/// Replaces `messages` and forces `stream: true` in the upstream body.
+/// System message prepended to the upstream request when `llm.case_hints` is enabled. Tells the
+/// model how to request a grammatical case for a placeholder token.
+const CASE_HINTS_PROMPT: &str = "Placeholders like <<FIO_1>> stand for hidden personal data. Keep them unchanged. If a Russian grammatical case is needed, append it inside the brackets: <<FIO_1:gen>>, <<FIO_1:dat>>, <<FIO_1:acc>>, <<FIO_1:ins>>, <<FIO_1:prep>>; nominative is <<FIO_1:nom>>.";
+
+/// Replaces `messages` and forces `stream: true` in the upstream body. When `case_hints` is set, a
+/// system message is prepended as the first message.
 fn build_upstream_body(
     body: &axum::body::Bytes,
     masked: &crate::llm::MaskedMessages,
     req: &crate::llm::ChatRequest,
+    case_hints: bool,
 ) -> Value {
     let mut upstream_body = serde_json::from_slice::<Value>(body).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut upstream_body {
-        let msgs: Vec<Value> = masked
-            .texts
-            .iter()
-            .zip(req.messages.iter())
-            .map(|(t, m)| serde_json::json!({ "role": m.role, "content": t }))
-            .collect();
+        let mut msgs: Vec<Value> = Vec::with_capacity(masked.texts.len() + 1);
+        if case_hints {
+            msgs.push(serde_json::json!({ "role": "system", "content": CASE_HINTS_PROMPT }));
+        }
+        for (t, m) in masked.texts.iter().zip(req.messages.iter()) {
+            msgs.push(serde_json::json!({ "role": m.role, "content": t }));
+        }
         map.insert("messages".to_string(), Value::Array(msgs));
         map.insert("stream".to_string(), Value::Bool(true));
     }
@@ -910,6 +921,9 @@ fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: St
 }
 
 async fn readyz(State(state): State<Arc<AppState>>) -> StatusCode {
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     let cfg = state.config.load();
     if cfg.systems.is_empty() || state.registry.load().types().is_empty() {
         StatusCode::SERVICE_UNAVAILABLE
@@ -938,6 +952,7 @@ async fn inflight_middleware(
     };
     metrics::gauge!("pii_inflight").set(state.inflight.available_permits() as f64);
     let resp = next.run(req).await;
+    state.processed.fetch_add(1, Ordering::SeqCst);
     drop(permit);
     metrics::gauge!("pii_inflight").set(state.inflight.available_permits() as f64);
     resp
@@ -1051,6 +1066,8 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: config_path.clone(),
+        shutting_down: Arc::new(AtomicBool::new(false)),
+        processed: Arc::new(AtomicU64::new(0)),
     });
 
     store.spawn_sweeper(Duration::from_secs(5));
@@ -1063,8 +1080,45 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
             let _ = tcp.set_nodelay(true);
         });
     tracing::info!(listen = %cfg.server.listen, "server started");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    serve_with_signal(listener, app, state, shutdown_signal()).await?;
     Ok(())
+}
+
+/// Serves the app and shuts down gracefully when `signal` fires. On signal the `/readyz` flag is
+/// set, the server waits `shutdown_grace_ms` (so a load balancer can drain traffic), then stops
+/// accepting new connections and waits up to `shutdown_timeout_ms` for in-flight requests.
+pub async fn serve_with_signal<L, F>(
+    listener: L,
+    app: Router,
+    state: Arc<AppState>,
+    signal: F,
+) -> anyhow::Result<()>
+where
+    L: axum::serve::Listener + Send + 'static,
+    L::Addr: std::fmt::Debug,
+    F: Future<Output = ()> + Send + 'static,
+{
+    let grace = Duration::from_millis(state.config.load().server.shutdown_grace_ms);
+    let timeout = Duration::from_millis(state.config.load().server.shutdown_timeout_ms);
+
+    let signal_state = state.clone();
+    let signal = async move {
+        signal.await;
+        signal_state.shutting_down.store(true, Ordering::SeqCst);
+        tracing::info!("shutdown started");
+        tokio::time::sleep(grace).await;
+    };
+
+    let processed_before = state.processed.load(Ordering::SeqCst);
+    let serve = axum::serve(listener, app).with_graceful_shutdown(signal);
+    let result = tokio::time::timeout(timeout, serve).await;
+    let processed_after = state.processed.load(Ordering::SeqCst);
+    tracing::info!(processed = processed_after - processed_before, "shutdown complete");
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Ok(()),
+    }
 }
 
 /// Reads and validates the config file.
