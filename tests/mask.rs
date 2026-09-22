@@ -416,3 +416,43 @@ fn count_unresolved_tokens_with_case_suffix() {
     assert_eq!(count_unresolved_tokens("<<FIO_1:дат>>", &mappings), 0);
     assert_eq!(count_unresolved_tokens("<<FIO_1:дат>> <<INN_1>>", &mappings), 1);
 }
+
+#[test]
+fn remove_unmask_returns_text_unchanged() {
+    let reg = load();
+    let text = "паспорт Сидоров Пётр Иванович, ИНН 7707083893";
+    let f = text.find("Сидоров Пётр Иванович").unwrap();
+    let i = text.find("7707083893").unwrap();
+    let entities = vec![
+        ent("fio", f, f + "Сидоров Пётр Иванович".len(), 0.9),
+        ent("inn", i, i + 10, 0.9),
+    ];
+    let overrides = HashMap::new();
+    let opts = MaskOptions {
+        default_mode: MaskMode::Remove,
+        overrides: &overrides,
+        combination_rule: false,
+    };
+    let res = mask(text, &entities, &reg, &opts);
+    assert_eq!(res.text, "паспорт [removed], ИНН [removed]");
+    let restored = unmask(&res.text, &res.mappings);
+    assert_eq!(restored, res.text, "remove mode must not be reversible");
+}
+
+#[test]
+fn synthetic_address_replaces_city_and_street() {
+    let reg = load();
+    let text = "проживает: г. Казань, ул. Баумана, д. 14, кв. 8";
+    let addr = "г. Казань, ул. Баумана, д. 14, кв. 8";
+    let s = text.find(addr).unwrap();
+    let entities = vec![ent("address", s, s + addr.len(), 0.9)];
+    let overrides = HashMap::new();
+    let opts = MaskOptions {
+        default_mode: MaskMode::Synthetic,
+        overrides: &overrides,
+        combination_rule: false,
+    };
+    let res = mask(text, &entities, &reg, &opts);
+    assert!(!res.text.contains("Казань"), "city must be replaced, got {}", res.text);
+    assert!(!res.text.contains("Баумана"), "street must be replaced, got {}", res.text);
+}

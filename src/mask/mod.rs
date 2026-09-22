@@ -232,7 +232,14 @@ fn replacement_for(
                     spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
                 )
             }
-            MaskMode::Synthetic => synthetic(original, &e.type_id),
+            MaskMode::Synthetic => synthetic(
+                original,
+                &e.type_id,
+                registry,
+                numbering,
+                token_state.text,
+                &mut token_state.used_pseudonyms,
+            ),
             MaskMode::Pseudonym => pseudonym(
                 original,
                 &e.type_id,
@@ -325,13 +332,16 @@ fn hash_token(salt: &str, normalized: &str) -> String {
 /// case and the type is inflectable, the original is inflected to that case. Unknown tokens are
 /// left untouched.
 pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
+    let token_map: HashMap<String, &Mapping> = mappings
+        .iter()
+        .filter(|m| TOKEN_RE.is_match(&m.masked))
+        .map(|m| (norm_compare(&m.masked), m))
+        .collect();
     let mut result = TOKEN_RE
         .replace_all(text, |caps: &regex::Captures| {
             let token = &caps[0];
             let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
-            let matched = mappings
-                .iter()
-                .find(|m| norm_compare(&m.masked) == norm_compare(&base_token));
+            let matched = token_map.get(&norm_compare(&base_token)).copied();
             match (matched, caps.get(3)) {
                 (Some(m), Some(suffix)) => {
                     if let Some(case) = morph::Case::parse(suffix.as_str()) {
@@ -351,7 +361,7 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
 
     let mut non_token: Vec<&Mapping> = mappings
         .iter()
-        .filter(|m| !TOKEN_RE.is_match(&m.masked))
+        .filter(|m| !TOKEN_RE.is_match(&m.masked) && m.masked != "[removed]")
         .collect();
     non_token.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
     for m in non_token {
@@ -436,13 +446,23 @@ fn stars_generic(value: &str, keep_prefix: usize, keep_suffix: usize) -> String 
     out
 }
 
-fn synthetic(value: &str, type_id: &str) -> String {
+fn synthetic(
+    value: &str,
+    type_id: &str,
+    registry: &Registry,
+    numbering: &Numbering,
+    text: &str,
+    used: &mut HashSet<String>,
+) -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
     match type_id {
         "fio" => FIO_LIST[rng.gen_range(0..FIO_LIST.len())].to_string(),
         "card_number" => synthetic_card_number(value, &mut rng),
         "email" => synthetic_email(value, &mut rng),
+        "card_holder" | "birth_place" | "citizenship" | "address" | "passport_issuer" => {
+            pseudonym(value, type_id, text, registry, numbering, used)
+        }
         _ => synthetic_digits(value, &mut rng),
     }
 }
@@ -540,6 +560,15 @@ static CITIES: Lazy<Vec<String>> = Lazy::new(|| {
 /// Countries, loaded once from the dictionary.
 static COUNTRIES: Lazy<Vec<String>> = Lazy::new(|| {
     include_str!("../../data/dict/countries.txt")
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+});
+
+/// Street names, loaded once from the dictionary.
+static STREETS: Lazy<Vec<String>> = Lazy::new(|| {
+    include_str!("../../data/dict/streets.txt")
         .lines()
         .map(|l| l.trim().to_lowercase())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -680,6 +709,82 @@ fn split_place_prefix(value: &str) -> (String, String) {
     } else {
         (String::new(), value.to_string())
     }
+}
+
+/// Address markers that introduce a city name.
+const CITY_MARKERS: [&str; 2] = ["г.", "город"];
+/// Address markers that introduce a street name.
+const STREET_MARKERS_FULL: [&str; 9] = [
+    "ул.", "улица", "пр.", "проспект", "пер.", "переулок", "ш.", "шоссе", "наб.",
+];
+/// Address markers that introduce a house/flat number.
+const NUM_MARKERS: [&str; 6] = ["д.", "дом", "кв.", "квартира", "корп.", "стр."];
+
+/// Split a single address part into a preserved marker and the value after it.
+fn split_address_marker<'a>(trimmed: &'a str, lower: &str) -> Option<(String, &'a str)> {
+    for m in CITY_MARKERS
+        .iter()
+        .chain(STREET_MARKERS_FULL.iter())
+        .chain(NUM_MARKERS.iter())
+    {
+        if lower.starts_with(m) {
+            let marker = &trimmed[..m.len()];
+            let value = trimmed[m.len()..].trim();
+            if !value.is_empty() {
+                return Some((marker.to_string(), value));
+            }
+        }
+    }
+    None
+}
+
+/// Generate a random number of the same digit length as `digits`, without a leading zero.
+fn random_number_same_len(digits: &str, rng: &mut impl rand::Rng) -> String {
+    let len = digits.chars().filter(|c| c.is_ascii_digit()).count().max(1);
+    let mut out = String::with_capacity(len);
+    out.push(char::from_digit(rng.gen_range(1..10), 10).unwrap());
+    for _ in 1..len {
+        out.push(char::from_digit(rng.gen_range(0..10), 10).unwrap());
+    }
+    out
+}
+
+/// Build a plausible pseudonym for an address, replacing each part by its marker type:
+/// city from `CITIES`, street from `STREETS`, house/flat number of the same length.
+/// Parts without a recognized marker fall back to `pseudonym_place`.
+fn pseudonym_address(original: &str, salt: Option<&str>, attempt: usize) -> String {
+    let mut rng = rand::thread_rng();
+    let parts: Vec<&str> = original.split(',').collect();
+    let mut out: Vec<String> = Vec::with_capacity(parts.len());
+    for part in parts {
+        let trimmed = part.trim();
+        let lower = trimmed.to_lowercase();
+        let replaced = match split_address_marker(trimmed, &lower) {
+            Some((marker, value)) => {
+                if CITY_MARKERS.contains(&marker.as_str()) {
+                    let picked = pick_from(&CITIES, value, salt, attempt);
+                    let case = morph::detect_place_case(value);
+                    let inflected = if case == morph::Case::Nom {
+                        picked
+                    } else {
+                        morph::inflect(&picked, Kind::Place, case).unwrap_or(picked)
+                    };
+                    let styled = morph::apply_original_styles(value, &inflected);
+                    format!("{marker} {styled}")
+                } else if STREET_MARKERS_FULL.contains(&marker.as_str()) {
+                    let picked = pick_from(&STREETS, value, salt, attempt);
+                    let styled = morph::apply_original_styles(value, &picked);
+                    format!("{marker} {styled}")
+                } else {
+                    let new_num = random_number_same_len(value, &mut rng);
+                    format!("{marker} {new_num}")
+                }
+            }
+            None => pseudonym_place(trimmed, &CITIES, salt, attempt),
+        };
+        out.push(replaced);
+    }
+    out.join(", ")
 }
 
 /// Rebuild a digit string preserving the non-digit separators of the original.
@@ -884,7 +989,8 @@ fn pseudonym(
             "fio" | "card_holder" => pseudonym_fio(original, salt, attempt),
             "birth_place" => pseudonym_place(original, &CITIES, salt, attempt),
             "citizenship" => pseudonym_place(original, &COUNTRIES, salt, attempt),
-            "address" => pseudonym_place(original, &CITIES, salt, attempt),
+            "address" => pseudonym_address(original, salt, attempt),
+            "passport_issuer" => pseudonym_place(original, &CITIES, salt, attempt),
             "birth_date" => pseudonym_date(original, true, &mut rng),
             "passport_issue_date" => pseudonym_date(original, false, &mut rng),
             "inn" => pseudonym_inn(original, &mut rng),
