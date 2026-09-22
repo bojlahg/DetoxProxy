@@ -821,3 +821,22 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/mask/mod.rs, src/llm/mod.rs, src/server/mod.rs, src/config/mod.rs, tests/mask.rs, tests/llm.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T25">
+Привет. Срочная производительность хранилища (src/store/mod.rs). Нашли на нагрузке: когда записей становится `max_entries`, каждый `insert_with_hash` делает `sweep()` (обход всей таблицы) и `evict_oldest()` (ещё один полный обход). При 200 тыс. записей пропускная способность падает с 6400 до 700 запросов/с, задержка — до 1 с.
+
+Сделать:
+1. `sweep()` больше не вызывается из insert. Вместо этого фоновая задача в src/server/mod.rs: `tokio::time::interval(Duration::from_secs(5))` → `store.sweep()`, запускается в `run()`. Сделай у MappingStore метод `pub fn spawn_sweeper(self: &Arc<Self>, every: Duration)` или аналог — как удобнее, но без блокировки async-потоков на большой таблице (sweep в `spawn_blocking`).
+2. Вытеснение при переполнении — O(1) амортизированно: храни порядок вставки в `Mutex<VecDeque<(String, Instant)>>` (или `crossbeam`-очередь, если уже есть в зависимостях; новых зависимостей не добавлять). При `len >= max_entries` вынимай из головы очереди ключи и удаляй их из DashMap, пока не освободится место (запись могла уже удалиться sweep'ом — просто пропусти). Sweep тоже чистит голову очереди от просроченных.
+3. config.yaml: `mapping_max_entries: 2000000` (≈1,1 КБ на запись → ~2,3 ГБ на пределе, у сервера 8 ГБ).
+4. Метрика `pii_store_evictions_total` (вытеснено по переполнению) и `pii_store_expired_total` (убрано по TTL).
+
+Тесты в tests/store.rs (старые не менять): 
+- max_entries=1000, вставить 5000 → len ≤ 1000, самые старые вытеснены, последние 1000 на месте;
+- производительность: max_entries=10_000, вставить 200_000 записей — должно уложиться в 2 с в debug (сейчас это минуты);
+- просроченные убираются sweep'ом, get просроченной → None.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21,22,23`.
+
+Файлы: src/store/mod.rs, src/server/mod.rs, config.yaml, tests/store.rs. Каталог logs/ не трогай.
+</task>
