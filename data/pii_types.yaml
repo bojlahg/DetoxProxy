@@ -1,0 +1,145 @@
+# PII type registry. Adding a new type needs no code: patterns, context words and
+# validator are data. Patterns are case-insensitive and unicode.
+# Types with empty `patterns` are detected by dictionaries/context in a later task (T05).
+types:
+  - id: fio
+    name: Full name
+    token_label: FIO
+    context_words: [клиент, гражданин, физлицо, заявитель, ф.и.о, фио]
+    patterns: []
+
+  - id: birth_date
+    name: Birth date
+    token_label: BIRTH_DATE
+    context_words: [родился, родилась, дата рождения, д.р, г.р, рождения]
+    patterns: []
+
+  - id: birth_place
+    name: Birth place
+    token_label: BIRTH_PLACE
+    context_words: [место рождения, родился в, родилась в, уроженец, уроженка]
+    patterns: []
+
+  - id: passport
+    name: Passport series and number
+    token_label: PASSPORT
+    context_words: [паспорт, серия, номер, паспортные данные]
+    validator: none
+    stars_keep_prefix: 2
+    stars_keep_suffix: 2
+    patterns:
+      - '\b\d{4} \d{6}\b'
+      - '\b\d{2} \d{2} \d{6}\b'
+      - '\b\d{10}\b'
+      - '\b\d{4} номер \d{6}\b'
+      - '\b\d{2} \d{2} номер \d{6}\b'
+      - '\b\d{4}, номер: \d{6}\b'
+      - '\b\d{2} \d{2}, номер: \d{6}\b'
+
+  - id: citizenship
+    name: Citizenship
+    token_label: CITIZENSHIP
+    context_words: [гражданство, гражданин, гражданка]
+    patterns: []
+
+  - id: passport_issuer
+    name: Passport issuing authority
+    token_label: PASSPORT_ISSUER
+    context_words: [выдан, кем выдан, выдал, орган]
+    patterns: []
+
+  - id: subdivision_code
+    name: Passport subdivision code
+    token_label: SUBDIV
+    context_required: true
+    context_words: [код подразделения, к/п, подразделения]
+    patterns:
+      - '\b\d{3}-\d{3}\b'
+
+  - id: passport_issue_date
+    name: Passport issue date
+    token_label: PASSPORT_ISSUE_DATE
+    context_words: [дата выдачи, выдан, выдана, выдачи]
+    patterns: []
+
+  - id: driver_license
+    name: Driver license series and number
+    token_label: DRIVER_LICENSE
+    context_required: true
+    context_words: [в/у, ву, водительское, удостоверение, права]
+    patterns:
+      - '\b\d{2} \d{2} \d{6}\b'
+      - '\b\d{4} \d{6}\b'
+      - '\b\d{2} [А-ЯЁ]{2} \d{6}\b'
+
+  - id: address
+    name: Address
+    token_label: ADDRESS
+    context_words: [адрес, проживает, зарегистрирован, прописан]
+    patterns: []
+
+  - id: email
+    name: Email address
+    token_label: EMAIL
+    validator: email
+    patterns:
+      - '[A-Za-z0-9._+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+'
+
+  - id: phone
+    name: Phone number
+    token_label: PHONE
+    validator: phone
+    stars_keep_prefix: 2
+    stars_keep_suffix: 2
+    patterns:
+      - '(?:\+7|\b(?:8|7))[\s\-().]*\d{3}[\s\-().]*\d{3}[\s\-().]*\d{2}[\s\-().]*\d{2}'
+      - '\(\d{3}\)[\s\-().]*\d{3}[\s\-().]*\d{2}[\s\-().]*\d{2}'
+
+  - id: inn
+    name: Taxpayer identification number
+    token_label: INN
+    validator: inn
+    context_words: [инн]
+    patterns:
+      - '\b(?:\d{10}|\d{12})\b'
+
+  - id: card_number
+    name: Bank card number
+    token_label: CARD
+    validator: luhn
+    stars_keep_prefix: 4
+    stars_keep_suffix: 4
+    patterns:
+      - '(?:\d[ -]?){12,18}\d'
+
+  - id: cvv
+    name: Card verification value
+    token_label: CVV
+    context_required: true
+    requires_companion: true
+    context_words: [cvv, cvc, cvv2, cvc2, код безопасности, защитный код]
+    patterns:
+      - '\b\d{3,4}\b'
+
+  - id: card_pin
+    name: Card PIN code
+    token_label: PIN
+    context_required: true
+    requires_companion: true
+    context_words: [пин, pin, пин-код, pin-код]
+    patterns:
+      - '\b\d{4}\b'
+
+  - id: card_holder
+    name: Card holder name
+    token_label: CARD_HOLDER
+    context_words: [держатель, cardholder, владелец карты]
+    patterns: []
+
+  - id: snils
+    name: Insurance number of individual account
+    token_label: SNILS
+    validator: snils
+    patterns:
+      - '\b\d{3}-\d{3}-\d{3} \d{2}\b'
+      - '\b\d{11}\b'

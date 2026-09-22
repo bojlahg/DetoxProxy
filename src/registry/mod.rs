@@ -1,5 +1,7 @@
 use crate::types::{MaskMode, TypeId};
+use regex::RegexBuilder;
 use serde::Deserialize;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,9 +63,51 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn from_yaml(text: &str) -> Result<Self, RegistryError> { todo!() }
-    pub fn from_specs(specs: Vec<TypeSpec>) -> Result<Self, RegistryError> { todo!() }
-    pub fn types(&self) -> &[TypeSpec] { todo!() }
-    pub fn get(&self, id: &str) -> Option<&TypeSpec> { todo!() }
-    pub fn patterns(&self, id: &str) -> &[regex::Regex] { todo!() }
+    pub fn from_yaml(text: &str) -> Result<Self, RegistryError> {
+        #[derive(Deserialize)]
+        struct Root {
+            types: Vec<TypeSpec>,
+        }
+        let root: Root = serde_yaml_ng::from_str(text)?;
+        Self::from_specs(root.types)
+    }
+
+    pub fn from_specs(specs: Vec<TypeSpec>) -> Result<Self, RegistryError> {
+        let mut seen = HashSet::new();
+        for spec in &specs {
+            if !seen.insert(spec.id.clone()) {
+                return Err(RegistryError::Duplicate(spec.id.clone()));
+            }
+        }
+        let mut compiled = Vec::with_capacity(specs.len());
+        for spec in &specs {
+            let mut pats = Vec::with_capacity(spec.patterns.len());
+            for p in &spec.patterns {
+                let re = RegexBuilder::new(p)
+                    .case_insensitive(true)
+                    .unicode(true)
+                    .build()
+                    .map_err(|source| RegistryError::Regex { type_id: spec.id.clone(), source })?;
+                pats.push(re);
+            }
+            compiled.push(pats);
+        }
+        Ok(Self { specs, compiled })
+    }
+
+    pub fn types(&self) -> &[TypeSpec] {
+        &self.specs
+    }
+
+    pub fn get(&self, id: &str) -> Option<&TypeSpec> {
+        self.specs.iter().find(|s| s.id == id)
+    }
+
+    pub fn patterns(&self, id: &str) -> &[regex::Regex] {
+        self.specs
+            .iter()
+            .position(|s| s.id == id)
+            .map(|i| &self.compiled[i][..])
+            .unwrap_or(&[])
+    }
 }
