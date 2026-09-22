@@ -18,7 +18,7 @@ bin_name="$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$work/Cargo.toml" | head -1)"
 mkdir -p /d/Hackaton/linux-build-cache
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$work"):/src" -v "D:/Hackaton/linux-build-cache:/cache" \
   -w /src -e CARGO_HOME=/cache/cargo rust:1-bookworm \
-  sh -c "cargo build --release --target-dir /cache/target 2>&1 | tail -1 && cp /cache/target/release/$bin_name /src/app-linux"
+  sh -c "find /src -name '*.rs' -newermt '@0' -exec touch {} + && cargo clean -p $bin_name --release --target-dir /cache/target 2>/dev/null; cargo build --release --target-dir /cache/target 2>&1 | tail -1 && cp /cache/target/release/$bin_name /src/app-linux"
 mkdir -p "$work/pkg"
 cp "$work/app-linux" "$work/pkg/detox-proxy"
 cp "$work/config.yaml" "$work/pkg/"
@@ -74,8 +74,20 @@ if systemctl list-unit-files pii-guard.service >/dev/null 2>&1 && systemctl is-e
 fi
 systemctl reset-failed detox-proxy 2>/dev/null || true
 systemctl restart detox-proxy
+restarts_before=$(systemctl show detox-proxy -p NRestarts --value)
 if healthy; then
-  echo "deployed $(cat $dir/REVISION), $(systemctl is-active detox-proxy)"
+  # the service must survive its own shutdown timeout: a self-terminating build showed up as
+  # a systemd restart loop in production (22.09)
+  sleep 15
+  restarts_after=$(systemctl show detox-proxy -p NRestarts --value)
+  if [ "$restarts_after" != "$restarts_before" ] || [ "$(systemctl is-active detox-proxy)" != "active" ]; then
+    echo "SERVICE RESTARTED AFTER DEPLOY ($restarts_before -> $restarts_after), rolling back"
+    journalctl -u detox-proxy -n 8 --no-pager | tail -8
+    cp -a /root/prev/. "$dir/" && chown -R detox:detox "$dir" && chmod 755 "$dir/detox-proxy"
+    systemctl reset-failed detox-proxy 2>/dev/null || true; systemctl restart detox-proxy
+    healthy && echo "rolled back to $(cat $dir/REVISION 2>/dev/null || echo previous)"; exit 1
+  fi
+  echo "deployed $(cat $dir/REVISION), $(systemctl is-active detox-proxy), no restarts in 15 s"
   if [ "${migrated:-0}" = 1 ]; then
     rm -f /etc/systemd/system/pii-guard.service && systemctl daemon-reload
     rm -rf /opt/pii-guard && userdel piiguard 2>/dev/null || true
