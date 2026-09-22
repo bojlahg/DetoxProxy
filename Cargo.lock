@@ -345,6 +345,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "detox-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "axum",
+ "bytes",
+ "dashmap",
+ "deadpool-redis",
+ "futures-util",
+ "governor",
+ "hyper",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "mimalloc",
+ "moka",
+ "notify",
+ "once_cell",
+ "rand 0.8.8",
+ "redis",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1311,43 +1348,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pii-guard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "axum",
- "bytes",
- "dashmap",
- "deadpool-redis",
- "futures-util",
- "governor",
- "hyper",
- "metrics",
- "metrics-exporter-prometheus",
- "mimalloc",
- "moka",
- "notify",
- "once_cell",
- "rand 0.8.8",
- "redis",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
-]
 
 [[package]]
 name = "pin-project-lite"

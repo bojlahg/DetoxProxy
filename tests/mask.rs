@@ -1,6 +1,6 @@
-use pii_guard::mask::{mask, stars, unmask, MaskOptions};
-use pii_guard::registry::Registry;
-use pii_guard::types::{Entity, MaskMode, Mapping};
+use detox_proxy::mask::{mask, stars, unmask, MaskOptions};
+use detox_proxy::registry::Registry;
+use detox_proxy::types::{Entity, MaskMode, Mapping};
 use std::collections::HashMap;
 
 fn load() -> Registry {

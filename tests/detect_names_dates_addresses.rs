@@ -1,7 +1,7 @@
-use pii_guard::config::TrapPolicy;
-use pii_guard::detect::{DetectOptions, Detector, Dictionaries};
-use pii_guard::registry::Registry;
-use pii_guard::types::Entity;
+use detox_proxy::config::TrapPolicy;
+use detox_proxy::detect::{DetectOptions, Detector, Dictionaries};
+use detox_proxy::registry::Registry;
+use detox_proxy::types::Entity;
 use std::sync::Arc;
 
 fn detector() -> Detector {

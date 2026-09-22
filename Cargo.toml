@@ -1,14 +1,15 @@
 [package]
-name = "pii-guard"
+name = "detox-proxy"
 version = "0.1.0"
 edition = "2021"
+description = "DetoxProxy: PII detection, masking and unmasking for LLM traffic"
 
 [lib]
-name = "pii_guard"
+name = "detox_proxy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pii-guard"
+name = "detox-proxy"
 path = "src/main.rs"
 
 [dependencies]

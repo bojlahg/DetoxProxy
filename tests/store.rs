@@ -1,5 +1,5 @@
-use pii_guard::store::MappingStore;
-use pii_guard::types::Mapping;
+use detox_proxy::store::MappingStore;
+use detox_proxy::types::Mapping;
 use std::time::Duration;
 
 #[test]

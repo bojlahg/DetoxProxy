@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::serve::ListenerExt;
-use pii_guard::config::{Config, ConfigStore, TrapPolicy};
-use pii_guard::detect::{Allowlist, DetectOptions, Detector, Dictionaries};
-use pii_guard::registry::Registry;
-use pii_guard::server::{build_router, AppState};
-use pii_guard::store::MappingStore;
-use pii_guard::types::Entity;
+use detox_proxy::config::{Config, ConfigStore, TrapPolicy};
+use detox_proxy::detect::{Allowlist, DetectOptions, Detector, Dictionaries};
+use detox_proxy::registry::Registry;
+use detox_proxy::server::{build_router, AppState};
+use detox_proxy::store::MappingStore;
+use detox_proxy::types::Entity;
 
 fn detector() -> Detector {
     let yaml = std::fs::read_to_string("data/pii_types.yaml").expect("read pii_types.yaml");
@@ -222,7 +222,7 @@ static METRICS: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandl
 
 fn metrics_handle() -> metrics_exporter_prometheus::PrometheusHandle {
     METRICS
-        .get_or_init(|| pii_guard::obs::install_metrics().expect("install metrics"))
+        .get_or_init(|| detox_proxy::obs::install_metrics().expect("install metrics"))
         .clone()
 }
 

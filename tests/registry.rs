@@ -1,4 +1,4 @@
-use pii_guard::registry::{Registry, RegistryError};
+use detox_proxy::registry::{Registry, RegistryError};
 
 fn load() -> Registry {
     let yaml = std::fs::read_to_string("data/pii_types.yaml").expect("read pii_types.yaml");
