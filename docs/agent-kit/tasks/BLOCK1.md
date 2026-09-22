@@ -632,3 +632,22 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Файлы: src/server/mod.rs, tests/http.rs. Больше ничего. После плана сразу пиши код.
 </task>
+
+<task id="T17">
+Привет. Две вещи в src/server/mod.rs.
+
+**1. Детекция не должна блокировать async-потоки.** Сейчас `state.detector.detect(...)` и `mask_with(...)` вызываются синхронно внутри async-обработчика. На больших текстах это сотни миллисекунд CPU: рабочий поток tokio занят, маленькие запросы ждут, а `tokio::time::timeout` не может прервать синхронный код — дедлайн не срабатывает.
+Сделать: для текстов длиннее `server.inline_max_bytes` (новое поле ServerConfig, default 16384) выполнять детекцию+маскирование в `tokio::task::spawn_blocking`, короткие — как сейчас, inline (spawn_blocking на коротких дороже самой работы). Число одновременных тяжёлых задач ограничить семафором `server.heavy_max_concurrency` (default = число ядер, `std::thread::available_parallelism`), при исчерпании — ждать permit внутри того же дедлайна; дедлайн истёк → 503 с `Retry-After: 1` и метрикой `pii_rejected_total{reason="deadline"}`. Для spawn_blocking нужны `Arc` на detector/registry — AppState уже в Arc, передавай его клон. То же для /v1/mask и /v1/detect.
+
+**2. Горячая перезагрузка конфигурации.** `ConfigStore::replace` есть, но ничто его не вызывает. Добавить:
+- `POST /admin/reload` — перечитывает config.yaml, data/pii_types.yaml, data/allowlist.yaml, словари; валидирует; при ошибке оставляет старое и отвечает 400 с текстом ошибки (без ПД), при успехе 200 `{"version": N}`. Доступ: только с заголовком `X-Admin-Token`, равным переменной окружения `DETOX_ADMIN_TOKEN`; если переменная не задана — эндпоинт отвечает 404.
+- на Unix — то же по сигналу SIGHUP (`tokio::signal::unix`), под `#[cfg(unix)]`.
+- registry и detector тоже должны перезагружаться: держи их в `ArcSwap` так же, как конфиг, запросы берут снапшот один раз в начале.
+- метрика `pii_config_reloads_total{result="ok|error"}`.
+
+**Тесты** в tests/http.rs: текст 50 КБ и параллельно 20 коротких запросов — короткие отвечают < 100 мс каждый; /admin/reload без токена → 404 (переменная не задана) и с неверным токеном → 403 (переменная задана); reload с битым YAML → 400, старая конфигурация продолжает работать.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21,22,23`.
+
+Файлы: src/server/mod.rs, src/config/mod.rs (новые поля с default), src/main.rs, tests/http.rs. После плана сразу пиши код.
+</task>
