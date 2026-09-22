@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ConfigStore, SystemConfig, TokenNumbering};
 use crate::detect::{DetectOptions, Detector};
-use crate::mask::{mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
+use crate::mask::{count_unresolved_tokens, mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
 use crate::registry::Registry;
 use crate::store::MappingStore;
 use crate::types::Direction;
@@ -272,6 +272,43 @@ fn record_metrics(system: &str, direction: Direction, status: u16, latency_ms: u
     }
 }
 
+/// Records the payload-size histogram for a request.
+fn record_payload_bytes(system: &str, direction: Direction, bytes: usize) {
+    metrics::histogram!(
+        "pii_payload_bytes",
+        "system" => system.to_string(),
+        "direction" => format!("{:?}", direction).to_lowercase(),
+    )
+    .record(bytes as f64);
+}
+
+/// Records the entities-per-request histogram for a masking request.
+fn record_entities_per_request(count: usize) {
+    metrics::histogram!("pii_entities_per_request").record(count as f64);
+}
+
+/// Records unresolved-token metrics for a restore request.
+fn record_unresolved(system: &str, unresolved: usize) {
+    if unresolved > 0 {
+        metrics::counter!("pii_unmask_unresolved_tokens_total", "system" => system.to_string())
+            .increment(unresolved as u64);
+        metrics::counter!("pii_unmask_requests_with_unresolved_total", "system" => system.to_string())
+            .increment(1);
+    }
+}
+
+/// Outcome of a /process request, carrying the data needed to emit per-branch metrics.
+struct ProcessOutcome {
+    resp: ProcessResponse,
+    entity_types: HashMap<String, usize>,
+    entity_count: usize,
+    is_fresh_mask: bool,
+    is_retry: bool,
+    unresolved_tokens: usize,
+    payload_bytes: usize,
+    direction: Direction,
+}
+
 async fn process_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -299,7 +336,16 @@ async fn process_handler(
         let payload_id = req.payload_id;
 
         if payload.is_empty() {
-            return Ok((ProcessResponse { result: String::new() }, HashMap::new()));
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: String::new() },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: false,
+                unresolved_tokens: 0,
+                payload_bytes: 0,
+                direction: Direction::Mask,
+            });
         }
 
         let key = store_key(&sys.id, &payload_id);
@@ -326,33 +372,98 @@ async fn process_handler(
                     (res.text, et)
                 })
                 .await?;
-                return Ok((ProcessResponse { result: text }, et));
+                let entity_count: usize = et.values().sum();
+                return Ok(ProcessOutcome {
+                    resp: ProcessResponse { result: text },
+                    entity_types: et,
+                    entity_count,
+                    is_fresh_mask: true,
+                    is_retry: false,
+                    unresolved_tokens: 0,
+                    payload_bytes: payload.len(),
+                    direction: Direction::Mask,
+                });
             }
         };
 
         if payload == entry.masked_text {
             if !sys.unmask_enabled {
-                return Ok((ProcessResponse { result: payload }, HashMap::new()));
+                return Ok(ProcessOutcome {
+                    resp: ProcessResponse { result: payload.clone() },
+                    entity_types: HashMap::new(),
+                    entity_count: 0,
+                    is_fresh_mask: false,
+                    is_retry: false,
+                    unresolved_tokens: 0,
+                    payload_bytes: payload.len(),
+                    direction: Direction::Mask,
+                });
             }
             let restored = unmask(&payload, &entry.mappings);
-            return Ok((ProcessResponse { result: restored }, HashMap::new()));
+            let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: restored },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: false,
+                unresolved_tokens: unresolved,
+                payload_bytes: payload.len(),
+                direction: Direction::Unmask,
+            });
         }
 
         if hash_id(&payload) == entry.original_hash {
-            return Ok((ProcessResponse { result: entry.masked_text }, HashMap::new()));
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: entry.masked_text.clone() },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: true,
+                unresolved_tokens: 0,
+                payload_bytes: payload.len(),
+                direction: Direction::Mask,
+            });
         }
 
         let restored = unmask(&payload, &entry.mappings);
-        Ok((ProcessResponse { result: restored }, HashMap::new()))
+        let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
+        Ok(ProcessOutcome {
+            resp: ProcessResponse { result: restored },
+            entity_types: HashMap::new(),
+            entity_count: 0,
+            is_fresh_mask: false,
+            is_retry: false,
+            unresolved_tokens: unresolved,
+            payload_bytes: payload.len(),
+            direction: Direction::Unmask,
+        })
     }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok((resp, entity_types)) => {
-            record_metrics(&sys.id, Direction::Mask, 200, latency, &entity_types);
-            log_request(&rid, &sys.id, Direction::Mask, "", &entity_types, latency, 200);
-            let mut resp = Json(resp).into_response();
+        Ok(outcome) => {
+            record_metrics(&sys.id, outcome.direction, 200, latency, &outcome.entity_types);
+            log_request(&rid, &sys.id, outcome.direction, "", &outcome.entity_types, latency, 200);
+            if outcome.payload_bytes > 0 {
+                record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
+            }
+            if outcome.direction == Direction::Mask {
+                if outcome.is_fresh_mask {
+                    record_entities_per_request(outcome.entity_count);
+                    if outcome.entity_count == 0 {
+                        metrics::counter!("pii_requests_without_entities_total", "system" => sys.id.clone())
+                            .increment(1);
+                    }
+                }
+                if outcome.is_retry {
+                    metrics::counter!("pii_process_retry_total", "system" => sys.id.clone()).increment(1);
+                }
+            } else {
+                record_unresolved(&sys.id, outcome.unresolved_tokens);
+            }
+            let mut resp = Json(outcome.resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
@@ -494,21 +605,25 @@ async fn unmask_handler(
             Ok(r) => r,
             Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
         };
+        let text_len = req.text.len();
         match state.store.get(&store_key(&sys.id, &req.session_id)) {
             Some(entry) => {
                 let restored = unmask(&req.text, &entry.mappings);
-                Ok((false, UnmaskResponse { text: restored }))
+                let unresolved = count_unresolved_tokens(&req.text, &entry.mappings);
+                Ok((false, unresolved, text_len, UnmaskResponse { text: restored }))
             }
-            None => Ok((true, UnmaskResponse { text: req.text })),
+            None => Ok((true, 0, text_len, UnmaskResponse { text: req.text })),
         }
     })
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((not_found, resp))) => {
+        Ok(Ok((not_found, unresolved, text_len, resp))) => {
             record_metrics(&sys.id, Direction::Unmask, 200, latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), latency, 200);
+            record_payload_bytes(&sys.id, Direction::Unmask, text_len);
+            record_unresolved(&sys.id, unresolved);
             let mut resp = Json(resp).into_response();
             if not_found {
                 resp.headers_mut().insert("x-unmask", "not-found".parse().unwrap());

@@ -500,6 +500,115 @@ allowlist_file: data/allowlist.yaml
 }
 
 #[tokio::test]
+async fn metrics_for_autoprog() {
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: metrics-test
+systems:
+  - id: metrics-test
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+    let sys = &[("X-System-Id", "metrics-test")];
+
+    let no_pii = "просто текст без персональных данных";
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": no_pii, "payload_id": "n1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), no_pii);
+
+    let pii = "ИНН 7707083893";
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": pii, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": pii, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), masked);
+
+    let foreign = "текст <<INN_99>>";
+    let (st, _json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": foreign, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+
+    for name in [
+        "pii_payload_bytes",
+        "pii_entities_per_request",
+        "pii_requests_without_entities_total",
+        "pii_process_retry_total",
+        "pii_unmask_unresolved_tokens_total",
+        "pii_unmask_requests_with_unresolved_total",
+    ] {
+        assert!(body.contains(name), "missing {name} in metrics: {body}");
+    }
+
+    assert!(
+        body.contains("pii_requests_without_entities_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_process_retry_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_unmask_unresolved_tokens_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_unmask_requests_with_unresolved_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
 async fn admin_reload_without_token_404() {
     let _guard = ADMIN_TOKEN_LOCK.lock().await;
     std::env::remove_var("DETOX_ADMIN_TOKEN");

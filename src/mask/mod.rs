@@ -239,6 +239,21 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
     result
 }
 
+/// Counts token-format substrings (`<<LABEL_N>>`, case/whitespace tolerant as in `unmask`) in `text`
+/// that have no matching mapping. Used for the `pii_unmask_unresolved_tokens_total` metric.
+pub fn count_unresolved_tokens(text: &str, mappings: &[Mapping]) -> usize {
+    let mut count = 0;
+    for caps in TOKEN_RE.captures_iter(text) {
+        let token = &caps[0];
+        let norm_token = norm_compare(token);
+        let matched = mappings.iter().any(|m| norm_compare(&m.masked) == norm_token);
+        if !matched {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Renders the stars mask for a value: keeps prefix/suffix chars, keeps separators (space, '-', '.', '(', ')', '+', '@'),
 /// replaces the rest with '*'. For FIO renders initials "И. И. И.".
 pub fn stars(value: &str, type_id: &str, keep_prefix: usize, keep_suffix: usize) -> String {
