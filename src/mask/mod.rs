@@ -1,4 +1,10 @@
-use crate::{registry::Registry, types::{Entity, Mapping, MaskMode, MaskResult}};
+use crate::{
+    registry::Registry,
+    types::{Entity, Mapping, MaskMode, MaskResult},
+};
+use once_cell::sync::Lazy;
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
 
 pub struct MaskOptions<'a> {
     pub default_mode: MaskMode,
@@ -8,15 +14,279 @@ pub struct MaskOptions<'a> {
     pub combination_rule: bool,
 }
 
+static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)<<\s*([A-Za-z_]+)_(\d+)\s*>>").expect("valid token regex")
+});
+
+const SEPARATORS: [char; 8] = [' ', '-', '.', '(', ')', '+', '@', '/'];
+
+const FIO_LIST: [&str; 20] = [
+    "Александр Сергеевич Пушкин",
+    "Лев Николаевич Толстой",
+    "Фёдор Михайлович Достоевский",
+    "Антон Павлович Чехов",
+    "Иван Сергеевич Тургенев",
+    "Михаил Юрьевич Лермонтов",
+    "Николай Васильевич Гоголь",
+    "Александр Иванович Куприн",
+    "Иван Алексеевич Бунин",
+    "Сергей Александрович Есенин",
+    "Владимир Владимирович Маяковский",
+    "Борис Леонидович Пастернак",
+    "Анна Андреевна Ахматова",
+    "Марина Ивановна Цветаева",
+    "Осип Эмильевич Мандельштам",
+    "Александр Александрович Блок",
+    "Николай Алексеевич Некрасов",
+    "Афанасий Афанасьевич Фет",
+    "Василий Андреевич Жуковский",
+    "Михаил Афанасьевич Булгаков",
+];
+
 /// Replaces entity spans right-to-left; identical originals of the same type share one token.
 /// Deterministic for the same (text, entities, options).
-pub fn mask(text: &str, entities: &[Entity], registry: &Registry, opts: &MaskOptions<'_>) -> MaskResult { todo!() }
+pub fn mask(text: &str, entities: &[Entity], registry: &Registry, opts: &MaskOptions<'_>) -> MaskResult {
+    let mut active: Vec<(usize, &Entity, MaskMode)> = Vec::new();
+    for (i, e) in entities.iter().enumerate() {
+        let spec = registry.get(&e.type_id);
+        let mode = opts
+            .overrides
+            .get(&e.type_id)
+            .copied()
+            .or_else(|| spec.and_then(|s| if s.mask != MaskMode::Token { Some(s.mask) } else { None }))
+            .unwrap_or(opts.default_mode);
+        if mode == MaskMode::Off {
+            continue;
+        }
+        active.push((i, e, mode));
+    }
+
+    if opts.combination_rule {
+        let has_companion = entities.iter().any(|e| {
+            let requires = registry.get(&e.type_id).map(|s| s.requires_companion).unwrap_or(false);
+            !requires && e.confidence >= 0.9
+        });
+        if !has_companion {
+            active.retain(|(_, e, _)| {
+                !registry.get(&e.type_id).map(|s| s.requires_companion).unwrap_or(false)
+            });
+        }
+    }
+
+    active.sort_by_key(|(_, e, _)| e.start);
+
+    let mut token_map: HashMap<(String, String), String> = HashMap::new();
+    let mut token_counters: HashMap<String, usize> = HashMap::new();
+    let mut plan: Vec<(usize, usize, String, String, String)> = Vec::new();
+    for (_, e, mode) in &active {
+        let original = text[e.start..e.end].to_string();
+        let norm = normalize(&original);
+        let key = (e.type_id.clone(), norm);
+        let replacement = token_map
+            .entry(key)
+            .or_insert_with(|| match mode {
+                MaskMode::Token => {
+                    let label = registry
+                        .get(&e.type_id)
+                        .map(|s| s.token_label.clone())
+                        .unwrap_or_else(|| e.type_id.to_uppercase());
+                    let n = token_counters.entry(e.type_id.clone()).or_insert(0);
+                    *n += 1;
+                    format!("<<{}_{}>>", label, *n)
+                }
+                MaskMode::Stars => {
+                    let spec = registry.get(&e.type_id);
+                    stars(
+                        &original,
+                        &e.type_id,
+                        spec.map(|s| s.stars_keep_prefix).unwrap_or(0),
+                        spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
+                    )
+                }
+                MaskMode::Synthetic => synthetic(&original, &e.type_id),
+                MaskMode::Remove => "[removed]".to_string(),
+                MaskMode::Off => unreachable!(),
+            })
+            .clone();
+        plan.push((e.start, e.end, replacement, e.type_id.clone(), original));
+    }
+
+    let mut result = text.to_string();
+    plan.sort_by_key(|(start, _, _, _, _)| *start);
+    for (start, end, replacement, _, _) in plan.iter().rev() {
+        result.replace_range(*start..*end, replacement);
+    }
+
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut mappings = Vec::new();
+    for (_, _, replacement, type_id, original) in &plan {
+        let norm = normalize(original);
+        if seen.insert((type_id.clone(), norm)) {
+            mappings.push(Mapping {
+                type_id: type_id.clone(),
+                original: original.clone(),
+                masked: replacement.clone(),
+            });
+        }
+    }
+
+    let active_indices: HashSet<usize> = active.iter().map(|(i, _, _)| *i).collect();
+    let out_entities: Vec<Entity> = entities
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| active_indices.contains(i))
+        .map(|(_, e)| e.clone())
+        .collect();
+
+    MaskResult {
+        text: result,
+        entities: out_entities,
+        mappings,
+    }
+}
 
 /// Restores originals using mappings. Tokens `{LABEL_N}` are located by regex anywhere in the text
 /// (any order, any surrounding); stars/synthetic masks are located as substrings, longest first.
 /// Unknown tokens are left untouched.
-pub fn unmask(text: &str, mappings: &[Mapping]) -> String { todo!() }
+pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
+    let mut result = TOKEN_RE
+        .replace_all(text, |caps: &regex::Captures| {
+            let token = &caps[0];
+            let norm_token = norm_compare(token);
+            for m in mappings {
+                if norm_compare(&m.masked) == norm_token {
+                    return m.original.clone();
+                }
+            }
+            token.to_string()
+        })
+        .to_string();
+
+    let mut non_token: Vec<&Mapping> = mappings
+        .iter()
+        .filter(|m| !TOKEN_RE.is_match(&m.masked))
+        .collect();
+    non_token.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
+    for m in non_token {
+        result = result.replace(&m.masked, &m.original);
+    }
+    result
+}
 
 /// Renders the stars mask for a value: keeps prefix/suffix chars, keeps separators (space, '-', '.', '(', ')', '+', '@'),
 /// replaces the rest with '*'. For FIO renders initials "И. И. И.".
-pub fn stars(value: &str, type_id: &str, keep_prefix: usize, keep_suffix: usize) -> String { todo!() }
+pub fn stars(value: &str, type_id: &str, keep_prefix: usize, keep_suffix: usize) -> String {
+    if type_id == "fio" {
+        return value
+            .split_whitespace()
+            .map(|w| {
+                let first = w.chars().next().unwrap_or('*');
+                format!("{}.", first)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    if type_id == "email" {
+        if let Some(at) = value.rfind('@') {
+            let local = &value[..at];
+            let domain = &value[at..];
+            let mut out = String::new();
+            for (i, c) in local.chars().enumerate() {
+                if i < keep_prefix {
+                    out.push(c);
+                } else {
+                    out.push('*');
+                }
+            }
+            out.push_str(domain);
+            return out;
+        }
+    }
+    let chars: Vec<char> = value.chars().collect();
+    let keep_prefix = keep_prefix.min(chars.len());
+    let keep_suffix = keep_suffix.min(chars.len().saturating_sub(keep_prefix));
+    let mut out = String::new();
+    for (i, c) in chars.iter().enumerate() {
+        if i < keep_prefix || i >= chars.len() - keep_suffix || SEPARATORS.contains(c) {
+            out.push(*c);
+        } else {
+            out.push('*');
+        }
+    }
+    out
+}
+
+fn synthetic(value: &str, type_id: &str) -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    match type_id {
+        "fio" => FIO_LIST[rng.gen_range(0..FIO_LIST.len())].to_string(),
+        "card_number" => {
+            let mut digits = Vec::with_capacity(16);
+            for _ in 0..15 {
+                digits.push(rng.gen_range(0..10));
+            }
+            digits.push(luhn_check(&digits) as u32);
+            let mut it = digits.into_iter();
+            let mut out = String::new();
+            for c in value.chars() {
+                if c.is_ascii_digit() {
+                    out.push(char::from_digit(it.next().unwrap_or(0), 10).unwrap());
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        "email" => {
+            if let Some(at) = value.rfind('@') {
+                let domain = &value[at..];
+                let len = value[..at].chars().count().max(1);
+                let mut local = String::new();
+                for _ in 0..len {
+                    local.push(rng.gen_range(b'a'..=b'z') as char);
+                }
+                format!("{}{}", local, domain)
+            } else {
+                value.to_string()
+            }
+        }
+        _ => {
+            let mut out = String::new();
+            for c in value.chars() {
+                if c.is_ascii_digit() {
+                    out.push(char::from_digit(rng.gen_range(0..10), 10).unwrap());
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+    }
+}
+
+fn luhn_check(digits: &[u32]) -> u8 {
+    let mut sum = 0;
+    for (i, d) in digits.iter().enumerate() {
+        let mut v = *d;
+        if i % 2 == 0 {
+            v *= 2;
+            if v > 9 {
+                v -= 9;
+            }
+        }
+        sum += v;
+    }
+    ((10 - (sum % 10)) % 10) as u8
+}
+
+fn normalize(s: &str) -> String {
+    s.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn norm_compare(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}

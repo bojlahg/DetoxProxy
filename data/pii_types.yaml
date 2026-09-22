@@ -10,13 +10,13 @@ types:
 
   - id: birth_date
     name: Birth date
-    token_label: BIRTH_DATE
+    token_label: BDATE
     context_words: [родился, родилась, дата рождения, д.р, г.р, рождения]
     patterns: []
 
   - id: birth_place
     name: Birth place
-    token_label: BIRTH_PLACE
+    token_label: BPLACE
     context_words: [место рождения, родился в, родилась в, уроженец, уроженка]
     patterns: []
 
@@ -38,13 +38,13 @@ types:
 
   - id: citizenship
     name: Citizenship
-    token_label: CITIZENSHIP
+    token_label: CITIZEN
     context_words: [гражданство, гражданин, гражданка]
     patterns: []
 
   - id: passport_issuer
     name: Passport issuing authority
-    token_label: PASSPORT_ISSUER
+    token_label: PASSISS
     context_words: [выдан, кем выдан, выдал, орган]
     patterns: []
 
@@ -58,13 +58,13 @@ types:
 
   - id: passport_issue_date
     name: Passport issue date
-    token_label: PASSPORT_ISSUE_DATE
+    token_label: ISSDATE
     context_words: [дата выдачи, выдан, выдана, выдачи]
     patterns: []
 
   - id: driver_license
     name: Driver license series and number
-    token_label: DRIVER_LICENSE
+    token_label: DRIVLIC
     context_required: true
     context_words: [в/у, ву, водительское, удостоверение, права]
     patterns:
@@ -74,7 +74,7 @@ types:
 
   - id: address
     name: Address
-    token_label: ADDRESS
+    token_label: ADDR
     context_words: [адрес, проживает, зарегистрирован, прописан]
     patterns: []
 
@@ -132,7 +132,7 @@ types:
 
   - id: card_holder
     name: Card holder name
-    token_label: CARD_HOLDER
+    token_label: CARDHLD
     context_words: [держатель, cardholder, владелец карты]
     patterns: []
 
