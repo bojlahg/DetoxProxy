@@ -299,6 +299,32 @@ fn record_unresolved(system: &str, unresolved: usize) {
     }
 }
 
+/// Records metrics and the request log line, then attaches the `x-request-id` header.
+fn finish_response(
+    rid: &str,
+    sys: &SystemConfig,
+    direction: Direction,
+    latency: u64,
+    status: u16,
+    entity_types: &HashMap<String, usize>,
+    resp: Response,
+) -> Response {
+    record_metrics(&sys.id, direction, status, latency, entity_types);
+    log_request(rid, &sys.id, direction, "", entity_types, latency, status);
+    let mut resp = resp;
+    resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
+    resp
+}
+
+/// Generates a random 32-hex-char session id.
+fn new_session_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut bytes = [0u8; 16];
+    rng.fill(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// Outcome of a /process request, carrying the data needed to emit per-branch metrics.
 struct ProcessOutcome {
     resp: ProcessResponse,
@@ -329,125 +355,11 @@ async fn process_handler(
 
     let deadline = Duration::from_millis(cfg.server.request_deadline_ms);
     let inline_max = cfg.server.inline_max_bytes;
-    let result = async {
-        let req: ProcessRequest = match serde_json::from_slice(&body) {
-            Ok(r) => r,
-            Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
-        };
-        let payload = req.payload;
-        let payload_id = req.payload_id;
-
-        if payload.is_empty() {
-            return Ok(ProcessOutcome {
-                resp: ProcessResponse { result: String::new() },
-                entity_types: HashMap::new(),
-                entity_count: 0,
-                is_fresh_mask: false,
-                is_retry: false,
-                unresolved_tokens: 0,
-                payload_bytes: 0,
-                direction: Direction::Mask,
-            });
-        }
-
-        let key = store_key(&sys.id, &payload_id);
-        let existing = state.store.get(&key);
-        let entry = match existing {
-            Some(e) => e,
-            None => {
-                let st = state.clone();
-                let sys2 = sys.clone();
-                let key2 = key.clone();
-                let payload2 = payload.clone();
-                let (text, et) = run_detection(&state, payload.len(), inline_max, deadline, move || {
-                    let cfg = st.config.load();
-                    let registry = st.registry.load();
-                    let detector = st.detector.load();
-                    let entities = detector.detect(&payload2, &detect_options(&sys2));
-                    let res = mask_with(&payload2, &entities, &registry, &mask_options(&sys2), numbering(&sys2));
-                    let original_hash = hash_id(&payload2);
-                    st.store.insert_with_hash(&key2, res.text.clone(), res.mappings.clone(), original_hash);
-                    let mut et = HashMap::new();
-                    for e in &entities {
-                        *et.entry(e.type_id.clone()).or_insert(0) += 1;
-                    }
-                    (res.text, et)
-                })
-                .await?;
-                let entity_count: usize = et.values().sum();
-                return Ok(ProcessOutcome {
-                    resp: ProcessResponse { result: text },
-                    entity_types: et,
-                    entity_count,
-                    is_fresh_mask: true,
-                    is_retry: false,
-                    unresolved_tokens: 0,
-                    payload_bytes: payload.len(),
-                    direction: Direction::Mask,
-                });
-            }
-        };
-
-        if payload == entry.masked_text {
-            if !sys.unmask_enabled {
-                return Ok(ProcessOutcome {
-                    resp: ProcessResponse { result: payload.clone() },
-                    entity_types: HashMap::new(),
-                    entity_count: 0,
-                    is_fresh_mask: false,
-                    is_retry: false,
-                    unresolved_tokens: 0,
-                    payload_bytes: payload.len(),
-                    direction: Direction::Mask,
-                });
-            }
-            let restored = unmask(&payload, &entry.mappings);
-            let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
-            return Ok(ProcessOutcome {
-                resp: ProcessResponse { result: restored },
-                entity_types: HashMap::new(),
-                entity_count: 0,
-                is_fresh_mask: false,
-                is_retry: false,
-                unresolved_tokens: unresolved,
-                payload_bytes: payload.len(),
-                direction: Direction::Unmask,
-            });
-        }
-
-        if hash_id(&payload) == entry.original_hash {
-            return Ok(ProcessOutcome {
-                resp: ProcessResponse { result: entry.masked_text.clone() },
-                entity_types: HashMap::new(),
-                entity_count: 0,
-                is_fresh_mask: false,
-                is_retry: true,
-                unresolved_tokens: 0,
-                payload_bytes: payload.len(),
-                direction: Direction::Mask,
-            });
-        }
-
-        let restored = unmask(&payload, &entry.mappings);
-        let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
-        Ok(ProcessOutcome {
-            resp: ProcessResponse { result: restored },
-            entity_types: HashMap::new(),
-            entity_count: 0,
-            is_fresh_mask: false,
-            is_retry: false,
-            unresolved_tokens: unresolved,
-            payload_bytes: payload.len(),
-            direction: Direction::Unmask,
-        })
-    }
-    .await;
+    let result = process_inner(&state, &sys, &body, deadline, inline_max).await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
         Ok(outcome) => {
-            record_metrics(&sys.id, outcome.direction, 200, latency, &outcome.entity_types);
-            log_request(&rid, &sys.id, outcome.direction, "", &outcome.entity_types, latency, 200);
             if outcome.payload_bytes > 0 {
                 record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
             }
@@ -465,20 +377,149 @@ async fn process_handler(
             } else {
                 record_unresolved(&sys.id, outcome.unresolved_tokens);
             }
-            let mut resp = Json(outcome.resp).into_response();
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
+            finish_response(
+                &rid,
+                &sys,
+                outcome.direction,
+                latency,
+                200,
+                &outcome.entity_types,
+                Json(outcome.resp).into_response(),
+            )
         }
         Err(resp) => {
             let status = resp.status();
-            let entity_types = HashMap::new();
-            record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &entity_types);
-            log_request(&rid, &sys.id, Direction::Mask, "", &entity_types, latency, status.as_u16());
-            let mut resp = *resp;
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
+            finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
+}
+
+/// Parses the /process body and runs the mask/unmask/retry decision tree.
+async fn process_inner(
+    state: &Arc<AppState>,
+    sys: &SystemConfig,
+    body: &axum::body::Bytes,
+    deadline: Duration,
+    inline_max: usize,
+) -> Result<ProcessOutcome, Box<Response>> {
+    let req: ProcessRequest = match serde_json::from_slice(body) {
+        Ok(r) => r,
+        Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
+    };
+    let payload = req.payload;
+    let payload_id = req.payload_id;
+
+    if payload.is_empty() {
+        return Ok(empty_outcome());
+    }
+
+    let key = store_key(&sys.id, &payload_id);
+    let entry = match state.store.get(&key) {
+        Some(e) => e,
+        None => return process_fresh_mask(state, sys, &key, &payload, deadline, inline_max).await,
+    };
+
+    if payload == entry.masked_text {
+        if !sys.unmask_enabled {
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: payload.clone() },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: false,
+                unresolved_tokens: 0,
+                payload_bytes: payload.len(),
+                direction: Direction::Mask,
+            });
+        }
+        return Ok(unmask_outcome(&payload, &entry, Direction::Unmask));
+    }
+
+    if hash_id(&payload) == entry.original_hash {
+        return Ok(ProcessOutcome {
+            resp: ProcessResponse { result: entry.masked_text.clone() },
+            entity_types: HashMap::new(),
+            entity_count: 0,
+            is_fresh_mask: false,
+            is_retry: true,
+            unresolved_tokens: 0,
+            payload_bytes: payload.len(),
+            direction: Direction::Mask,
+        });
+    }
+
+    Ok(unmask_outcome(&payload, &entry, Direction::Unmask))
+}
+
+/// Outcome for an empty payload: an empty result with no metrics side effects.
+fn empty_outcome() -> ProcessOutcome {
+    ProcessOutcome {
+        resp: ProcessResponse { result: String::new() },
+        entity_types: HashMap::new(),
+        entity_count: 0,
+        is_fresh_mask: false,
+        is_retry: false,
+        unresolved_tokens: 0,
+        payload_bytes: 0,
+        direction: Direction::Mask,
+    }
+}
+
+/// Outcome for a payload that must be unmasked against an existing store entry.
+fn unmask_outcome(payload: &str, entry: &crate::store::StoredEntry, direction: Direction) -> ProcessOutcome {
+    let restored = unmask(payload, &entry.mappings);
+    let unresolved = count_unresolved_tokens(payload, &entry.mappings);
+    ProcessOutcome {
+        resp: ProcessResponse { result: restored },
+        entity_types: HashMap::new(),
+        entity_count: 0,
+        is_fresh_mask: false,
+        is_retry: false,
+        unresolved_tokens: unresolved,
+        payload_bytes: payload.len(),
+        direction,
+    }
+}
+
+/// Runs detection+masking for a payload with no existing store entry and persists the result.
+async fn process_fresh_mask(
+    state: &Arc<AppState>,
+    sys: &SystemConfig,
+    key: &str,
+    payload: &str,
+    deadline: Duration,
+    inline_max: usize,
+) -> Result<ProcessOutcome, Box<Response>> {
+    let st = state.clone();
+    let sys2 = sys.clone();
+    let key2 = key.to_string();
+    let payload2 = payload.to_string();
+    let (text, et) = run_detection(state, payload.len(), inline_max, deadline, move || {
+        let cfg = st.config.load();
+        let registry = st.registry.load();
+        let detector = st.detector.load();
+        let entities = detector.detect(&payload2, &detect_options(&sys2));
+        let res = mask_with(&payload2, &entities, &registry, &mask_options(&sys2), numbering(&sys2));
+        let original_hash = hash_id(&payload2);
+        st.store.insert_with_hash(&key2, res.text.clone(), res.mappings.clone(), original_hash);
+        let mut et = HashMap::new();
+        for e in &entities {
+            *et.entry(e.type_id.clone()).or_insert(0) += 1;
+        }
+        (res.text, et)
+    })
+    .await?;
+    let entity_count: usize = et.values().sum();
+    Ok(ProcessOutcome {
+        resp: ProcessResponse { result: text },
+        entity_types: et,
+        entity_count,
+        is_fresh_mask: true,
+        is_retry: false,
+        unresolved_tokens: 0,
+        payload_bytes: payload.len(),
+        direction: Direction::Mask,
+    })
 }
 
 async fn mask_handler(
@@ -495,98 +536,90 @@ async fn mask_handler(
     };
     let deadline = Duration::from_millis(cfg.server.request_deadline_ms);
     let inline_max = cfg.server.inline_max_bytes;
-    let result = async {
-        let req: MaskRequest = match serde_json::from_slice(&body) {
-            Ok(r) => r,
-            Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
-        };
-        let session_id = match req.session_id {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let mut bytes = [0u8; 16];
-                rng.fill(&mut bytes);
-                bytes.iter().map(|b| format!("{:02x}", b)).collect()
-            }
-        };
-        let existing = if sys.session_mode == crate::config::SessionMode::Stateful {
-            state.store.get(&store_key(&sys.id, &session_id))
-        } else {
-            None
-        };
-        let seed: Vec<crate::types::Mapping> = existing
-            .as_ref()
-            .map(|e| e.mappings.clone())
-            .unwrap_or_default();
-        let st = state.clone();
-        let sys2 = sys.clone();
-        let session_id2 = session_id.clone();
-        let text2 = req.text.clone();
-        let seed2 = seed.clone();
-        let res = run_detection(&state, req.text.len(), inline_max, deadline, move || {
-            let cfg = st.config.load();
-            let registry = st.registry.load();
-            let detector = st.detector.load();
-            mask_with_seed(
-                &text2,
-                &detector.detect(&text2, &detect_options(&sys2)),
-                &registry,
-                &mask_options(&sys2),
-                numbering(&sys2),
-                &seed2,
-            )
-        })
-        .await?;
-        let mut merged = seed;
-        for m in &res.mappings {
-            if !merged.iter().any(|x| x.masked == m.masked) {
-                merged.push(m.clone());
-            }
-        }
-        state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
-        let out_entities = res
-            .entities
-            .iter()
-            .map(|e| MaskEntity {
-                type_id: e.type_id.clone(),
-                start: e.start,
-                end: e.end,
-                token: res
-                    .mappings
-                    .iter()
-                    .find(|m| m.type_id == e.type_id)
-                    .map(|m| m.masked.clone())
-                    .unwrap_or_default(),
-            })
-            .collect();
-        Ok(MaskResponse {
-            text: res.text,
-            session_id,
-            entities: out_entities,
-            mappings: res.mappings,
-        })
-    }
-    .await;
+    let result = mask_inner(&state, &sys, &body, deadline, inline_max).await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(resp) => {
-            record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 200);
-            let mut resp = Json(resp).into_response();
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
-        }
+        Ok(resp) => finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response()),
         Err(resp) => {
             let status = resp.status();
-            record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
-            let mut resp = *resp;
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
+            finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
+}
+
+/// Parses the /v1/mask body, runs detection+masking (stateful or stateless) and persists mappings.
+async fn mask_inner(
+    state: &Arc<AppState>,
+    sys: &SystemConfig,
+    body: &axum::body::Bytes,
+    deadline: Duration,
+    inline_max: usize,
+) -> Result<MaskResponse, Box<Response>> {
+    let req: MaskRequest = match serde_json::from_slice(body) {
+        Ok(r) => r,
+        Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
+    };
+    let session_id = match req.session_id {
+        Some(s) if !s.is_empty() => s,
+        _ => new_session_id(),
+    };
+    let existing = if sys.session_mode == crate::config::SessionMode::Stateful {
+        state.store.get(&store_key(&sys.id, &session_id))
+    } else {
+        None
+    };
+    let seed: Vec<crate::types::Mapping> = existing
+        .as_ref()
+        .map(|e| e.mappings.clone())
+        .unwrap_or_default();
+    let st = state.clone();
+    let sys2 = sys.clone();
+    let session_id2 = session_id.clone();
+    let text2 = req.text.clone();
+    let seed2 = seed.clone();
+    let res = run_detection(state, req.text.len(), inline_max, deadline, move || {
+        let cfg = st.config.load();
+        let registry = st.registry.load();
+        let detector = st.detector.load();
+        mask_with_seed(
+            &text2,
+            &detector.detect(&text2, &detect_options(&sys2)),
+            &registry,
+            &mask_options(&sys2),
+            numbering(&sys2),
+            &seed2,
+        )
+    })
+    .await?;
+    let mut merged = seed;
+    for m in &res.mappings {
+        if !merged.iter().any(|x| x.masked == m.masked) {
+            merged.push(m.clone());
+        }
+    }
+    state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
+    let out_entities = res
+        .entities
+        .iter()
+        .map(|e| MaskEntity {
+            type_id: e.type_id.clone(),
+            start: e.start,
+            end: e.end,
+            token: res
+                .mappings
+                .iter()
+                .find(|m| m.type_id == e.type_id)
+                .map(|m| m.masked.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
+    Ok(MaskResponse {
+        text: res.text,
+        session_id,
+        entities: out_entities,
+        mappings: res.mappings,
+    })
 }
 
 async fn unmask_handler(
@@ -737,31 +770,8 @@ async fn chat_completions_handler(
     };
     let want_stream = req.stream.unwrap_or(false);
 
-    let registry = state.registry.load();
-    let detector = state.detector.load();
-    let masked = crate::llm::mask_messages(
-        &req.messages,
-        &detector,
-        &registry,
-        &detect_options(&sys),
-        &mask_options(&sys),
-        &numbering(&sys),
-    );
-
-    let store_key = store_key(&sys.id, &format!("chat:{}", rid));
-    state.store.insert(&store_key, String::new(), masked.mappings.clone());
-
-    let mut upstream_body = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-    if let Value::Object(map) = &mut upstream_body {
-        let msgs: Vec<Value> = masked
-            .texts
-            .iter()
-            .zip(req.messages.iter())
-            .map(|(t, m)| serde_json::json!({ "role": m.role, "content": t }))
-            .collect();
-        map.insert("messages".to_string(), Value::Array(msgs));
-        map.insert("stream".to_string(), Value::Bool(true));
-    }
+    let masked = mask_chat_request(&state, &sys, &req, &rid);
+    let upstream_body = build_upstream_body(&body, &masked, &req);
 
     let api_key = llm_cfg
         .api_key_env
@@ -798,7 +808,61 @@ async fn chat_completions_handler(
     let restored = unmask(&model_text, &masked.mappings);
     let model = req.model.clone().unwrap_or_default();
 
-    let mut resp = if want_stream {
+    let mut resp = build_chat_response(want_stream, &rid, model, restored);
+    resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
+    resp.headers_mut()
+        .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
+
+    let latency = started.elapsed().as_millis() as u64;
+    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, status);
+    resp
+}
+
+/// Masks all chat messages, persists the shared mapping table and returns the masked result.
+fn mask_chat_request(
+    state: &Arc<AppState>,
+    sys: &SystemConfig,
+    req: &crate::llm::ChatRequest,
+    rid: &str,
+) -> crate::llm::MaskedMessages {
+    let registry = state.registry.load();
+    let detector = state.detector.load();
+    let masked = crate::llm::mask_messages(
+        &req.messages,
+        &detector,
+        &registry,
+        &detect_options(sys),
+        &mask_options(sys),
+        &numbering(sys),
+    );
+    let store_key = store_key(&sys.id, &format!("chat:{}", rid));
+    state.store.insert(&store_key, String::new(), masked.mappings.clone());
+    masked
+}
+
+/// Replaces `messages` and forces `stream: true` in the upstream body.
+fn build_upstream_body(
+    body: &axum::body::Bytes,
+    masked: &crate::llm::MaskedMessages,
+    req: &crate::llm::ChatRequest,
+) -> Value {
+    let mut upstream_body = serde_json::from_slice::<Value>(body).unwrap_or(Value::Null);
+    if let Value::Object(map) = &mut upstream_body {
+        let msgs: Vec<Value> = masked
+            .texts
+            .iter()
+            .zip(req.messages.iter())
+            .map(|(t, m)| serde_json::json!({ "role": m.role, "content": t }))
+            .collect();
+        map.insert("messages".to_string(), Value::Array(msgs));
+        map.insert("stream".to_string(), Value::Bool(true));
+    }
+    upstream_body
+}
+
+/// Builds the client response as SSE (streaming) or JSON (non-streaming).
+fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: String) -> Response {
+    if want_stream {
         let chunk = serde_json::json!({
             "id": rid,
             "object": "chat.completion.chunk",
@@ -817,7 +881,7 @@ async fn chat_completions_handler(
         r
     } else {
         let json = crate::llm::ChatCompletionResponse {
-            id: rid.clone(),
+            id: rid.to_string(),
             object: "chat.completion",
             model,
             choices: vec![crate::llm::Choice {
@@ -830,15 +894,7 @@ async fn chat_completions_handler(
             }],
         };
         Json(json).into_response()
-    };
-
-    resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-    resp.headers_mut()
-        .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
-
-    let latency = started.elapsed().as_millis() as u64;
-    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, status);
-    resp
+    }
 }
 
 async fn readyz(State(state): State<Arc<AppState>>) -> StatusCode {
@@ -968,13 +1024,53 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     crate::obs::init_tracing();
     let metrics = crate::obs::install_metrics()?;
 
-    let text = std::fs::read_to_string(&config_path)?;
+    let cfg = load_config(&config_path)?;
+    let store = crate::store::MappingStore::new(
+        Duration::from_secs(cfg.server.mapping_ttl_sec),
+        cfg.server.mapping_max_entries,
+    );
+
+    let state = Arc::new(AppState {
+        config: crate::config::ConfigStore::new(cfg.clone()),
+        registry: ArcSwap::from(load_registry(&cfg)?),
+        detector: ArcSwap::from_pointee(load_detector(&cfg)?),
+        store,
+        metrics,
+        inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
+        heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
+        config_path: config_path.clone(),
+    });
+
+    spawn_background_tasks(&state);
+
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind(&cfg.server.listen)
+        .await?
+        .tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        });
+    tracing::info!(listen = %cfg.server.listen, "server started");
+    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+    Ok(())
+}
+
+/// Reads and validates the config file.
+fn load_config(config_path: &std::path::Path) -> anyhow::Result<crate::config::Config> {
+    let text = std::fs::read_to_string(config_path)?;
     let cfg = crate::config::Config::from_yaml(&text)?;
     cfg.validate()?;
+    Ok(cfg)
+}
 
+/// Loads the PII registry from the configured types file.
+fn load_registry(cfg: &crate::config::Config) -> anyhow::Result<Arc<Registry>> {
     let pii_types = std::fs::read_to_string(&cfg.pii_types_file)?;
-    let registry = Arc::new(crate::registry::Registry::from_yaml(&pii_types)?);
+    Ok(Arc::new(crate::registry::Registry::from_yaml(&pii_types)?))
+}
 
+/// Loads dictionaries, allowlist and builds the detector.
+fn load_detector(cfg: &crate::config::Config) -> anyhow::Result<crate::detect::Detector> {
+    let registry = load_registry(cfg)?;
     let dicts = match &cfg.dictionaries_dir {
         Some(dir) if std::path::Path::new(dir).exists() => {
             Arc::new(crate::detect::Dictionaries::load_dir(std::path::Path::new(dir))?)
@@ -983,25 +1079,12 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     };
     let allowlist_text = std::fs::read_to_string(&cfg.allowlist_file)?;
     let allowlist = crate::detect::Allowlist::from_yaml(&allowlist_text)?;
-    let detector = crate::detect::Detector::with_allowlist(registry.clone(), dicts, allowlist)
-        .with_historical_date_years(cfg.server.historical_date_years);
+    Ok(crate::detect::Detector::with_allowlist(registry, dicts, allowlist)
+        .with_historical_date_years(cfg.server.historical_date_years))
+}
 
-    let store = crate::store::MappingStore::new(
-        Duration::from_secs(cfg.server.mapping_ttl_sec),
-        cfg.server.mapping_max_entries,
-    );
-
-    let state = Arc::new(AppState {
-        config: crate::config::ConfigStore::new(cfg.clone()),
-        registry: ArcSwap::from(registry),
-        detector: ArcSwap::from_pointee(detector),
-        store,
-        metrics,
-        inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
-        heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
-        config_path: config_path.clone(),
-    });
-
+/// Spawns the SIGHUP reload loop and the periodic store sweep.
+fn spawn_background_tasks(state: &Arc<AppState>) {
     #[cfg(unix)]
     {
         let reload_state = state.clone();
@@ -1041,16 +1124,6 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
             }
         }
     });
-
-    let app = build_router(state.clone());
-    let listener = tokio::net::TcpListener::bind(&cfg.server.listen)
-        .await?
-        .tap_io(|tcp| {
-            let _ = tcp.set_nodelay(true);
-        });
-    tracing::info!(listen = %cfg.server.listen, "server started");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
-    Ok(())
 }
 
 async fn shutdown_signal() {
