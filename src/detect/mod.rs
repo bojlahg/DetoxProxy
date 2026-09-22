@@ -110,7 +110,7 @@ impl Dictionaries {
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
-                    words.insert(line.to_lowercase());
+                    words.insert(normalize_yo(&line.to_lowercase()));
                 }
                 lists.insert(name, words);
             }
@@ -119,8 +119,25 @@ impl Dictionaries {
     }
 
     pub fn contains(&self, list: &str, word_lower: &str) -> bool {
-        self.lists.get(list).map(|s| s.contains(word_lower)).unwrap_or(false)
+        self.lists
+            .get(list)
+            .map(|s| {
+                // `word_lower` is already lowercased, so 'Ё' never appears. Normalize only
+                // when 'ё' is present to avoid allocating on the hot path.
+                if word_lower.contains('ё') {
+                    s.contains(&word_lower.replace('ё', "е"))
+                } else {
+                    s.contains(word_lower)
+                }
+            })
+            .unwrap_or(false)
     }
+}
+
+/// Replaces 'ё'/'Ё' with 'е'/'Е' so that dictionary lookups treat them as equivalent
+/// (e.g. "Королёв" matches "королев" and vice versa). The text itself is never changed.
+fn normalize_yo(s: &str) -> String {
+    s.replace('ё', "е").replace('Ё', "Е")
 }
 
 pub struct DetectOptions<'a> {
@@ -255,7 +272,28 @@ impl Detector {
 
     /// Runs all enabled types, validates, scores, drops allow-listed and overlapping spans
     /// (longer / more confident wins). Result sorted by start. Case-insensitive.
+    ///
+    /// Before detection, Latin lookalike letters inside words that contain at least one
+    /// Cyrillic letter are normalized to their Cyrillic equivalents (e.g. "Иванoв" -> "Иванов").
+    /// Entity offsets are translated back to the original text. When no mixed word is present
+    /// the original text is used as-is (no offset table is built).
     pub fn detect(&self, text: &str, opts: &DetectOptions<'_>) -> Vec<Entity> {
+        match normalize_mixed(text) {
+            Some((norm, map)) => {
+                let mut result = self.detect_inner(&norm, opts);
+                for e in &mut result {
+                    e.start = map[e.start];
+                    e.end = map[e.end];
+                }
+                result
+            }
+            None => self.detect_inner(text, opts),
+        }
+    }
+
+    /// Detection pipeline over a single text (already normalized when needed). Offsets are
+    /// relative to `text`.
+    fn detect_inner(&self, text: &str, opts: &DetectOptions<'_>) -> Vec<Entity> {
         let enabled: Option<HashSet<&str>> = opts
             .enabled_types
             .map(|ids| ids.iter().map(|s| s.as_str()).collect());
@@ -586,7 +624,43 @@ impl Detector {
                 }
             }
         }
+        // Latin patronymic patterns (e.g. "Ivanov Ivan Ivanovich"): three capitalized Latin
+        // words where the third ends in a patronymic suffix. Detected without a PII marker.
+        for re in self.registry.patterns(&spec.id) {
+            for m in re.find_iter(text) {
+                if let Some(entity) = self.fio_pattern_entity(text, opts, spec, m.start(), m.end()) {
+                    candidates.push(entity);
+                }
+            }
+        }
         candidates
+    }
+
+    /// Builds a FIO candidate from a Latin patronymic pattern match, or None when rejected.
+    fn fio_pattern_entity(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        start: usize,
+        end: usize,
+    ) -> Option<Entity> {
+        let span = &text[start..end];
+        // The pattern is case-insensitive; require capitalized words ("с заглавной").
+        if !span
+            .split_whitespace()
+            .all(|w| w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
+        {
+            return None;
+        }
+        if self.is_allow_listed(span, opts) {
+            return None;
+        }
+        let conf = 0.7f32;
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
     }
 
     /// Filters name tokens that may belong to a FIO span (drops marker and city tokens).
@@ -835,6 +909,13 @@ impl Detector {
         }
         // 3 capitalized words with no dictionary hit: only with PII context (handled by caller).
         if comps == 3 && !any_initial {
+            // A mixed-script phrase (both Cyrillic and Latin words, e.g. "Сервис Online
+            // Banking") is a brand/service name, not a FIO.
+            let has_cyr = window.iter().any(|t| !t.is_latin);
+            let has_lat = window.iter().any(|t| t.is_latin);
+            if has_cyr && has_lat {
+                return (false, comps);
+            }
             return (true, comps);
         }
         (false, comps)
@@ -2841,6 +2922,164 @@ fn age_exceeds(s: &str, years: u32) -> bool {
         Some(y) => (current_year() - y) as u32 > years,
         None => false,
     }
+}
+
+/// Latin letters that look like Cyrillic ones, mapped to their Cyrillic equivalents.
+/// Used to normalize mixed-script words (e.g. "Иванoв" -> "Иванов").
+fn latin_to_cyrillic(c: char) -> Option<char> {
+    match c {
+        'a' => Some('а'),
+        'e' => Some('е'),
+        'o' => Some('о'),
+        'p' => Some('р'),
+        'c' => Some('с'),
+        'x' => Some('х'),
+        'y' => Some('у'),
+        'k' => Some('к'),
+        'm' => Some('м'),
+        't' => Some('т'),
+        'h' => Some('н'),
+        'b' => Some('в'),
+        'A' => Some('А'),
+        'B' => Some('В'),
+        'E' => Some('Е'),
+        'K' => Some('К'),
+        'M' => Some('М'),
+        'H' => Some('Н'),
+        'O' => Some('О'),
+        'P' => Some('Р'),
+        'C' => Some('С'),
+        'T' => Some('Т'),
+        'X' => Some('Х'),
+        'Y' => Some('У'),
+        _ => None,
+    }
+}
+
+/// True if the character is Cyrillic.
+fn is_cyrillic(c: char) -> bool {
+    ('\u{0400}'..='\u{04FF}').contains(&c)
+}
+
+/// Normalizes Latin lookalike letters inside words that contain at least one Cyrillic letter.
+/// Returns `(normalized_text, offset_map)` where `offset_map[i]` is the original byte offset
+/// of the character at normalized byte offset `i` (one entry per char boundary plus the end).
+/// Returns `None` when no replacement was made (the common case), so the caller can work on
+/// the original text without building an offset table.
+fn normalize_mixed(text: &str) -> Option<(String, Vec<usize>)> {
+    // Fast pre-pass without allocations: if no word contains both a Cyrillic letter and a
+    // Latin lookalike, there is nothing to normalize and the caller works on the original
+    // text (the common case must not become slower).
+    if !has_mixed_word(text) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut orig: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        let ch = text[i..].chars().next().unwrap();
+        if ch.is_alphabetic() {
+            let word_end = word_end(text, i);
+            let word = &text[i..word_end];
+            if word_has_cyrillic(word) {
+                push_normalized_word(&mut out, &mut orig, i, word);
+            } else {
+                push_word(&mut out, &mut orig, i, word);
+            }
+            i = word_end;
+        } else {
+            orig.push(i);
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    let map = build_offset_map(&out, &orig, text.len());
+    Some((out, map))
+}
+
+/// True if any word contains both a Cyrillic letter and a Latin lookalike from
+/// `latin_to_cyrillic`. Scans without allocating.
+fn has_mixed_word(text: &str) -> bool {
+    let mut i = 0;
+    while i < text.len() {
+        let ch = text[i..].chars().next().unwrap();
+        if ch.is_alphabetic() {
+            let word_end = word_end(text, i);
+            let word = &text[i..word_end];
+            if word_has_cyrillic(word) && word.chars().any(|c| latin_to_cyrillic(c).is_some()) {
+                return true;
+            }
+            i = word_end;
+        } else {
+            i += ch.len_utf8();
+        }
+    }
+    false
+}
+
+/// End byte offset of the maximal run of alphabetic chars starting at `start`.
+fn word_end(text: &str, start: usize) -> usize {
+    let mut j = start;
+    while j < text.len() {
+        let c = text[j..].chars().next().unwrap();
+        if !c.is_alphabetic() {
+            break;
+        }
+        j += c.len_utf8();
+    }
+    j
+}
+
+/// True if the word contains at least one Cyrillic letter.
+fn word_has_cyrillic(word: &str) -> bool {
+    word.chars().any(is_cyrillic)
+}
+
+/// Appends a word to `out`, replacing Latin lookalikes with Cyrillic. Returns true when at
+/// least one replacement was made.
+fn push_normalized_word(out: &mut String, orig: &mut Vec<usize>, base: usize, word: &str) -> bool {
+    let mut changed = false;
+    for (rel, c) in word.char_indices() {
+        orig.push(base + rel);
+        match latin_to_cyrillic(c) {
+            Some(r) => {
+                out.push(r);
+                changed = true;
+            }
+            None => out.push(c),
+        }
+    }
+    changed
+}
+
+/// Appends a word to `out` unchanged, recording the original offsets.
+fn push_word(out: &mut String, orig: &mut Vec<usize>, base: usize, word: &str) {
+    for (rel, c) in word.char_indices() {
+        orig.push(base + rel);
+        out.push(c);
+    }
+}
+
+/// Builds the byte-offset map: `map[byte_offset]` = original byte offset at each char
+/// boundary of the normalized text. Non-boundary bytes (inside a multi-byte char) are filled
+/// with the current char's original offset; they are never accessed because entity offsets
+/// are always on char boundaries.
+fn build_offset_map(out: &str, orig: &[usize], orig_len: usize) -> Vec<usize> {
+    let mut map: Vec<usize> = Vec::with_capacity(out.len() + 1);
+    for (k, (byte_off, _)) in out.char_indices().enumerate() {
+        while map.len() < byte_off {
+            map.push(orig[k]);
+        }
+        map.push(orig[k]);
+    }
+    // Fill any remaining bytes up to out.len() (inside the last multi-byte char) with the
+    // last char's original offset.
+    let last_orig = orig[orig.len() - 1];
+    while map.len() < out.len() {
+        map.push(last_orig);
+    }
+    map.push(orig_len);
+    map
 }
 
 static NAME_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {

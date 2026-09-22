@@ -205,7 +205,11 @@ types:
     first_name_case_endings: [у, ю, а, я, е, ом, ем, ой, ей, ым, им, ого, ему]
     # Suffixes stripped from a surname in oblique cases before dictionary lookup.
     surname_case_suffixes: [ову, еву, ину, ым, ой, овой, евой, иной, ского, скому, ской]
-    patterns: []
+    patterns:
+      # Three capitalized Latin words where the third looks like a patronymic
+      # (e.g. "Ivanov Ivan Ivanovich", "Petrova Anna Sergeevna"). Without a patronymic
+      # Latin is still found only with a PII marker.
+      - '\b[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]*(?:ovich|evich|ovna|evna|ichna|ich)\b'
 
   - id: birth_date
     name: Birth date
