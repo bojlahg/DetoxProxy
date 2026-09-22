@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -16,18 +18,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ConfigStore, SystemConfig, TokenNumbering};
 use crate::detect::{DetectOptions, Detector};
-use crate::mask::{mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
+use crate::mask::{count_unresolved_tokens, mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
 use crate::registry::Registry;
 use crate::store::MappingStore;
 use crate::types::Direction;
 
 pub struct AppState {
     pub config: ConfigStore,
-    pub registry: Arc<Registry>,
-    pub detector: Detector,
+    pub registry: ArcSwap<Registry>,
+    pub detector: ArcSwap<Detector>,
     pub store: MappingStore,
     pub metrics: PrometheusHandle,
     pub inflight: Arc<tokio::sync::Semaphore>,
+    pub heavy: Arc<tokio::sync::Semaphore>,
+    pub config_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +118,49 @@ fn error_response(status: StatusCode, message: &str, kind: &str) -> Response {
         },
     };
     (status, Json(body)).into_response()
+}
+
+/// 503 response when the request deadline expires while waiting for a heavy permit or a
+/// blocking detection task. Carries `Retry-After: 1` and the `pii_rejected_total{reason="deadline"}` metric.
+fn deadline_response() -> Response {
+    metrics::counter!("pii_rejected_total", "reason" => "deadline").increment(1);
+    let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
+    resp.headers_mut().insert("retry-after", "1".parse().unwrap());
+    resp
+}
+
+/// Runs detection+masking. Short texts run inline on the async worker; long texts run on the
+/// blocking thread pool, bounded by the `heavy` semaphore. The whole operation (permit wait +
+/// execution) shares a single deadline; on expiry a 503 with `Retry-After: 1` is returned.
+async fn run_detection<T, F>(
+    state: &Arc<AppState>,
+    text_len: usize,
+    inline_max_bytes: usize,
+    deadline: Duration,
+    f: F,
+) -> Result<T, Box<Response>>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let heavy = state.heavy.clone();
+    let result = tokio::time::timeout(deadline, async move {
+        if text_len <= inline_max_bytes {
+            Ok::<T, ()>(f())
+        } else {
+            let _permit = heavy.acquire_owned().await.map_err(|_| ())?;
+            Ok(tokio::task::spawn_blocking(f).await.map_err(|_| ())?)
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(v)) => Ok(v),
+        _ => Err(Box::new(deadline_response())),
+    }
+}
+
+fn store_key(system: &str, id: &str) -> String {
+    format!("{}\u{1f}{}", system, id)
 }
 
 fn hash_id(id: &str) -> String {
@@ -225,6 +272,43 @@ fn record_metrics(system: &str, direction: Direction, status: u16, latency_ms: u
     }
 }
 
+/// Records the payload-size histogram for a request.
+fn record_payload_bytes(system: &str, direction: Direction, bytes: usize) {
+    metrics::histogram!(
+        "pii_payload_bytes",
+        "system" => system.to_string(),
+        "direction" => format!("{:?}", direction).to_lowercase(),
+    )
+    .record(bytes as f64);
+}
+
+/// Records the entities-per-request histogram for a masking request.
+fn record_entities_per_request(count: usize) {
+    metrics::histogram!("pii_entities_per_request").record(count as f64);
+}
+
+/// Records unresolved-token metrics for a restore request.
+fn record_unresolved(system: &str, unresolved: usize) {
+    if unresolved > 0 {
+        metrics::counter!("pii_unmask_unresolved_tokens_total", "system" => system.to_string())
+            .increment(unresolved as u64);
+        metrics::counter!("pii_unmask_requests_with_unresolved_total", "system" => system.to_string())
+            .increment(1);
+    }
+}
+
+/// Outcome of a /process request, carrying the data needed to emit per-branch metrics.
+struct ProcessOutcome {
+    resp: ProcessResponse,
+    entity_types: HashMap<String, usize>,
+    entity_count: usize,
+    is_fresh_mask: bool,
+    is_retry: bool,
+    unresolved_tokens: usize,
+    payload_bytes: usize,
+    direction: Direction,
+}
+
 async fn process_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -242,78 +326,153 @@ async fn process_handler(
     };
 
     let deadline = Duration::from_millis(cfg.server.request_deadline_ms);
-    let result = tokio::time::timeout(deadline, async {
+    let inline_max = cfg.server.inline_max_bytes;
+    let result = async {
         let req: ProcessRequest = match serde_json::from_slice(&body) {
             Ok(r) => r,
-            Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
+            Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
         };
         let payload = req.payload;
         let payload_id = req.payload_id;
 
         if payload.is_empty() {
-            return Ok((ProcessResponse { result: String::new() }, HashMap::new()));
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: String::new() },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: false,
+                unresolved_tokens: 0,
+                payload_bytes: 0,
+                direction: Direction::Mask,
+            });
         }
 
-        let existing = state.store.get(&payload_id);
+        let key = store_key(&sys.id, &payload_id);
+        let existing = state.store.get(&key);
         let entry = match existing {
             Some(e) => e,
             None => {
-                let entities = state.detector.detect(&payload, &detect_options(&sys));
-                let res = mask_with(&payload, &entities, &state.registry, &mask_options(&sys), numbering(&sys));
-                let original_hash = hash_id(&payload);
-                state.store.insert_with_hash(
-                    &payload_id,
-                    res.text.clone(),
-                    res.mappings.clone(),
-                    original_hash,
-                );
-                let mut et = HashMap::new();
-                for e in &entities {
-                    *et.entry(e.type_id.clone()).or_insert(0) += 1;
-                }
-                return Ok((ProcessResponse { result: res.text }, et));
+                let st = state.clone();
+                let sys2 = sys.clone();
+                let key2 = key.clone();
+                let payload2 = payload.clone();
+                let (text, et) = run_detection(&state, payload.len(), inline_max, deadline, move || {
+                    let cfg = st.config.load();
+                    let registry = st.registry.load();
+                    let detector = st.detector.load();
+                    let entities = detector.detect(&payload2, &detect_options(&sys2));
+                    let res = mask_with(&payload2, &entities, &registry, &mask_options(&sys2), numbering(&sys2));
+                    let original_hash = hash_id(&payload2);
+                    st.store.insert_with_hash(&key2, res.text.clone(), res.mappings.clone(), original_hash);
+                    let mut et = HashMap::new();
+                    for e in &entities {
+                        *et.entry(e.type_id.clone()).or_insert(0) += 1;
+                    }
+                    (res.text, et)
+                })
+                .await?;
+                let entity_count: usize = et.values().sum();
+                return Ok(ProcessOutcome {
+                    resp: ProcessResponse { result: text },
+                    entity_types: et,
+                    entity_count,
+                    is_fresh_mask: true,
+                    is_retry: false,
+                    unresolved_tokens: 0,
+                    payload_bytes: payload.len(),
+                    direction: Direction::Mask,
+                });
             }
         };
 
         if payload == entry.masked_text {
             if !sys.unmask_enabled {
-                return Ok((ProcessResponse { result: payload }, HashMap::new()));
+                return Ok(ProcessOutcome {
+                    resp: ProcessResponse { result: payload.clone() },
+                    entity_types: HashMap::new(),
+                    entity_count: 0,
+                    is_fresh_mask: false,
+                    is_retry: false,
+                    unresolved_tokens: 0,
+                    payload_bytes: payload.len(),
+                    direction: Direction::Mask,
+                });
             }
             let restored = unmask(&payload, &entry.mappings);
-            return Ok((ProcessResponse { result: restored }, HashMap::new()));
+            let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: restored },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: false,
+                unresolved_tokens: unresolved,
+                payload_bytes: payload.len(),
+                direction: Direction::Unmask,
+            });
         }
 
         if hash_id(&payload) == entry.original_hash {
-            return Ok((ProcessResponse { result: entry.masked_text }, HashMap::new()));
+            return Ok(ProcessOutcome {
+                resp: ProcessResponse { result: entry.masked_text.clone() },
+                entity_types: HashMap::new(),
+                entity_count: 0,
+                is_fresh_mask: false,
+                is_retry: true,
+                unresolved_tokens: 0,
+                payload_bytes: payload.len(),
+                direction: Direction::Mask,
+            });
         }
 
         let restored = unmask(&payload, &entry.mappings);
-        Ok((ProcessResponse { result: restored }, HashMap::new()))
-    })
+        let unresolved = count_unresolved_tokens(&payload, &entry.mappings);
+        Ok(ProcessOutcome {
+            resp: ProcessResponse { result: restored },
+            entity_types: HashMap::new(),
+            entity_count: 0,
+            is_fresh_mask: false,
+            is_retry: false,
+            unresolved_tokens: unresolved,
+            payload_bytes: payload.len(),
+            direction: Direction::Unmask,
+        })
+    }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((resp, entity_types))) => {
-            record_metrics(&sys.id, Direction::Mask, 200, latency, &entity_types);
-            log_request(&rid, &sys.id, Direction::Mask, "", &entity_types, latency, 200);
-            let mut resp = Json(resp).into_response();
+        Ok(outcome) => {
+            record_metrics(&sys.id, outcome.direction, 200, latency, &outcome.entity_types);
+            log_request(&rid, &sys.id, outcome.direction, "", &outcome.entity_types, latency, 200);
+            if outcome.payload_bytes > 0 {
+                record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
+            }
+            if outcome.direction == Direction::Mask {
+                if outcome.is_fresh_mask {
+                    record_entities_per_request(outcome.entity_count);
+                    if outcome.entity_count == 0 {
+                        metrics::counter!("pii_requests_without_entities_total", "system" => sys.id.clone())
+                            .increment(1);
+                    }
+                }
+                if outcome.is_retry {
+                    metrics::counter!("pii_process_retry_total", "system" => sys.id.clone()).increment(1);
+                }
+            } else {
+                record_unresolved(&sys.id, outcome.unresolved_tokens);
+            }
+            let mut resp = Json(outcome.resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
-        Ok(Err((status, msg))) => {
+        Err(resp) => {
+            let status = resp.status();
             let entity_types = HashMap::new();
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &entity_types);
             log_request(&rid, &sys.id, Direction::Mask, "", &entity_types, latency, status.as_u16());
-            let mut resp = error_response(status, &msg, "bad_request");
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
-        }
-        Err(_) => {
-            let entity_types = HashMap::new();
-            record_metrics(&sys.id, Direction::Mask, 503, latency, &entity_types);
-            log_request(&rid, &sys.id, Direction::Mask, "", &entity_types, latency, 503);
-            let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
+            let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
@@ -333,10 +492,11 @@ async fn mask_handler(
         Err(resp) => return *resp,
     };
     let deadline = Duration::from_millis(cfg.server.request_deadline_ms);
-    let result = tokio::time::timeout(deadline, async {
+    let inline_max = cfg.server.inline_max_bytes;
+    let result = async {
         let req: MaskRequest = match serde_json::from_slice(&body) {
             Ok(r) => r,
-            Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
+            Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
         };
         let session_id = match req.session_id {
             Some(s) if !s.is_empty() => s,
@@ -348,9 +508,8 @@ async fn mask_handler(
                 bytes.iter().map(|b| format!("{:02x}", b)).collect()
             }
         };
-        let entities = state.detector.detect(&req.text, &detect_options(&sys));
         let existing = if sys.session_mode == crate::config::SessionMode::Stateful {
-            state.store.get(&session_id)
+            state.store.get(&store_key(&sys.id, &session_id))
         } else {
             None
         };
@@ -358,21 +517,32 @@ async fn mask_handler(
             .as_ref()
             .map(|e| e.mappings.clone())
             .unwrap_or_default();
-        let res = mask_with_seed(
-            &req.text,
-            &entities,
-            &state.registry,
-            &mask_options(&sys),
-            numbering(&sys),
-            &seed,
-        );
+        let st = state.clone();
+        let sys2 = sys.clone();
+        let session_id2 = session_id.clone();
+        let text2 = req.text.clone();
+        let seed2 = seed.clone();
+        let res = run_detection(&state, req.text.len(), inline_max, deadline, move || {
+            let cfg = st.config.load();
+            let registry = st.registry.load();
+            let detector = st.detector.load();
+            mask_with_seed(
+                &text2,
+                &detector.detect(&text2, &detect_options(&sys2)),
+                &registry,
+                &mask_options(&sys2),
+                numbering(&sys2),
+                &seed2,
+            )
+        })
+        .await?;
         let mut merged = seed;
         for m in &res.mappings {
             if !merged.iter().any(|x| x.masked == m.masked) {
                 merged.push(m.clone());
             }
         }
-        state.store.insert_with_hash(&session_id, res.text.clone(), merged, hash_id(&req.text));
+        state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
         let out_entities = res
             .entities
             .iter()
@@ -394,29 +564,23 @@ async fn mask_handler(
             entities: out_entities,
             mappings: res.mappings,
         })
-    })
+    }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(resp)) => {
+        Ok(resp) => {
             record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 200);
             let mut resp = Json(resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
-        Ok(Err((status, msg))) => {
+        Err(resp) => {
+            let status = resp.status();
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
-            let mut resp = error_response(status, &msg, "bad_request");
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
-        }
-        Err(_) => {
-            record_metrics(&sys.id, Direction::Mask, 503, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 503);
-            let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
+            let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
@@ -441,21 +605,25 @@ async fn unmask_handler(
             Ok(r) => r,
             Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
         };
-        match state.store.get(&req.session_id) {
+        let text_len = req.text.len();
+        match state.store.get(&store_key(&sys.id, &req.session_id)) {
             Some(entry) => {
                 let restored = unmask(&req.text, &entry.mappings);
-                Ok((false, UnmaskResponse { text: restored }))
+                let unresolved = count_unresolved_tokens(&req.text, &entry.mappings);
+                Ok((false, unresolved, text_len, UnmaskResponse { text: restored }))
             }
-            None => Ok((true, UnmaskResponse { text: req.text })),
+            None => Ok((true, 0, text_len, UnmaskResponse { text: req.text })),
         }
     })
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((not_found, resp))) => {
+        Ok(Ok((not_found, unresolved, text_len, resp))) => {
             record_metrics(&sys.id, Direction::Unmask, 200, latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), latency, 200);
+            record_payload_bytes(&sys.id, Direction::Unmask, text_len);
+            record_unresolved(&sys.id, unresolved);
             let mut resp = Json(resp).into_response();
             if not_found {
                 resp.headers_mut().insert("x-unmask", "not-found".parse().unwrap());
@@ -493,12 +661,21 @@ async fn detect_handler(
         Err(resp) => return *resp,
     };
     let deadline = Duration::from_millis(cfg.server.request_deadline_ms);
-    let result = tokio::time::timeout(deadline, async {
+    let inline_max = cfg.server.inline_max_bytes;
+    let result = async {
         let req: DetectRequest = match serde_json::from_slice(&body) {
             Ok(r) => r,
-            Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
+            Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
         };
-        let entities = state.detector.detect(&req.text, &detect_options(&sys));
+        let st = state.clone();
+        let sys2 = sys.clone();
+        let text2 = req.text.clone();
+        let entities = run_detection(&state, req.text.len(), inline_max, deadline, move || {
+            let cfg = st.config.load();
+            let detector = st.detector.load();
+            detector.detect(&text2, &detect_options(&sys2))
+        })
+        .await?;
         let out: Vec<DetectEntity> = entities
             .iter()
             .map(|e| DetectEntity {
@@ -509,29 +686,23 @@ async fn detect_handler(
             })
             .collect();
         Ok(DetectResponse { entities: out })
-    })
+    }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok(resp)) => {
+        Ok(resp) => {
             record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 200);
             let mut resp = Json(resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
-        Ok(Err((status, msg))) => {
+        Err(resp) => {
+            let status = resp.status();
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
-            let mut resp = error_response(status, &msg, "bad_request");
-            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
-            resp
-        }
-        Err(_) => {
-            record_metrics(&sys.id, Direction::Mask, 503, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 503);
-            let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
+            let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
@@ -544,7 +715,7 @@ async fn healthz() -> &'static str {
 
 async fn readyz(State(state): State<Arc<AppState>>) -> StatusCode {
     let cfg = state.config.load();
-    if cfg.systems.is_empty() || state.registry.types().is_empty() {
+    if cfg.systems.is_empty() || state.registry.load().types().is_empty() {
         StatusCode::SERVICE_UNAVAILABLE
     } else {
         StatusCode::OK
@@ -597,12 +768,65 @@ async fn body_limit_middleware(
     next.run(req).await
 }
 
+/// Re-reads config.yaml, pii_types.yaml, allowlist.yaml and dictionaries; validates and swaps
+/// the config, registry and detector snapshots. On any error the previous state is kept.
+fn reload_config(state: &Arc<AppState>) -> Result<u64, String> {
+    let text = std::fs::read_to_string(&state.config_path).map_err(|e| format!("read config: {e}"))?;
+    let cfg = crate::config::Config::from_yaml(&text).map_err(|e| format!("parse config: {e}"))?;
+    cfg.validate().map_err(|e| format!("validate config: {e}"))?;
+
+    let pii_types = std::fs::read_to_string(&cfg.pii_types_file).map_err(|e| format!("read pii_types: {e}"))?;
+    let registry = Arc::new(crate::registry::Registry::from_yaml(&pii_types).map_err(|e| format!("parse registry: {e}"))?);
+
+    let dicts = match &cfg.dictionaries_dir {
+        Some(dir) if std::path::Path::new(dir).exists() => {
+            Arc::new(crate::detect::Dictionaries::load_dir(std::path::Path::new(dir)).map_err(|e| format!("load dicts: {e}"))?)
+        }
+        _ => Arc::new(crate::detect::Dictionaries::empty()),
+    };
+    let allowlist_text = std::fs::read_to_string(&cfg.allowlist_file).map_err(|e| format!("read allowlist: {e}"))?;
+    let allowlist = crate::detect::Allowlist::from_yaml(&allowlist_text).map_err(|e| format!("parse allowlist: {e}"))?;
+    let detector = crate::detect::Detector::with_allowlist(registry.clone(), dicts, allowlist)
+        .with_historical_date_years(cfg.server.historical_date_years);
+
+    let version = cfg.version;
+    state.config.replace(cfg).map_err(|e| format!("replace config: {e}"))?;
+    state.registry.store(registry);
+    state.detector.store(Arc::new(detector));
+    Ok(version)
+}
+
+async fn reload_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let token = match std::env::var("DETOX_ADMIN_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let provided = headers
+        .get("x-admin-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if provided != token {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match reload_config(&state) {
+        Ok(version) => {
+            metrics::counter!("pii_config_reloads_total", "result" => "ok").increment(1);
+            Json(serde_json::json!({ "version": version })).into_response()
+        }
+        Err(e) => {
+            metrics::counter!("pii_config_reloads_total", "result" => "error").increment(1);
+            error_response(StatusCode::BAD_REQUEST, &e, "reload_error")
+        }
+    }
+}
+
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/process", post(process_handler))
         .route("/v1/mask", post(mask_handler))
         .route("/v1/unmask", post(unmask_handler))
         .route("/v1/detect", post(detect_handler))
+        .route("/admin/reload", post(reload_handler))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_handler))
@@ -640,12 +864,41 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         config: crate::config::ConfigStore::new(cfg.clone()),
-        registry,
-        detector,
+        registry: ArcSwap::from(registry),
+        detector: ArcSwap::from_pointee(detector),
         store,
         metrics,
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
+        heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
+        config_path: config_path.clone(),
     });
+
+    #[cfg(unix)]
+    {
+        let reload_state = state.clone();
+        tokio::spawn(async move {
+            let mut sig = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to install SIGHUP handler");
+                    return;
+                }
+            };
+            loop {
+                sig.recv().await;
+                match reload_config(&reload_state) {
+                    Ok(version) => {
+                        metrics::counter!("pii_config_reloads_total", "result" => "ok").increment(1);
+                        tracing::info!(version = version, "config reloaded via SIGHUP");
+                    }
+                    Err(e) => {
+                        metrics::counter!("pii_config_reloads_total", "result" => "error").increment(1);
+                        tracing::error!(error = %e, "config reload via SIGHUP failed");
+                    }
+                }
+            }
+        });
+    }
 
     let sweep_state = state.clone();
     tokio::spawn(async move {

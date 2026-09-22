@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use axum::serve::ListenerExt;
 use detox_proxy::config::{Config, ConfigStore};
 use detox_proxy::detect::{Detector, Dictionaries};
@@ -17,6 +18,10 @@ fn metrics_handle() -> metrics_exporter_prometheus::PrometheusHandle {
 }
 
 fn build_state(cfg: Config) -> Arc<AppState> {
+    build_state_with_path(cfg, std::path::PathBuf::from("config.yaml"))
+}
+
+fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<AppState> {
     let pii_types = std::fs::read_to_string(&cfg.pii_types_file).expect("read pii_types.yaml");
     let registry = Arc::new(Registry::from_yaml(&pii_types).expect("parse registry"));
     let dicts = match &cfg.dictionaries_dir {
@@ -32,11 +37,13 @@ fn build_state(cfg: Config) -> Arc<AppState> {
     );
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
-        registry,
-        detector,
+        registry: ArcSwap::from(registry),
+        detector: ArcSwap::from_pointee(detector),
         store,
         metrics: metrics_handle(),
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
+        heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
+        config_path,
     })
 }
 
@@ -80,6 +87,63 @@ async fn get(base: &str, path: &str) -> (u16, String) {
     let status = resp.status().as_u16();
     let text = resp.text().await.expect("text");
     (status, text)
+}
+
+#[tokio::test]
+async fn process_isolation_between_systems() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "X"}),
+        &[("X-System-Id", "autotest")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+    assert!(!masked.contains("7707083893"));
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН <<INN_1>>", "payload_id": "X"}),
+        &[("X-System-Id", "strict")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let result = json["result"].as_str().unwrap().to_string();
+    assert!(!result.contains("7707083893"), "strict leaked autotest data: {result}");
+}
+
+#[tokio::test]
+async fn v1_mask_unmask_isolation_between_systems() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/mask",
+        &serde_json::json!({"text": "ИНН 7707083893", "session_id": "S"}),
+        &[("X-System-Id", "autotest")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["text"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/unmask",
+        &serde_json::json!({"text": masked, "session_id": "S"}),
+        &[("X-System-Id", "strict")],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let result = json["text"].as_str().unwrap().to_string();
+    assert!(!result.contains("7707083893"), "strict leaked autotest data: {result}");
 }
 
 #[tokio::test]
@@ -355,4 +419,294 @@ impl std::io::Write for TestWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+static ADMIN_TOKEN_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[tokio::test]
+async fn heavy_detection_does_not_block_short_requests() {
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+  inline_max_bytes: 100
+  heavy_max_concurrency: 1
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let client = reqwest::Client::new();
+    let big = "Клиент ИНН 7707083893, тел. +7 912 345-67-89. ".repeat(1000);
+    assert!(big.len() > 50_000, "big len: {}", big.len());
+
+    let big_task = {
+        let client = client.clone();
+        let base = base.clone();
+        tokio::spawn(async move {
+            client
+                .post(format!("{}/process", base))
+                .json(&serde_json::json!({"payload": big, "payload_id": "big"}))
+                .send()
+                .await
+                .expect("send big")
+        })
+    };
+
+    let mut handles = Vec::new();
+    for i in 0..20 {
+        let client = client.clone();
+        let base = base.clone();
+        handles.push(tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            let resp = client
+                .post(format!("{}/process", base))
+                .json(&serde_json::json!({"payload": "ИНН 7707083893", "payload_id": format!("s{}", i)}))
+                .send()
+                .await
+                .expect("send short");
+            (resp.status().as_u16(), start.elapsed().as_millis())
+        }));
+    }
+    for (i, h) in handles.into_iter().enumerate() {
+        let (status, ms) = h.await.expect("join short");
+        assert_eq!(status, 200);
+        assert!(ms < 100, "short request {} took {} ms", i, ms);
+    }
+
+    let big_resp = big_task.await.expect("join big");
+    assert_eq!(big_resp.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn metrics_for_autoprog() {
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: metrics-test
+systems:
+  - id: metrics-test
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+    let sys = &[("X-System-Id", "metrics-test")];
+
+    let no_pii = "просто текст без персональных данных";
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": no_pii, "payload_id": "n1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), no_pii);
+
+    let pii = "ИНН 7707083893";
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": pii, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+    assert!(masked.contains("<<INN_1>>"), "masked: {masked}");
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": pii, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), masked);
+
+    let foreign = "текст <<INN_99>>";
+    let (st, _json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": foreign, "payload_id": "p1"}),
+        sys,
+    )
+    .await;
+    assert_eq!(st, 200);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+
+    for name in [
+        "pii_payload_bytes",
+        "pii_entities_per_request",
+        "pii_requests_without_entities_total",
+        "pii_process_retry_total",
+        "pii_unmask_unresolved_tokens_total",
+        "pii_unmask_requests_with_unresolved_total",
+    ] {
+        assert!(body.contains(name), "missing {name} in metrics: {body}");
+    }
+
+    assert!(
+        body.contains("pii_requests_without_entities_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_process_retry_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_unmask_unresolved_tokens_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+    assert!(
+        body.contains("pii_unmask_requests_with_unresolved_total{system=\"metrics-test\"} 1"),
+        "metrics: {body}"
+    );
+
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
+async fn admin_reload_without_token_404() {
+    let _guard = ADMIN_TOKEN_LOCK.lock().await;
+    std::env::remove_var("DETOX_ADMIN_TOKEN");
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/admin/reload", base))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 404);
+}
+
+#[tokio::test]
+async fn admin_reload_wrong_token_403() {
+    let _guard = ADMIN_TOKEN_LOCK.lock().await;
+    std::env::set_var("DETOX_ADMIN_TOKEN", "secret-token");
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/admin/reload", base))
+        .header("x-admin-token", "wrong")
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 403);
+}
+
+#[tokio::test]
+async fn admin_reload_broken_yaml_400_keeps_old() {
+    let _guard = ADMIN_TOKEN_LOCK.lock().await;
+    std::env::set_var("DETOX_ADMIN_TOKEN", "secret-token");
+
+    let dir = std::env::temp_dir().join(format!("detox-reload-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let cfg_path = dir.join("config.yaml");
+    let cfg_text = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+"#;
+    std::fs::write(&cfg_path, cfg_text).expect("write config");
+
+    let cfg = Config::from_yaml(cfg_text).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state_with_path(cfg, cfg_path.clone())).await;
+
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{}/admin/reload", base))
+        .header("x-admin-token", "secret-token")
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 200);
+
+    std::fs::write(&cfg_path, "version: 1\nserver: [broken").expect("write broken config");
+
+    let resp = client
+        .post(format!("{}/admin/reload", base))
+        .header("x-admin-token", "secret-token")
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(resp.status().as_u16(), 400);
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "r1"}),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert!(json["result"].as_str().unwrap().contains("<<INN_1>>"));
+
+    std::fs::remove_dir_all(&dir).ok();
 }

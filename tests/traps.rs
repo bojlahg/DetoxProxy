@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use axum::serve::ListenerExt;
 use detox_proxy::config::{Config, ConfigStore, TrapPolicy};
 use detox_proxy::detect::{Allowlist, DetectOptions, Detector, Dictionaries};
@@ -314,11 +315,13 @@ fn build_state(cfg: Config) -> Arc<AppState> {
     );
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
-        registry,
-        detector,
+        registry: ArcSwap::from(registry),
+        detector: ArcSwap::from_pointee(detector),
         store,
         metrics: metrics_handle(),
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
+        heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
+        config_path: std::path::PathBuf::from("config.yaml"),
     })
 }
 
