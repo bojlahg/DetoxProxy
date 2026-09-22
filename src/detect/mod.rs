@@ -386,108 +386,162 @@ impl Detector {
         }
         for re in patterns {
             for m in re.find_iter(text) {
-                let start = m.start();
-                let end = m.end();
-                let span = &text[start..end];
-
-                let mut conf = 0.4f32;
-                let mut skip_context_boost = false;
-
-                let has_context = if is_marker_type(&spec.id) {
-                    if matches!(spec.id.as_str(), "cvv" | "card_pin") {
-                        self.has_cvv_pin_marker(text, start, spec)
-                    } else {
-                        self.has_nearest_marker(text, start, spec)
-                    }
-                } else if spec.context_words.is_empty() {
-                    false
-                } else {
-                    let window = context_window_before(text, start, spec.context_window);
-                    let window_lower = window.to_lowercase();
-                    spec.context_words.iter().any(|w| window_lower.contains(w))
-                };
-
-                // A value whose nearest document-type marker (паспорт vs права/водительское)
-                // is a different type than this spec belongs to that other type, not this one.
-                // E.g. a passport-shaped span near a driver-license marker is a driver license.
-                if matches!(spec.id.as_str(), "passport" | "driver_license") {
-                    if let Some(is_dl) = self.nearest_document_type(text, start) {
-                        let is_dl_spec = spec.id == "driver_license";
-                        if is_dl != is_dl_spec {
-                            continue;
-                        }
-                    }
+                if let Some(entity) = self.regex_match_entity(text, opts, spec, m.start(), m.end()) {
+                    candidates.push(entity);
                 }
-
-                if spec.id == "snils" {
-                    // SNILS: a valid control sum is confident (0.9) even without a marker;
-                    // an invalid sum is accepted only when a marker is present (0.7).
-                    if validator_passes(Validator::Snils, span) {
-                        conf = 0.9;
-                    } else if has_context {
-                        conf = 0.7;
-                    } else {
-                        continue;
-                    }
-                    skip_context_boost = true;
-                } else if spec.validator != Validator::None {
-                    if validator_passes(spec.validator, span) {
-                        conf += 0.4;
-                    } else if spec.id == "card_number" && self.has_card_marker(text, start, end) {
-                        // A 16-digit card in 4x4 format after a card marker is masked even
-                        // when Luhn fails (synthetic jury numbers), at confidence 0.6.
-                        conf = 0.6;
-                        skip_context_boost = true;
-                    } else {
-                        continue;
-                    }
-                }
-
-                if has_context && !skip_context_boost {
-                    conf += 0.3;
-                }
-                // A passport in "NN NN NNNNNN" format (series as two pairs + 6-digit number)
-                // right after a passport marker is a confident passport (0.9).
-                if spec.id == "passport"
-                    && has_context
-                    && PASSPORT_PAIR_PAIR_RE.is_match(span)
-                {
-                    conf = 0.9;
-                }
-                if spec.context_required && !has_context {
-                    continue;
-                }
-                // A non-PII marker (e.g. "пример", "тест") suppresses the candidate outright, since it
-                // marks the value as not real data.
-                let has_non_pii = self.has_non_pii_context(text, start, end, spec);
-                if has_non_pii {
-                    continue;
-                }
-                conf = conf.min(1.0);
-
-                if !passes_threshold(conf, opts) {
-                    continue;
-                }
-
-                let span_lower = span.to_lowercase();
-                let allow_listed = opts
-                    .allow_substrings
-                    .iter()
-                    .any(|a| a.to_lowercase().contains(&span_lower));
-                if allow_listed {
-                    continue;
-                }
-
-                candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
             }
         }
+    }
+
+    /// Builds a single candidate entity for a regex match, or None when the span is rejected.
+    fn regex_match_entity(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        start: usize,
+        end: usize,
+    ) -> Option<Entity> {
+        let span = &text[start..end];
+        let has_context = self.regex_has_context(text, start, end, spec);
+        if self.regex_wrong_document_type(text, start, spec) {
+            return None;
+        }
+        let (conf, skip_context_boost) =
+            self.regex_confidence(span, spec, has_context, text, start, end)?;
+        let conf = self.regex_final_confidence(span, spec, has_context, skip_context_boost, conf);
+        if spec.context_required && !has_context {
+            return None;
+        }
+        if self.has_non_pii_context(text, start, end, spec) {
+            return None;
+        }
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        if self.is_allow_listed(span, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
+    }
+
+    /// True when a marker context word is present for the span.
+    fn regex_has_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
+        if is_marker_type(&spec.id) {
+            if matches!(spec.id.as_str(), "cvv" | "card_pin") {
+                self.has_cvv_pin_marker(text, start, spec)
+            } else {
+                self.has_nearest_marker(text, start, spec)
+            }
+        } else if spec.context_words.is_empty() {
+            false
+        } else {
+            let window = context_window_before(text, start, spec.context_window);
+            let window_lower = window.to_lowercase();
+            spec.context_words.iter().any(|w| window_lower.contains(w))
+        }
+    }
+
+    /// True when the nearest document-type marker assigns the span to the other type.
+    fn regex_wrong_document_type(&self, text: &str, start: usize, spec: &TypeSpec) -> bool {
+        if !matches!(spec.id.as_str(), "passport" | "driver_license") {
+            return false;
+        }
+        match self.nearest_document_type(text, start) {
+            Some(is_dl) => is_dl != (spec.id == "driver_license"),
+            None => false,
+        }
+    }
+
+    /// Computes the base confidence for a regex match. None means the span is rejected.
+    fn regex_confidence(
+        &self,
+        span: &str,
+        spec: &TypeSpec,
+        has_context: bool,
+        text: &str,
+        start: usize,
+        end: usize,
+    ) -> Option<(f32, bool)> {
+        let mut conf = 0.4f32;
+        let mut skip_context_boost = false;
+        if spec.id == "snils" {
+            // SNILS: a valid control sum is confident (0.9) even without a marker;
+            // an invalid sum is accepted only when a marker is present (0.7).
+            if validator_passes(Validator::Snils, span) {
+                conf = 0.9;
+            } else if has_context {
+                conf = 0.7;
+            } else {
+                return None;
+            }
+            skip_context_boost = true;
+        } else if spec.validator != Validator::None {
+            if validator_passes(spec.validator, span) {
+                conf += 0.4;
+            } else if spec.id == "card_number" && self.has_card_marker(text, start, end) {
+                // A 16-digit card in 4x4 format after a card marker is masked even
+                // when Luhn fails (synthetic jury numbers), at confidence 0.6.
+                conf = 0.6;
+                skip_context_boost = true;
+            } else {
+                return None;
+            }
+        }
+        Some((conf, skip_context_boost))
+    }
+
+    /// Applies the context boost and the passport pair-pair rule, then clamps to [0, 1].
+    fn regex_final_confidence(
+        &self,
+        span: &str,
+        spec: &TypeSpec,
+        has_context: bool,
+        skip_context_boost: bool,
+        mut conf: f32,
+    ) -> f32 {
+        if has_context && !skip_context_boost {
+            conf += 0.3;
+        }
+        // A passport in "NN NN NNNNNN" format (series as two pairs + 6-digit number)
+        // right after a passport marker is a confident passport (0.9).
+        if spec.id == "passport" && has_context && PASSPORT_PAIR_PAIR_RE.is_match(span) {
+            conf = 0.9;
+        }
+        conf.min(1.0)
+    }
+
+    /// True if the span is a substring of any allow-listed substring.
+    fn is_allow_listed(&self, span: &str, opts: &DetectOptions<'_>) -> bool {
+        let span_lower = span.to_lowercase();
+        opts.allow_substrings
+            .iter()
+            .any(|a| a.to_lowercase().contains(&span_lower))
     }
 
     /// FIO: 2-3 capitalized words / initials, at least one dictionary or suffix hit.
     fn detect_fio(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         let all_tokens = name_tokens(text);
-        let tokens: Vec<NameToken> = all_tokens
+        let tokens = self.fio_tokens(text, &all_tokens);
+        let n = tokens.len();
+        for i in 0..n {
+            for len in 1..=3usize {
+                if i + len > n {
+                    break;
+                }
+                let window = &tokens[i..i + len];
+                if let Some(entity) = self.fio_window_entity(text, opts, spec, window) {
+                    candidates.push(entity);
+                }
+            }
+        }
+        candidates
+    }
+
+    /// Filters name tokens that may belong to a FIO span (drops marker and city tokens).
+    fn fio_tokens(&self, text: &str, all_tokens: &[NameToken]) -> Vec<NameToken> {
+        all_tokens
             .iter()
             .enumerate()
             .filter(|(i, t)| {
@@ -515,130 +569,180 @@ impl Detector {
                 is_initial: t.is_initial,
                 is_latin: t.is_latin,
             })
-            .collect();
-        let n = tokens.len();
-        for i in 0..n {
-            for len in 1..=3usize {
-                if i + len > n {
-                    break;
-                }
-                let window = &tokens[i..i + len];
-                // All tokens must be capitalized words or initials.
-                if window.iter().any(|t| !t.capitalized) {
-                    continue;
-                }
-                // Consecutive tokens must be adjacent (only spaces / periods between).
-                if window.windows(2).any(|w| !tokens_adjacent(text, &w[0], &w[1])) {
-                    continue;
-                }
-                // Skip tokens that are part of an address (after street markers).
-                if window.iter().any(|t| self.preceded_by_street_marker(text, t.start)) {
-                    continue;
-                }
-                // A word after a military/academic rank (e.g. "Маршала Жукова, д. 15") is a
-                // street name, not a FIO.
-                if is_rank_word(&window[0].lower) {
-                    continue;
-                }
-                let (qualifies, comps) = self.fio_qualifies(window);
-                if !qualifies {
-                    continue;
-                }
-                // Single word requires PII context.
-                if comps == 1 && !self.has_pii_context(text, window[0].start, window[0].end, spec) {
-                    continue;
-                }
-                // A Latin name (e.g. "Theodore Weaver") requires PII context: Latin without a
-                // PII marker is not a FIO (e.g. "Yves talks", "CREATE TABLE IF", "Russian State
-                // University").
-                if window.iter().all(|t| t.is_latin)
-                    && !self.has_pii_context(text, window[0].start, window[0].end, spec)
-                {
-                    continue;
-                }
-                // First word of sentence, single candidate, not in any dict -> skip.
-                if comps == 1 && is_sentence_start(text, window[0].start) && !self.in_any_name_dict(&window[0].lower) {
-                    continue;
-                }
-                let start = window[0].start;
-                let end = window[window.len() - 1].end;
-                let has_pii = self.has_pii_context(text, start, end, spec);
-                let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
-                // A leading word that is itself a non-PII marker (e.g. "Поэт Александр Пушкин")
-                // counts as non-PII context even though it is inside the span.
-                if !has_non_pii {
-                    let non_pii = self.effective_non_pii_markers(spec);
-                    if non_pii.iter().any(|m| m == &window[0].lower) {
-                        has_non_pii = true;
-                    }
-                }
-                // Non-PII marker without PII marker suppresses the candidate.
-                if has_non_pii && !has_pii {
-                    continue;
-                }
-                // A single-word FIO that is a public person's surname, near a birth marker,
-                // is a biographical reference (e.g. "Пушкин родился 6 июня 1799"), not a client.
-                if comps == 1
-                    && self.allowlist.is_public_surname(&window[0].lower)
-                    && self.has_birth_marker(text, start, end)
-                {
-                    continue;
-                }
-                let mut conf: f32 = match comps {
-                    3 => 0.6,
-                    2 => 0.5,
-                    _ => 0.5,
-                };
-                // Two words, one a first name and one a surname in oblique case (e.g. "Ивану
-                // Петрову") are a confident FIO.
-                if comps == 2 {
-                    let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
-                    let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
-                    if any_first_case && any_surname_case {
-                        conf = 0.7;
-                    }
-                }
-                // Surname + initials (e.g. "Лукин П. П.", "П.П. Лукин") is a confident FIO.
-                let has_initial = window.iter().any(|t| t.is_initial);
-                let has_surname = window
-                    .iter()
-                    .any(|t| self.in_any_name_dict(&t.lower) || self.is_surname_suffix(&t.lower));
-                if has_initial && has_surname {
-                    conf = 0.8;
-                }
-                // A Latin name near a PII marker (e.g. "клиент Theodore Weaver") is a confident FIO.
-                if comps == 2 && window.iter().all(|t| t.is_latin) {
-                    conf = 0.7;
-                }
-                // Marker conflict is resolved by the trap policy.
-                if has_pii && has_non_pii {
-                    match opts.trap_policy {
-                        TrapPolicy::PreferMask => conf += 0.3,
-                        TrapPolicy::PreferSkip => conf -= 0.3,
-                    }
-                } else if has_pii {
-                    conf += 0.3;
-                } else if has_non_pii {
-                    conf -= 0.3;
-                }
-                // A span whose words are a subset of a public person's name is a negative signal.
-                let span_words = normalize_name_words(&text[start..end]);
-                if self.allowlist.matches_person_subset(&span_words) {
-                    conf -= 0.3;
-                }
-                conf = conf.clamp(0.0, 1.0);
-                if !passes_threshold(conf, opts) {
-                    continue;
-                }
-                // A name preceded by a card-holder marker ("держатель", "cardholder",
-                // "владелец карты") is a card holder, not a generic FIO.
-                if false && self.has_card_holder_marker(text, start, end) {
-                    continue;
-                }
-                candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+            .collect()
+    }
+
+    /// Builds a FIO candidate for a token window, or None when the window is rejected.
+    fn fio_window_entity(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        window: &[NameToken],
+    ) -> Option<Entity> {
+        let (start, end, comps) = self.fio_window_valid(text, spec, window)?;
+        let (has_pii, has_non_pii) = self.fio_context(text, spec, window, start, end);
+        // Non-PII marker without PII marker suppresses the candidate.
+        if has_non_pii && !has_pii {
+            return None;
+        }
+        // A single-word FIO that is a public person's surname, near a birth marker,
+        // is a biographical reference (e.g. "Пушкин родился 6 июня 1799"), not a client.
+        if comps == 1
+            && self.allowlist.is_public_surname(&window[0].lower)
+            && self.has_birth_marker(text, start, end)
+        {
+            return None;
+        }
+        let conf = self.fio_confidence(text, opts, window, has_pii, has_non_pii);
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
+    }
+
+    /// Structural checks for a FIO window. Returns (start, end, component_count) or None.
+    fn fio_window_valid(
+        &self,
+        text: &str,
+        spec: &TypeSpec,
+        window: &[NameToken],
+    ) -> Option<(usize, usize, usize)> {
+        // All tokens must be capitalized words or initials.
+        if window.iter().any(|t| !t.capitalized) {
+            return None;
+        }
+        // Consecutive tokens must be adjacent (only spaces / periods between).
+        if window.windows(2).any(|w| !tokens_adjacent(text, &w[0], &w[1])) {
+            return None;
+        }
+        // Skip tokens that are part of an address (after street markers).
+        if window.iter().any(|t| self.preceded_by_street_marker(text, t.start)) {
+            return None;
+        }
+        // A word after a military/academic rank (e.g. "Маршала Жукова, д. 15") is a
+        // street name, not a FIO.
+        if is_rank_word(&window[0].lower) {
+            return None;
+        }
+        let (qualifies, comps) = self.fio_qualifies(window);
+        if !qualifies {
+            return None;
+        }
+        // Single word requires PII context.
+        if comps == 1 && !self.has_pii_context(text, window[0].start, window[0].end, spec) {
+            return None;
+        }
+        // A Latin name (e.g. "Theodore Weaver") requires PII context: Latin without a
+        // PII marker is not a FIO (e.g. "Yves talks", "CREATE TABLE IF", "Russian State
+        // University").
+        if window.iter().all(|t| t.is_latin)
+            && !self.has_pii_context(text, window[0].start, window[0].end, spec)
+        {
+            return None;
+        }
+        // First word of sentence, single candidate, not in any dict -> skip.
+        if comps == 1 && is_sentence_start(text, window[0].start) && !self.in_any_name_dict(&window[0].lower) {
+            return None;
+        }
+        let start = window[0].start;
+        let end = window[window.len() - 1].end;
+        Some((start, end, comps))
+    }
+
+    /// PII / non-PII context flags for a FIO window.
+    fn fio_context(
+        &self,
+        text: &str,
+        spec: &TypeSpec,
+        window: &[NameToken],
+        start: usize,
+        end: usize,
+    ) -> (bool, bool) {
+        let has_pii = self.has_pii_context(text, start, end, spec);
+        let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
+        // A leading word that is itself a non-PII marker (e.g. "Поэт Александр Пушкин")
+        // counts as non-PII context even though it is inside the span.
+        if !has_non_pii {
+            let non_pii = self.effective_non_pii_markers(spec);
+            if non_pii.iter().any(|m| m == &window[0].lower) {
+                has_non_pii = true;
             }
         }
-        candidates
+        (has_pii, has_non_pii)
+    }
+
+    /// Computes the confidence for a validated FIO window.
+    fn fio_confidence(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        window: &[NameToken],
+        has_pii: bool,
+        has_non_pii: bool,
+    ) -> f32 {
+        let comps = window.len();
+        let start = window[0].start;
+        let end = window[window.len() - 1].end;
+        let mut conf = self.fio_base_confidence(window, comps);
+        conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
+        // A span whose words are a subset of a public person's name is a negative signal.
+        let span_words = normalize_name_words(&text[start..end]);
+        if self.allowlist.matches_person_subset(&span_words) {
+            conf -= 0.3;
+        }
+        conf.clamp(0.0, 1.0)
+    }
+
+    /// Base confidence from the FIO shape (component count, initials, Latin).
+    fn fio_base_confidence(&self, window: &[NameToken], comps: usize) -> f32 {
+        let mut conf: f32 = match comps {
+            3 => 0.6,
+            _ => 0.5,
+        };
+        // Two words, one a first name and one a surname in oblique case (e.g. "Ивану
+        // Петрову") are a confident FIO.
+        if comps == 2 {
+            let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
+            let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
+            if any_first_case && any_surname_case {
+                conf = 0.7;
+            }
+        }
+        // Surname + initials (e.g. "Лукин П. П.", "П.П. Лукин") is a confident FIO.
+        let has_initial = window.iter().any(|t| t.is_initial);
+        let has_surname = window
+            .iter()
+            .any(|t| self.in_any_name_dict(&t.lower) || self.is_surname_suffix(&t.lower));
+        if has_initial && has_surname {
+            conf = 0.8;
+        }
+        // A Latin name near a PII marker (e.g. "клиент Theodore Weaver") is a confident FIO.
+        if comps == 2 && window.iter().all(|t| t.is_latin) {
+            conf = 0.7;
+        }
+        conf
+    }
+
+    /// Applies the PII / non-PII marker conflict adjustment per the trap policy.
+    fn fio_marker_adjustment(
+        &self,
+        mut conf: f32,
+        opts: &DetectOptions<'_>,
+        has_pii: bool,
+        has_non_pii: bool,
+    ) -> f32 {
+        if has_pii && has_non_pii {
+            match opts.trap_policy {
+                TrapPolicy::PreferMask => conf += 0.3,
+                TrapPolicy::PreferSkip => conf -= 0.3,
+            }
+        } else if has_pii {
+            conf += 0.3;
+        } else if has_non_pii {
+            conf -= 0.3;
+        }
+        conf
     }
 
     /// Returns (qualifies_as_fio, component_count).
@@ -1018,29 +1122,11 @@ impl Detector {
         let mut candidates = Vec::new();
         for re in patterns {
             for m in re.find_iter(text) {
-                let start = m.start();
-                let mut end = m.end();
-                // Extend the span to include a trailing suffix (e.g. " г.", " года") right after the year.
-                let after = &text[end..];
-                for suffix in &spec.date_suffixes {
-                    if let Some(rest) = after.strip_prefix(suffix.as_str()) {
-                        if rest.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
-                            end += suffix.len();
-                            break;
-                        }
-                    }
-                }
+                let (start, end) = match self.date_span(text, m.start(), m.end(), spec) {
+                    Some(v) => v,
+                    None => continue,
+                };
                 let span = &text[start..end];
-                if !validators::date(span) {
-                    // The suffix extension may have produced an invalid date (e.g. "10.02.1982 года").
-                    // Fall back to the unextended span when it is a valid date.
-                    let unextended = &text[start..m.end()];
-                    if validators::date(unextended) {
-                        end = m.end();
-                    } else {
-                        continue;
-                    }
-                }
                 // Marker must be within the window before the date or within 20 chars after it
                 // (e.g. "10.02.1982 года рождения", "06.06.1988 г.р.").
                 let before = context_window_before(text, start, spec.context_window).to_lowercase();
@@ -1063,6 +1149,34 @@ impl Detector {
             }
         }
         candidates
+    }
+
+    /// Extends a date span with a trailing suffix (e.g. " г.", " года"). Returns None when the
+    /// span (extended or not) is not a valid date.
+    fn date_span(&self, text: &str, start: usize, m_end: usize, spec: &TypeSpec) -> Option<(usize, usize)> {
+        let mut end = m_end;
+        // Extend the span to include a trailing suffix (e.g. " г.", " года") right after the year.
+        let after = &text[end..];
+        for suffix in &spec.date_suffixes {
+            if let Some(rest) = after.strip_prefix(suffix.as_str()) {
+                if rest.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
+                    end += suffix.len();
+                    break;
+                }
+            }
+        }
+        let span = &text[start..end];
+        if !validators::date(span) {
+            // The suffix extension may have produced an invalid date (e.g. "10.02.1982 года").
+            // Fall back to the unextended span when it is a valid date.
+            let unextended = &text[start..m_end];
+            if validators::date(unextended) {
+                end = m_end;
+            } else {
+                return None;
+            }
+        }
+        Some((start, end))
     }
 
     /// Birth place: text after a marker up to end of sentence / comma / period.
@@ -1237,62 +1351,68 @@ impl Detector {
             if !is_cap || !self.dicts.contains("cities", &lower) {
                 continue;
             }
-            // After the city: ", capitalized word(s), number".
-            let after = &text[end..];
-            let after = after.trim_start();
-            let after = after.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(after);
-            let words = cyrillic_words(after);
-            if words.is_empty() {
-                continue;
-            }
-            // Take 1-2 capitalized words as the street name.
-            let (ws, we, _, wcap) = words[0];
-            if !wcap {
-                continue;
-            }
-            let mut street_end = we;
-            if let Some((_, we2, _, wcap2)) = words.get(1) {
-                if *wcap2 {
-                    street_end = *we2;
+            if let Some((span_start, span_end)) = self.city_word_number_span(text, start, end) {
+                // A non-pii marker (юридический адрес, пункт выдачи, отделение, офис, банк...)
+                // suppresses the address.
+                if self.has_global_non_pii_near(text, span_start, span_end) {
+                    continue;
                 }
-            }
-            // Convert the street-name end to an absolute byte offset in `text`. `after` is a
-            // sub-slice of `text` (after trimming and comma stripping), so its absolute
-            // offset is `after.as_ptr() - text.as_ptr()`.
-            let street_end_abs = (after.as_ptr() as usize - text.as_ptr() as usize) + street_end;
-            // After the street name: a comma and a number.
-            let between = &text[street_end_abs..];
-            let between = between.trim_start();
-            let between = between.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(between);
-            let num = HOUSE_NUMBER_RE.find(between);
-            let num = match num {
-                Some(n) if n.start() == 0 => n,
-                _ => continue,
-            };
-            let num_end = num.end();
-            // The number must be followed by a boundary (space, period, end).
-            let after_num = &between[num_end..];
-            if !after_num.is_empty()
-                && !after_num.starts_with(char::is_whitespace)
-                && !after_num.starts_with('.')
-            {
-                continue;
-            }
-            // Compute the absolute byte offset of the number's end. `between` is a sub-slice of
-            // `text` (after trimming and comma stripping), so its absolute offset is
-            // `between.as_ptr() - text.as_ptr()`.
-            let span_end = (between.as_ptr() as usize - text.as_ptr() as usize) + num_end;
-            let span_start = start;
-            // A non-pii marker (юридический адрес, пункт выдачи, отделение, офис, банк...)
-            // suppresses the address.
-            if self.has_global_non_pii_near(text, span_start, span_end) {
-                continue;
-            }
-            if passes_threshold(0.7, opts) {
-                candidates.push(Entity { type_id: spec.id.clone(), start: span_start, end: span_end, confidence: 0.7 });
+                if passes_threshold(0.7, opts) {
+                    candidates.push(Entity { type_id: spec.id.clone(), start: span_start, end: span_end, confidence: 0.7 });
+                }
             }
         }
         candidates
+    }
+
+    /// Extracts the "city, street name, number" span after a city word. Returns None when the
+    /// structure does not match.
+    fn city_word_number_span(&self, text: &str, start: usize, end: usize) -> Option<(usize, usize)> {
+        // After the city: ", capitalized word(s), number".
+        let after = &text[end..];
+        let after = after.trim_start();
+        let after = after.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(after);
+        let words = cyrillic_words(after);
+        if words.is_empty() {
+            return None;
+        }
+        // Take 1-2 capitalized words as the street name.
+        let (_, we, _, wcap) = words[0];
+        if !wcap {
+            return None;
+        }
+        let mut street_end = we;
+        if let Some((_, we2, _, wcap2)) = words.get(1) {
+            if *wcap2 {
+                street_end = *we2;
+            }
+        }
+        // Convert the street-name end to an absolute byte offset in `text`. `after` is a
+        // sub-slice of `text` (after trimming and comma stripping), so its absolute
+        // offset is `after.as_ptr() - text.as_ptr()`.
+        let street_end_abs = (after.as_ptr() as usize - text.as_ptr() as usize) + street_end;
+        // After the street name: a comma and a number.
+        let between = &text[street_end_abs..];
+        let between = between.trim_start();
+        let between = between.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(between);
+        let num = HOUSE_NUMBER_RE.find(between)?;
+        if num.start() != 0 {
+            return None;
+        }
+        let num_end = num.end();
+        // The number must be followed by a boundary (space, period, end).
+        let after_num = &between[num_end..];
+        if !after_num.is_empty()
+            && !after_num.starts_with(char::is_whitespace)
+            && !after_num.starts_with('.')
+        {
+            return None;
+        }
+        // Compute the absolute byte offset of the number's end. `between` is a sub-slice of
+        // `text` (after trimming and comma stripping), so its absolute offset is
+        // `between.as_ptr() - text.as_ptr()`.
+        let span_end = (between.as_ptr() as usize - text.as_ptr() as usize) + num_end;
+        Some((start, span_end))
     }
 
     /// Address: group of 2+ consecutive components (index, city, street, house, apartment, region).
@@ -1423,20 +1543,7 @@ impl Detector {
             }
         }
         comps.sort_by_key(|c| c.0);
-        // Drop components fully contained in a previous one (keep the longer).
-        let mut deduped: Vec<(usize, usize)> = Vec::with_capacity(comps.len());
-        for c in comps {
-            if let Some(last) = deduped.last_mut() {
-                if c.0 < last.1 {
-                    if c.1 > last.1 {
-                        last.1 = c.1;
-                    }
-                    continue;
-                }
-            }
-            deduped.push(c);
-        }
-        deduped
+        dedup_components(comps)
     }
 
     /// True if a bare number at `start` is preceded by a street component.
@@ -1719,6 +1826,23 @@ fn starts_with_street_marker(lower: &str, markers: &[String]) -> bool {
             true
         }
     })
+}
+
+/// Drops components fully contained in a previous one (keeps the longer).
+fn dedup_components(comps: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    let mut deduped: Vec<(usize, usize)> = Vec::with_capacity(comps.len());
+    for c in comps {
+        if let Some(last) = deduped.last_mut() {
+            if c.0 < last.1 {
+                if c.1 > last.1 {
+                    last.1 = c.1;
+                }
+                continue;
+            }
+        }
+        deduped.push(c);
+    }
+    deduped
 }
 
 fn name_tokens(text: &str) -> Vec<NameToken> {
@@ -2289,6 +2413,11 @@ pub mod validators {
         if b > 12 {
             return Some((b as u32, a as u32, year));
         }
+        resolve_ambiguous_date(a, b, year)
+    }
+
+    /// Resolves a date where both day and month are <= 12 by trying both orders.
+    fn resolve_ambiguous_date(a: i32, b: i32, year: i32) -> Option<(u32, u32, i32)> {
         if is_valid_calendar(a as u32, b as u32, year) {
             Some((a as u32, b as u32, year))
         } else if is_valid_calendar(b as u32, a as u32, year) {

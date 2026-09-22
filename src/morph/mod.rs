@@ -312,6 +312,62 @@ fn is_patronymic(w: &str) -> bool {
         || w.ends_with("инична")
 }
 
+/// True if `w` ends with any of the given suffixes.
+fn ends_with_any(w: &str, suffixes: &[&str]) -> bool {
+    suffixes.iter().any(|s| w.ends_with(s))
+}
+
+/// Strips a suffix from `w` and returns the stem when it satisfies `pred`.
+fn strip_ends_with(w: &str, suffixes: &[&str], pred: impl Fn(&str) -> bool) -> Option<String> {
+    for suf in suffixes {
+        if let Some(stem) = w.strip_suffix(suf) {
+            if pred(stem) {
+                return Some(stem.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Strips a suffix and appends `nom_suf`, returning the candidate when `is_word` accepts it.
+fn normalize_by_pairs(w: &str, pairs: &[(&str, &str)], is_word: impl Fn(&str) -> bool) -> Option<String> {
+    for (suf, nom_suf) in pairs {
+        if let Some(stem) = w.strip_suffix(suf) {
+            if !stem.is_empty() {
+                let cand = stem.to_string() + nom_suf;
+                if is_word(&cand) {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Strips a suffix and appends `nom_suf` without any dictionary check.
+fn strip_append(w: &str, pairs: &[(&str, &str)]) -> Option<String> {
+    for (suf, nom_suf) in pairs {
+        if let Some(stem) = w.strip_suffix(suf) {
+            if !stem.is_empty() {
+                return Some(stem.to_string() + nom_suf);
+            }
+        }
+    }
+    None
+}
+
+/// Strips a suffix and returns the stem when it ends in a consonant.
+fn strip_consonant(w: &str, suffixes: &[&str]) -> Option<String> {
+    for suf in suffixes {
+        if let Some(stem) = w.strip_suffix(suf) {
+            if !stem.is_empty() && stem.ends_with(is_consonant) {
+                return Some(stem.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Reverse-normalize a patronymic (any case) to nominative.
 fn normalize_patronymic(w: &str) -> Option<String> {
     // -ович/-евич/-ич (masculine): strip а/у/ем/е.
@@ -345,67 +401,28 @@ fn normalize_name(w: &str) -> Option<String> {
         }
     }
     // -ия
-    for (suf, nom_suf) in [("ии", "ия"), ("ию", "ия"), ("ией", "ия")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_first_name(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("ии", "ия"), ("ию", "ия"), ("ией", "ия")], is_first_name) {
+        return Some(cand);
     }
     // -а
-    for (suf, nom_suf) in [("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_first_name(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")], is_first_name) {
+        return Some(cand);
     }
     // -я
-    for (suf, nom_suf) in [("и", "я"), ("ю", "я"), ("ей", "я"), ("е", "я")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_first_name(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("и", "я"), ("ю", "я"), ("ей", "я"), ("е", "я")], is_first_name) {
+        return Some(cand);
     }
     // -й
-    for (suf, nom_suf) in [("я", "й"), ("ю", "й"), ("ем", "й"), ("е", "й")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_first_name(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("я", "й"), ("ю", "й"), ("ем", "й"), ("е", "й")], is_first_name) {
+        return Some(cand);
     }
     // -ь
-    for (suf, nom_suf) in [("я", "ь"), ("ю", "ь"), ("ем", "ь"), ("е", "ь")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_first_name(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("я", "ь"), ("ю", "ь"), ("ем", "ь"), ("е", "ь")], is_first_name) {
+        return Some(cand);
     }
     // consonant
-    for (suf, _) in [("а", ""), ("у", ""), ("ом", ""), ("е", "")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() && is_first_name(stem) {
-                return Some(stem.to_string());
-            }
-        }
+    if let Some(stem) = strip_ends_with(w, &["а", "у", "ом", "е"], is_first_name) {
+        return Some(stem);
     }
     if is_first_name(w) {
         return Some(w.to_string());
@@ -431,98 +448,76 @@ fn is_indeclinable_surname(w: &str) -> bool {
     false
 }
 
+/// Reverse-normalize a male surname (any case) to nominative.
+fn normalize_surname_male(w: &str) -> Option<String> {
+    // -ов/-ев/-ёв/-ин/-ын (nominative or inflected).
+    if ends_with_any(w, &["ов", "ев", "ёв", "ин", "ын"]) {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ым", "а", "у", "е"], |s| {
+        ends_with_any(s, &["ов", "ев", "ёв", "ин", "ын"])
+    }) {
+        return Some(stem);
+    }
+    // -ский/-цкий (nominative or inflected).
+    if w.ends_with("ский") || w.ends_with("цкий") {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ого", "ому", "им", "ом"], |s| s.ends_with("ск")) {
+        return Some(stem + "ий");
+    }
+    // -ой/-ый (nominative or inflected).
+    if w.ends_with("ой") || w.ends_with("ый") {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ого", "ому", "ым", "ом"], |s| s.ends_with(is_consonant)) {
+        return Some(stem + "ой");
+    }
+    // Plain consonant (nominative or inflected).
+    if w.ends_with(is_consonant) {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ом", "а", "у", "е"], |s| s.ends_with(is_consonant)) {
+        return Some(stem);
+    }
+    None
+}
+
+/// Reverse-normalize a female surname (any case) to nominative.
+fn normalize_surname_female(w: &str) -> Option<String> {
+    // -ова/-ева/-ина/-ына (nominative or inflected).
+    if ends_with_any(w, &["ова", "ева", "ина", "ына"]) {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ой", "у"], |s| {
+        ends_with_any(s, &["ов", "ев", "ёв", "ин", "ын"])
+    }) {
+        return Some(stem + "а");
+    }
+    // -ская/-цкая/-ая (nominative or inflected).
+    if w.ends_with("ая") {
+        return Some(w.to_string());
+    }
+    if let Some(stem) = strip_ends_with(w, &["ой", "ую"], |s| s.ends_with("ск") || s.ends_with("цк")) {
+        return Some(stem + "ая");
+    }
+    // Female surname ending in a consonant is indeclinable.
+    if w.ends_with(is_consonant) {
+        return Some(w.to_string());
+    }
+    None
+}
+
 /// Reverse-normalize a surname (any case) to nominative.
 fn normalize_surname(w: &str, gender: Gender) -> Option<String> {
     let result = match gender {
-        Gender::Male => {
-            // -ов/-ев/-ёв/-ин/-ын (nominative or inflected).
-            for suf in ["ов", "ев", "ёв", "ин", "ын"] {
-                if w.ends_with(suf) {
-                    return Some(w.to_string());
-                }
-            }
-            for suf in ["ым", "а", "у", "е"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    for s in ["ов", "ев", "ёв", "ин", "ын"] {
-                        if stem.ends_with(s) {
-                            return Some(stem.to_string());
-                        }
-                    }
-                }
-            }
-            // -ский/-цкий (nominative or inflected).
-            if w.ends_with("ский") || w.ends_with("цкий") {
-                return Some(w.to_string());
-            }
-            for suf in ["ого", "ому", "им", "ом"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    if stem.ends_with("ск") {
-                        return Some(stem.to_string() + "ий");
-                    }
-                }
-            }
-            // -ой/-ый (nominative or inflected).
-            if w.ends_with("ой") || w.ends_with("ый") {
-                return Some(w.to_string());
-            }
-            for suf in ["ого", "ому", "ым", "ом"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    if stem.ends_with(is_consonant) {
-                        return Some(stem.to_string() + "ой");
-                    }
-                }
-            }
-            // Plain consonant (nominative or inflected).
-            if w.ends_with(is_consonant) {
-                return Some(w.to_string());
-            }
-            for suf in ["ом", "а", "у", "е"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    if stem.ends_with(is_consonant) {
-                        return Some(stem.to_string());
-                    }
-                }
-            }
-            None
-        }
-        Gender::Female => {
-            // -ова/-ева/-ина/-ына (nominative or inflected).
-            for suf in ["ова", "ева", "ина", "ына"] {
-                if w.ends_with(suf) {
-                    return Some(w.to_string());
-                }
-            }
-            for suf in ["ой", "у"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    for s in ["ов", "ев", "ёв", "ин", "ын"] {
-                        if stem.ends_with(s) {
-                            return Some(stem.to_string() + "а");
-                        }
-                    }
-                }
-            }
-            // -ская/-цкая/-ая (nominative or inflected).
-            if w.ends_with("ая") {
-                return Some(w.to_string());
-            }
-            for suf in ["ой", "ую"] {
-                if let Some(stem) = w.strip_suffix(suf) {
-                    if stem.ends_with("ск") || stem.ends_with("цк") {
-                        return Some(stem.to_string() + "ая");
-                    }
-                }
-            }
-            // Female surname ending in a consonant is indeclinable.
-            if w.ends_with(is_consonant) {
-                return Some(w.to_string());
-            }
-            None
-        }
+        Gender::Male => normalize_surname_male(w),
+        Gender::Female => normalize_surname_female(w),
         Gender::Unknown => {
-            if let Some(m) = normalize_surname(w, Gender::Male) {
+            if let Some(m) = normalize_surname_male(w) {
                 return Some(m);
             }
-            normalize_surname(w, Gender::Female)
+            normalize_surname_female(w)
         }
     };
     // Fallback: genuinely indeclinable surnames (Шевченко, Черных, ...).
@@ -530,6 +525,41 @@ fn normalize_surname(w: &str, gender: Gender) -> Option<String> {
         return Some(w.to_string());
     }
     result
+}
+
+/// Inflect a nominative male surname to a case.
+fn inflect_surname_male(word: &str, case: Case) -> Option<String> {
+    if ends_with_any(word, &["ов", "ев", "ёв", "ин", "ын"]) {
+        return Some(append(word, M_SURNAME_OV[case_index(case)]));
+    }
+    if word.ends_with("ский") || word.ends_with("цкий") {
+        let stem = word.strip_suffix("ий")?;
+        return Some(append(stem, M_SURNAME_SKY[case_index(case)]));
+    }
+    if word.ends_with("ой") || word.ends_with("ый") {
+        let stem = word.strip_suffix("ой").or_else(|| word.strip_suffix("ый"))?;
+        return Some(append(stem, M_SURNAME_SKY_Y[case_index(case)]));
+    }
+    if word.ends_with(is_consonant) {
+        return inflect_word(word, &M_SURNAME_CONS, case);
+    }
+    None
+}
+
+/// Inflect a nominative female surname to a case.
+fn inflect_surname_female(word: &str, case: Case) -> Option<String> {
+    if ends_with_any(word, &["ова", "ева", "ина", "ына"]) {
+        let stem = word.strip_suffix('а')?;
+        return Some(append(stem, F_SURNAME_OVA[case_index(case)]));
+    }
+    if word.ends_with("ая") {
+        let stem = word.strip_suffix("ая")?;
+        return Some(append(stem, F_SURNAME_SKA[case_index(case)]));
+    }
+    if word.ends_with(is_consonant) {
+        return Some(word.to_string());
+    }
+    None
 }
 
 /// Inflect a nominative surname to a case.
@@ -541,46 +571,13 @@ fn inflect_surname(word: &str, gender: Gender, case: Case) -> Option<String> {
         return Some(word.to_string());
     }
     match gender {
-        Gender::Male => {
-            for suf in ["ов", "ев", "ёв", "ин", "ын"] {
-                if word.ends_with(suf) {
-                    return Some(append(word, M_SURNAME_OV[case_index(case)]));
-                }
-            }
-            if word.ends_with("ский") || word.ends_with("цкий") {
-                let stem = word.strip_suffix("ий")?;
-                return Some(append(stem, M_SURNAME_SKY[case_index(case)]));
-            }
-            if word.ends_with("ой") || word.ends_with("ый") {
-                let stem = word.strip_suffix("ой").or_else(|| word.strip_suffix("ый"))?;
-                return Some(append(stem, M_SURNAME_SKY_Y[case_index(case)]));
-            }
-            if word.ends_with(is_consonant) {
-                return inflect_word(word, &M_SURNAME_CONS, case);
-            }
-            None
-        }
-        Gender::Female => {
-            for suf in ["ова", "ева", "ина", "ына"] {
-                if word.ends_with(suf) {
-                    let stem = word.strip_suffix('а')?;
-                    return Some(append(stem, F_SURNAME_OVA[case_index(case)]));
-                }
-            }
-            if word.ends_with("ая") {
-                let stem = word.strip_suffix("ая")?;
-                return Some(append(stem, F_SURNAME_SKA[case_index(case)]));
-            }
-            if word.ends_with(is_consonant) {
-                return Some(word.to_string());
-            }
-            None
-        }
+        Gender::Male => inflect_surname_male(word, case),
+        Gender::Female => inflect_surname_female(word, case),
         Gender::Unknown => {
-            if let Some(m) = inflect_surname(word, Gender::Male, case) {
+            if let Some(m) = inflect_surname_male(word, case) {
                 return Some(m);
             }
-            inflect_surname(word, Gender::Female, case)
+            inflect_surname_female(word, case)
         }
     }
 }
@@ -667,27 +664,24 @@ fn gender_of_normalized(normalized: &[String], is_patr: &[bool], is_name: &[bool
     Gender::Unknown
 }
 
-fn inflect_person(value: &str, case: Case) -> Option<String> {
-    let ws = words(value);
-    if ws.is_empty() || ws.len() > 3 {
-        return None;
-    }
-    let all_initials = ws.iter().all(|w| {
+/// True if every word is a single-letter initial (e.g. "И. И. Иванов").
+fn all_initials(ws: &[&str]) -> bool {
+    ws.iter().all(|w| {
         let t = w.trim_end_matches('.');
-        t.chars().count() == 1 && t.chars().next().unwrap().is_alphabetic()
-    });
-    if all_initials {
-        return Some(value.to_string());
-    }
+        let mut chars = t.chars();
+        match chars.next() {
+            Some(c) if c.is_alphabetic() => chars.next().is_none(),
+            _ => false,
+        }
+    })
+}
 
-    let lower: Vec<String> = ws.iter().map(|w| w.to_lowercase()).collect();
-    let lower_refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
-
-    // Normalize patronymics and given names to nominative (gender-independent).
-    let mut normalized: Vec<String> = Vec::with_capacity(ws.len());
-    let mut is_patr: Vec<bool> = Vec::with_capacity(ws.len());
-    let mut is_name: Vec<bool> = Vec::with_capacity(ws.len());
-    for w in &lower_refs {
+/// Normalize patronymics and given names to nominative (gender-independent).
+fn normalize_person_words(lower_refs: &[&str]) -> (Vec<String>, Vec<bool>, Vec<bool>) {
+    let mut normalized: Vec<String> = Vec::with_capacity(lower_refs.len());
+    let mut is_patr: Vec<bool> = Vec::with_capacity(lower_refs.len());
+    let mut is_name: Vec<bool> = Vec::with_capacity(lower_refs.len());
+    for w in lower_refs {
         let w = w.trim_end_matches('.');
         if w.chars().count() == 1 {
             normalized.push(w.to_string());
@@ -707,11 +701,12 @@ fn inflect_person(value: &str, case: Case) -> Option<String> {
             is_name.push(false);
         }
     }
+    (normalized, is_patr, is_name)
+}
 
-    let gender = gender_of_normalized(&normalized, &is_patr, &is_name);
-
-    // Normalize surnames with the resolved gender.
-    let mut final_nom: Vec<String> = Vec::with_capacity(ws.len());
+/// Normalize surnames with the resolved gender, keeping names and patronymics as-is.
+fn resolve_surnames(normalized: &[String], is_patr: &[bool], is_name: &[bool], gender: Gender) -> Vec<String> {
+    let mut final_nom: Vec<String> = Vec::with_capacity(normalized.len());
     for (i, w) in normalized.iter().enumerate() {
         if is_patr[i] || is_name[i] {
             final_nom.push(w.clone());
@@ -721,6 +716,24 @@ fn inflect_person(value: &str, case: Case) -> Option<String> {
             final_nom.push(w.clone());
         }
     }
+    final_nom
+}
+
+fn inflect_person(value: &str, case: Case) -> Option<String> {
+    let ws = words(value);
+    if ws.is_empty() || ws.len() > 3 {
+        return None;
+    }
+    if all_initials(&ws) {
+        return Some(value.to_string());
+    }
+
+    let lower: Vec<String> = ws.iter().map(|w| w.to_lowercase()).collect();
+    let lower_refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
+
+    let (normalized, is_patr, is_name) = normalize_person_words(&lower_refs);
+    let gender = gender_of_normalized(&normalized, &is_patr, &is_name);
+    let final_nom = resolve_surnames(&normalized, &is_patr, &is_name, gender);
 
     let mut out: Vec<String> = Vec::with_capacity(ws.len());
     for (i, w) in final_nom.iter().enumerate() {
@@ -750,70 +763,35 @@ fn normalize_place_word(w: &str) -> Option<String> {
         return Some(w.to_string());
     }
     // -а
-    for (suf, nom_suf) in [("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_city(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")], is_city) {
+        return Some(cand);
     }
     // -я
-    for (suf, nom_suf) in [("и", "я"), ("ю", "я"), ("ей", "я"), ("е", "я")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_city(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("и", "я"), ("ю", "я"), ("ей", "я"), ("е", "я")], is_city) {
+        return Some(cand);
     }
     // -ь
-    for (suf, nom_suf) in [("и", "ь"), ("ью", "ь"), ("е", "ь")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_city(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("и", "ь"), ("ью", "ь"), ("е", "ь")], is_city) {
+        return Some(cand);
     }
     // consonant
-    for (suf, _) in [("а", ""), ("у", ""), ("ом", ""), ("е", "")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() && is_city(stem) {
-                return Some(stem.to_string());
-            }
+    if let Some(stem) = strip_consonant(w, &["а", "у", "ом", "е"]) {
+        if is_city(&stem) {
+            return Some(stem);
         }
     }
     if is_city(w) {
         return Some(w.to_string());
     }
     // Fallback for compound nouns not present in the dictionary (e.g. Новгород).
-    for (suf, _) in [("а", ""), ("у", ""), ("ом", ""), ("е", "")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() && stem.ends_with(is_consonant) {
-                return Some(stem.to_string());
-            }
-        }
+    if let Some(stem) = strip_consonant(w, &["а", "у", "ом", "е"]) {
+        return Some(stem);
     }
-    for (suf, nom_suf) in [("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                return Some(stem.to_string() + nom_suf);
-            }
-        }
+    if let Some(cand) = strip_append(w, &[("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")]) {
+        return Some(cand);
     }
-    for (suf, nom_suf) in [("и", "ь"), ("ью", "ь"), ("е", "ь")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                return Some(stem.to_string() + nom_suf);
-            }
-        }
+    if let Some(cand) = strip_append(w, &[("и", "ь"), ("ью", "ь"), ("е", "ь")]) {
+        return Some(cand);
     }
     // Already nominative consonant word (e.g. Новгород).
     if w.ends_with(is_consonant) {
@@ -970,67 +948,32 @@ fn inflect_place(value: &str, case: Case) -> Option<String> {
 
 /// Reverse-normalize a country word (any case) to nominative.
 fn normalize_country_word(w: &str) -> Option<String> {
-    for (suf, nom_suf) in [("ии", "ия"), ("ию", "ия"), ("ией", "ия")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_country(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("ии", "ия"), ("ию", "ия"), ("ией", "ия")], is_country) {
+        return Some(cand);
     }
-    for (suf, nom_suf) in [("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_country(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")], is_country) {
+        return Some(cand);
     }
-    for (suf, nom_suf) in [("и", "ь"), ("ью", "ь"), ("е", "ь")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                let cand = stem.to_string() + nom_suf;
-                if is_country(&cand) {
-                    return Some(cand);
-                }
-            }
-        }
+    if let Some(cand) = normalize_by_pairs(w, &[("и", "ь"), ("ью", "ь"), ("е", "ь")], is_country) {
+        return Some(cand);
     }
-    for (suf, _) in [("а", ""), ("у", ""), ("ом", ""), ("е", "")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() && is_country(stem) {
-                return Some(stem.to_string());
-            }
+    if let Some(stem) = strip_consonant(w, &["а", "у", "ом", "е"]) {
+        if is_country(&stem) {
+            return Some(stem);
         }
     }
     if is_country(w) {
         return Some(w.to_string());
     }
     // Fallback for compound nouns not present in the dictionary.
-    for (suf, _) in [("а", ""), ("у", ""), ("ом", ""), ("е", "")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() && stem.ends_with(is_consonant) {
-                return Some(stem.to_string());
-            }
-        }
+    if let Some(stem) = strip_consonant(w, &["а", "у", "ом", "е"]) {
+        return Some(stem);
     }
-    for (suf, nom_suf) in [("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                return Some(stem.to_string() + nom_suf);
-            }
-        }
+    if let Some(cand) = strip_append(w, &[("ой", "а"), ("ы", "а"), ("у", "а"), ("е", "а")]) {
+        return Some(cand);
     }
-    for (suf, nom_suf) in [("и", "ь"), ("ью", "ь"), ("е", "ь")] {
-        if let Some(stem) = w.strip_suffix(suf) {
-            if !stem.is_empty() {
-                return Some(stem.to_string() + nom_suf);
-            }
-        }
+    if let Some(cand) = strip_append(w, &[("и", "ь"), ("ью", "ь"), ("е", "ь")]) {
+        return Some(cand);
     }
     None
 }

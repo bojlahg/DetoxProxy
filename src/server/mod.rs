@@ -1122,6 +1122,13 @@ where
     let result = tokio::time::timeout(timeout, serve_task).await;
     let processed_after = state.processed.load(Ordering::SeqCst);
     tracing::info!(processed = processed_after - processed_before, "shutdown complete");
+    shutdown_result(result)
+}
+
+/// Maps the shutdown outcome to a result. A timeout is treated as a clean shutdown.
+fn shutdown_result(
+    result: Result<Result<Result<(), std::io::Error>, tokio::task::JoinError>, tokio::time::error::Elapsed>,
+) -> anyhow::Result<()> {
     match result {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(e))) => Err(e.into()),
