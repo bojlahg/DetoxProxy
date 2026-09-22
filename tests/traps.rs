@@ -513,3 +513,27 @@ fn reception_address_not_masked() {
     let entities = detect("Проживает: г. Казань, ул. Баумана, д. 14, кв. 8", TrapPolicy::PreferMask);
     assert!(has_type(&entities, "address"), "real address must be found: {:?}", entities);
 }
+
+#[test]
+fn address_near_document_word_masked() {
+    // A real client address next to a document word ("заказ", "тикет") is still masked.
+    let cases = [
+        "Привезите заказ на г. Самара, ул. Мира, д. 5, кв. 12, я дома после шести.",
+        "Заказ доставьте по адресу ул. Садовая, д. 3, кв. 17.",
+        "Тикет 4512: клиент просит сменить адрес на г. Тула, ул. Советская, д. 8, кв. 3.",
+    ];
+    for text in cases {
+        let entities = detect(text, TrapPolicy::PreferMask);
+        assert!(has_type(&entities, "address"), "address should be found in {:?}: {:?}", text, entities);
+    }
+}
+
+#[test]
+fn document_number_not_address() {
+    // A span that starts with a document marker is a document number, not an address.
+    let entities = detect("Накладная 9876 543210 оформлена утром", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "address"), "document number must not be an address: {:?}", entities);
+    // Control: a street whose name contains a document word is still an address.
+    let entities = detect("ул. Заказная, д. 5", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "street with document word must be found: {:?}", entities);
+}

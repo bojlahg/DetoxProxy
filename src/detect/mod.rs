@@ -1480,11 +1480,10 @@ impl Detector {
     ) -> Option<Entity> {
         let start = group[0].0;
         let end = group[group.len() - 1].1;
-        // A non-PII marker inside the span (e.g. "Накладная 9876 543210") marks it as a
-        // document number, not an address.
-        let span_lower = text[start..end].to_lowercase();
-        let non_pii = self.effective_non_pii_markers(spec);
-        if non_pii.iter().any(|m| contains_word_boundary(&span_lower, m)) {
+        // A span that starts with a document marker (e.g. "Накладная 9876 543210") is a
+        // document number, not an address. Only the start counts: "ул. Заказная, д. 5"
+        // is an address even though it contains the word "заказ".
+        if self.has_document_marker_at_start(text, start) {
             return None;
         }
         // A full address by structure (city + street + house, or street + house +
@@ -1721,6 +1720,20 @@ impl Detector {
     fn has_document_marker_before(&self, text: &str, start: usize) -> bool {
         let before = context_window_before(text, start, 60).to_lowercase();
         DOCUMENT_MARKERS.iter().any(|m| contains_word_boundary(&before, m))
+    }
+
+    /// True if the span starting at `start` begins with a document marker (накладная,
+    /// партия, счёт-фактура, артикул, инвентарный номер, тикет, заказ). A span that
+    /// starts with such a marker is a document number, not an address.
+    fn has_document_marker_at_start(&self, text: &str, start: usize) -> bool {
+        let lower = context_window_after(text, start, 40).to_lowercase();
+        DOCUMENT_MARKERS.iter().any(|m| {
+            if let Some(rest) = lower.strip_prefix(m) {
+                rest.chars().next().map(|c| !c.is_alphanumeric()).unwrap_or(true)
+            } else {
+                false
+            }
+        })
     }
 
     /// True if a brand marker (магазин, компания, ООО, кафе, сеть, поезд, бренд) appears
