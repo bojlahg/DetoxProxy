@@ -1,0 +1,37 @@
+version: 1
+server:
+  listen: "0.0.0.0:8080"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+  - id: chatbot
+    enabled: true
+    mask_mode: token
+    unmask_enabled: false
+    types: [fio, phone, email, card_number, passport, inn]
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings:
+      - "ул. Каланчёвская, д. 27"
+    session_mode: stateful
+    token_numbering: hash
+    hash_salt: "chatbot-salt-2026"
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+dictionaries_dir: data/dict

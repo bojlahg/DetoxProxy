@@ -11,6 +11,8 @@ pub struct StoredEntry {
     pub mappings: Vec<Mapping>,
     /// First masked result for this id; returned again on identical repeat (idempotency).
     pub masked_text: String,
+    /// Hash of the original payload, used to detect a retry of masking.
+    pub original_hash: String,
     pub created_at: std::time::Instant,
 }
 impl MappingStore {
@@ -23,6 +25,10 @@ impl MappingStore {
     }
 
     pub fn insert(&self, id: &str, masked_text: String, mappings: Vec<Mapping>) {
+        self.insert_with_hash(id, masked_text, mappings, String::new());
+    }
+
+    pub fn insert_with_hash(&self, id: &str, masked_text: String, mappings: Vec<Mapping>, original_hash: String) {
         if self.inner.len() >= self.max_entries {
             self.sweep();
         }
@@ -34,6 +40,7 @@ impl MappingStore {
             StoredEntry {
                 mappings,
                 masked_text,
+                original_hash,
                 created_at: Instant::now(),
             },
         );
@@ -47,6 +54,7 @@ impl MappingStore {
         Some(StoredEntry {
             mappings: entry.mappings.clone(),
             masked_text: entry.masked_text.clone(),
+            original_hash: entry.original_hash.clone(),
             created_at: entry.created_at,
         })
     }

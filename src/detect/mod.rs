@@ -65,6 +65,10 @@ impl Detector {
             .enabled_types
             .map(|ids| ids.iter().map(|s| s.as_str()).collect());
 
+        // Pre-pass: a CVV present in the text is a strong card indicator, so a card-like
+        // number that fails Luhn is still masked when a CVV is detected alongside it.
+        let cvv_present = self.detect_type_present(text, "cvv", opts);
+
         let mut candidates: Vec<Entity> = Vec::new();
 
         for spec in self.registry.types() {
@@ -96,6 +100,8 @@ impl Detector {
                     if spec.validator != Validator::None {
                         if validator_passes(spec.validator, span) {
                             conf += 0.3;
+                        } else if spec.id == "card_number" && cvv_present {
+                            // Accept as pattern-only (low confidence) when a CVV is present.
                         } else {
                             continue;
                         }
@@ -128,6 +134,57 @@ impl Detector {
         }
 
         resolve_overlaps(candidates)
+    }
+
+    /// Returns true if the given type produces at least one entity in the text.
+    fn detect_type_present(&self, text: &str, type_id: &str, opts: &DetectOptions<'_>) -> bool {
+        let enabled: Option<HashSet<&str>> = opts
+            .enabled_types
+            .map(|ids| ids.iter().map(|s| s.as_str()).collect());
+        if let Some(set) = &enabled {
+            if !set.contains(type_id) {
+                return false;
+            }
+        }
+        let spec = match self.registry.get(type_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        let patterns = self.registry.patterns(type_id);
+        for re in patterns {
+            for m in re.find_iter(text) {
+                let start = m.start();
+                let end = m.end();
+                let span = &text[start..end];
+                let mut conf = 0.6f32;
+                let has_context = if spec.context_words.is_empty() {
+                    false
+                } else {
+                    let window = context_window_before(text, start, spec.context_window);
+                    let window_lower = window.to_lowercase();
+                    spec.context_words.iter().any(|w| window_lower.contains(w))
+                };
+                if spec.validator != Validator::None {
+                    if validator_passes(spec.validator, span) {
+                        conf += 0.3;
+                    } else {
+                        continue;
+                    }
+                }
+                if has_context {
+                    conf += 0.1;
+                }
+                if spec.context_required && !has_context {
+                    continue;
+                }
+                conf = conf.min(1.0);
+                if conf < opts.min_confidence {
+                    continue;
+                }
+                return true;
+            }
+        }
+        false
     }
 }
 

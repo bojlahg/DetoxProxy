@@ -6,6 +6,27 @@ use serde::Deserialize;
 
 use crate::types::MaskMode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMode {
+    Stateless,
+    Stateful,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenNumbering {
+    Sequential,
+    Hash,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum TypeSelection {
+    All(String),
+    List(Vec<String>),
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
@@ -18,18 +39,14 @@ pub struct ServerConfig {
     pub mapping_ttl_sec: u64,
     #[serde(default = "default_mapping_max_entries")]
     pub mapping_max_entries: usize,
+    #[serde(default = "default_request_deadline_ms")]
+    pub request_deadline_ms: u64,
 }
 fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
 fn default_mapping_ttl_sec() -> u64 { 900 }
 fn default_mapping_max_entries() -> usize { 200_000 }
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum TypesFilter {
-    All(String),
-    List(Vec<String>),
-}
+fn default_request_deadline_ms() -> u64 { 5000 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,7 +59,7 @@ pub struct SystemConfig {
     #[serde(default = "default_unmask_enabled")]
     pub unmask_enabled: bool,
     #[serde(default = "default_types")]
-    pub types: TypesFilter,
+    pub types: TypeSelection,
     #[serde(default)]
     pub overrides: HashMap<String, MaskMode>,
     #[serde(default)]
@@ -50,40 +67,34 @@ pub struct SystemConfig {
     #[serde(default = "default_min_confidence")]
     pub min_confidence: f32,
     #[serde(default)]
-    pub allow_addresses: Vec<String>,
+    pub allow_substrings: Vec<String>,
+    #[serde(default = "default_session_mode")]
+    pub session_mode: SessionMode,
+    #[serde(default = "default_token_numbering")]
+    pub token_numbering: TokenNumbering,
+    #[serde(default)]
+    pub hash_salt: Option<String>,
 }
 fn default_enabled() -> bool { true }
 fn default_mask_mode() -> MaskMode { MaskMode::Token }
 fn default_unmask_enabled() -> bool { true }
-fn default_types() -> TypesFilter { TypesFilter::All("all".to_string()) }
+fn default_types() -> TypeSelection { TypeSelection::All("all".to_string()) }
 fn default_min_confidence() -> f32 { 0.3 }
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UpstreamConfig {
-    pub base_url: String,
-    pub api_key_env: String,
-    #[serde(default = "default_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default)]
-    pub force_stream: bool,
-}
-fn default_timeout_ms() -> u64 { 60_000 }
+fn default_session_mode() -> SessionMode { SessionMode::Stateless }
+fn default_token_numbering() -> TokenNumbering { TokenNumbering::Sequential }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub version: u32,
+    pub version: u64,
     pub server: ServerConfig,
-    #[serde(default)]
-    pub default_system: Option<String>,
+    pub default_system: String,
     #[serde(default)]
     pub systems: Vec<SystemConfig>,
-    pub upstream: UpstreamConfig,
-    /// Path to the PII types YAML file.
-    pub pii_types: String,
-    /// Path to the allowlist YAML file.
-    pub allowlist: String,
+    pub pii_types_file: String,
+    pub allowlist_file: String,
+    #[serde(default)]
+    pub dictionaries_dir: Option<String>,
 }
 
 impl Config {
@@ -95,11 +106,25 @@ impl Config {
         if self.version != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version));
         }
+        if self.server.listen.trim().is_empty() {
+            return Err(ConfigError::EmptyListen);
+        }
         let mut seen = std::collections::HashSet::new();
         for sys in &self.systems {
             if !seen.insert(sys.id.clone()) {
                 return Err(ConfigError::DuplicateSystem(sys.id.clone()));
             }
+            if !(0.0..=1.0).contains(&sys.min_confidence) {
+                return Err(ConfigError::BadConfidence(sys.id.clone()));
+            }
+            if sys.token_numbering == TokenNumbering::Hash && sys.hash_salt.is_none() {
+                return Err(ConfigError::MissingHashSalt(sys.id.clone()));
+            }
+        }
+        let default = self.system(&self.default_system);
+        match default {
+            Some(sys) if sys.enabled => {}
+            _ => return Err(ConfigError::BadDefaultSystem(self.default_system.clone())),
         }
         Ok(())
     }
@@ -112,9 +137,17 @@ impl Config {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("unsupported config version {0}")]
-    UnsupportedVersion(u32),
+    UnsupportedVersion(u64),
+    #[error("server.listen must not be empty")]
+    EmptyListen,
     #[error("duplicate system id {0}")]
     DuplicateSystem(String),
+    #[error("system {0}: min_confidence must be in 0..=1")]
+    BadConfidence(String),
+    #[error("system {0}: token_numbering hash requires hash_salt")]
+    MissingHashSalt(String),
+    #[error("default_system {0} must exist and be enabled")]
+    BadDefaultSystem(String),
 }
 
 /// Atomic snapshot of the config; hot reload swaps the inner value.
@@ -131,6 +164,7 @@ impl ConfigStore {
         self.inner.load_full()
     }
 
+    /// Validates and swaps the config; on error the previous snapshot is kept.
     pub fn replace(&self, cfg: Config) -> Result<(), ConfigError> {
         cfg.validate()?;
         self.inner.store(Arc::new(cfg));
