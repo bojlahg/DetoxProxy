@@ -1,4 +1,4 @@
-use detox_proxy::mask::{mask, stars, unmask, MaskOptions};
+use detox_proxy::mask::{count_unresolved_tokens, mask, stars, unmask, MaskOptions};
 use detox_proxy::registry::Registry;
 use detox_proxy::types::{Entity, MaskMode, Mapping};
 use std::collections::HashMap;
@@ -345,4 +345,74 @@ fn offsets_with_non_ascii() {
     assert_eq!(res.text, "Привет мир! ИНН <<INN_1>>, конец.");
     let restored = unmask(&res.text, &res.mappings);
     assert_eq!(restored, text);
+}
+
+#[test]
+fn mask_oblique_fio_produces_token() {
+    let reg = load();
+    let text = "Иванову Ивану Ивановичу";
+    let entities = vec![ent("fio", 0, text.len(), 0.9)];
+    let res = mask(text, &entities, &reg, &token_opts(&HashMap::new()));
+    assert_eq!(res.text, "<<FIO_1>>");
+}
+
+#[test]
+fn unmask_case_suffix_inflects() {
+    let mappings = vec![
+        Mapping {
+            type_id: "fio".into(),
+            original: "Иванов Иван Иванович".into(),
+            masked: "<<FIO_1>>".into(),
+        },
+        Mapping {
+            type_id: "inn".into(),
+            original: "7707083893".into(),
+            masked: "<<INN_1>>".into(),
+        },
+        Mapping {
+            type_id: "birth_place".into(),
+            original: "Москва".into(),
+            masked: "<<BPLACE_1>>".into(),
+        },
+    ];
+
+    assert_eq!(
+        unmask("Дорогой <<FIO_1:им>>", &mappings),
+        "Дорогой Иванов Иван Иванович"
+    );
+    assert_eq!(unmask("<<FIO_1:дат>>", &mappings), "Иванову Ивану Ивановичу");
+    assert_eq!(unmask("<<FIO_1>>", &mappings), "Иванов Иван Иванович");
+    assert_eq!(unmask("<<INN_1:дат>>", &mappings), "7707083893");
+    assert_eq!(unmask("родился в <<BPLACE_1:пр>>", &mappings), "родился в Москве");
+}
+
+#[test]
+fn unmask_case_suffix_whitespace_and_case_tolerant() {
+    let mappings = vec![Mapping {
+        type_id: "fio".into(),
+        original: "Иванов Иван Иванович".into(),
+        masked: "<<FIO_1>>".into(),
+    }];
+    assert_eq!(unmask("<<fio_1 : dat>>", &mappings), "Иванову Ивану Ивановичу");
+}
+
+#[test]
+fn unmask_unknown_case_suffix_left_untouched() {
+    let mappings = vec![Mapping {
+        type_id: "fio".into(),
+        original: "Иванов Иван Иванович".into(),
+        masked: "<<FIO_1>>".into(),
+    }];
+    assert_eq!(unmask("<<FIO_1:xyz>>", &mappings), "<<FIO_1:xyz>>");
+}
+
+#[test]
+fn count_unresolved_tokens_with_case_suffix() {
+    let mappings = vec![Mapping {
+        type_id: "fio".into(),
+        original: "Иванов Иван Иванович".into(),
+        masked: "<<FIO_1>>".into(),
+    }];
+    assert_eq!(count_unresolved_tokens("<<FIO_1:дат>>", &mappings), 0);
+    assert_eq!(count_unresolved_tokens("<<FIO_1:дат>> <<INN_1>>", &mappings), 1);
 }

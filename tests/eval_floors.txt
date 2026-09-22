@@ -34,3 +34,6 @@ rmr_benchmark_alfa:snils>=187
 rmr_benchmark_alfa:driver_license>=326
 rmr_benchmark_alfa:email>=212
 rmr_benchmark_alfa:card_number>=110
+tricky_negatives:clean>=228
+tricky_negatives:snils>=1
+tricky_negatives:fio>=2

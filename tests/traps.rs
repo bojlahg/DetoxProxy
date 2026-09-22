@@ -349,10 +349,10 @@ fn build_state(cfg: Config) -> Arc<AppState> {
     let allowlist_text = std::fs::read_to_string(&cfg.allowlist_file).expect("read allowlist");
     let allowlist = Allowlist::from_yaml(&allowlist_text).expect("parse allowlist");
     let detector = Detector::with_allowlist(registry.clone(), dicts, allowlist);
-    let store = MappingStore::new(
+    let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(registry),
@@ -362,6 +362,8 @@ fn build_state(cfg: Config) -> Arc<AppState> {
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: std::path::PathBuf::from("config.yaml"),
+        shutting_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        processed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     })
 }
 

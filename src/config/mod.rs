@@ -61,6 +61,13 @@ pub struct ServerConfig {
     /// Max concurrent heavy (blocking) detection tasks; extra requests wait for a permit.
     #[serde(default = "default_heavy_max_concurrency")]
     pub heavy_max_concurrency: usize,
+    /// Pause after the shutdown signal before stopping to accept new connections, so a load
+    /// balancer can drain traffic.
+    #[serde(default = "default_shutdown_grace_ms")]
+    pub shutdown_grace_ms: u64,
+    /// Max time to wait for in-flight requests to finish during graceful shutdown.
+    #[serde(default = "default_shutdown_timeout_ms")]
+    pub shutdown_timeout_ms: u64,
 }
 fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
@@ -72,6 +79,8 @@ fn default_inline_max_bytes() -> usize { 16384 }
 fn default_heavy_max_concurrency() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
+fn default_shutdown_grace_ms() -> u64 { 500 }
+fn default_shutdown_timeout_ms() -> u64 { 10_000 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,6 +119,26 @@ fn default_min_confidence() -> f32 { 0.3 }
 fn default_session_mode() -> SessionMode { SessionMode::Stateless }
 fn default_token_numbering() -> TokenNumbering { TokenNumbering::Sequential }
 
+/// Optional LLM proxy configuration. When `upstream_url` is absent the proxy runs in demo mode.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LlmConfig {
+    /// Upstream OpenAI-compatible endpoint. Absent => demo mode.
+    #[serde(default)]
+    pub upstream_url: Option<String>,
+    /// Name of the environment variable holding the upstream API key.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Upstream request timeout in milliseconds.
+    #[serde(default = "default_llm_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Prepend a system message telling the model how to request a grammatical case for a token.
+    #[serde(default = "default_case_hints")]
+    pub case_hints: bool,
+}
+fn default_llm_timeout_ms() -> u64 { 60_000 }
+fn default_case_hints() -> bool { true }
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -122,6 +151,8 @@ pub struct Config {
     pub allowlist_file: String,
     #[serde(default)]
     pub dictionaries_dir: Option<String>,
+    #[serde(default)]
+    pub llm: Option<LlmConfig>,
 }
 
 impl Config {

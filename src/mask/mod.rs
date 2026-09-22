@@ -1,4 +1,5 @@
 use crate::{
+    morph,
     registry::Registry,
     types::{Entity, Mapping, MaskMode, MaskResult},
 };
@@ -25,8 +26,30 @@ pub struct MaskOptions<'a> {
 }
 
 static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)<<\s*([A-Za-z_]+)_(\d+)\s*>>").expect("valid token regex")
+    Regex::new(r"(?i)<<\s*([A-Za-z_]+)_(\d+)\s*(?::\s*([A-Za-zа-яё]+)\s*)?>>").expect("valid token regex")
 });
+
+/// Street prefixes used to decide whether an `address` value inflects as a street.
+const STREET_MARKERS: [&str; 4] = ["ул.", "улица", "проспект", "пр."];
+
+/// Maps a PII type to the morphological kind used for inflection. Returns `None` for types
+/// that are never inflected (their case suffix is ignored and the original is returned).
+fn kind_for_type(type_id: &str, original: &str) -> Option<morph::Kind> {
+    match type_id {
+        "fio" | "card_holder" => Some(morph::Kind::Person),
+        "birth_place" => Some(morph::Kind::Place),
+        "citizenship" => Some(morph::Kind::Country),
+        "address" => {
+            let lower = original.trim().to_lowercase();
+            if STREET_MARKERS.iter().any(|m| lower.starts_with(m)) {
+                Some(morph::Kind::Street)
+            } else {
+                Some(morph::Kind::Place)
+            }
+        }
+        _ => None,
+    }
+}
 
 const SEPARATORS: [char; 8] = [' ', '-', '.', '(', ')', '+', '@', '/'];
 
@@ -80,6 +103,29 @@ pub fn mask_with_seed(
     numbering: Numbering,
     seed: &[Mapping],
 ) -> MaskResult {
+    let mut active = collect_active(entities, registry, opts);
+    active.sort_by_key(|(_, e, _)| e.start);
+
+    let mut token_state = build_token_state(seed);
+    let plan = build_plan(&active, text, registry, opts, numbering, &mut token_state);
+
+    let result = apply_plan(text, &plan);
+    let mappings = build_mappings(&plan);
+    let out_entities = filter_entities(entities, &active);
+
+    MaskResult {
+        text: result,
+        entities: out_entities,
+        mappings,
+    }
+}
+
+/// Selects entities that are not masked with `Off` and applies the combination rule.
+fn collect_active<'a>(
+    entities: &'a [Entity],
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+) -> Vec<(usize, &'a Entity, MaskMode)> {
     let mut active: Vec<(usize, &Entity, MaskMode)> = Vec::new();
     for (i, e) in entities.iter().enumerate() {
         let spec = registry.get(&e.type_id);
@@ -106,72 +152,121 @@ pub fn mask_with_seed(
             });
         }
     }
+    active
+}
 
-    active.sort_by_key(|(_, e, _)| e.start);
+/// Mutable token bookkeeping shared across the replacement plan.
+struct TokenState {
+    map: HashMap<(String, String), String>,
+    counters: HashMap<String, usize>,
+}
 
-    let mut token_map: HashMap<(String, String), String> = HashMap::new();
-    let mut token_counters: HashMap<String, usize> = HashMap::new();
+/// Seeds the token map and per-type counters from existing mappings.
+fn build_token_state(seed: &[Mapping]) -> TokenState {
+    let mut map: HashMap<(String, String), String> = HashMap::new();
+    let mut counters: HashMap<String, usize> = HashMap::new();
     for m in seed {
         let key = (m.type_id.clone(), normalize(&m.original));
-        token_map.insert(key, m.masked.clone());
+        map.insert(key, m.masked.clone());
         if let Some((_, num)) = parse_token_number(&m.masked) {
-            let entry = token_counters.entry(m.type_id.clone()).or_insert(0);
+            let entry = counters.entry(m.type_id.clone()).or_insert(0);
             if num > *entry {
                 *entry = num;
             }
         }
     }
-    let mut plan: Vec<(usize, usize, String, String, String)> = Vec::new();
-    for (_, e, mode) in &active {
-        let original = text[e.start..e.end].to_string();
-        let norm = normalize(&original);
-        let key = (e.type_id.clone(), norm.clone());
-        let replacement = token_map
-            .entry(key)
-            .or_insert_with(|| match mode {
-                MaskMode::Token => {
-                    let label = registry
-                        .get(&e.type_id)
-                        .map(|s| s.token_label.clone())
-                        .unwrap_or_else(|| e.type_id.to_uppercase());
-                    match numbering {
-                        Numbering::Sequential => {
-                            let n = token_counters.entry(e.type_id.clone()).or_insert(0);
-                            *n += 1;
-                            format!("<<{}_{}>>", label, *n)
-                        }
-                        Numbering::Hash(ref salt) => {
-                            let digest = hash_token(salt, &norm);
-                            format!("<<{}_{}>>", label, digest)
-                        }
+    TokenState { map, counters }
+}
+
+/// Computes the replacement for a single entity, reusing or minting a token.
+fn replacement_for(
+    e: &Entity,
+    original: &str,
+    norm: &str,
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+    numbering: &Numbering,
+    token_state: &mut TokenState,
+) -> String {
+    let mode = opts
+        .overrides
+        .get(&e.type_id)
+        .copied()
+        .or_else(|| registry.get(&e.type_id).and_then(|s| if s.mask != MaskMode::Token { Some(s.mask) } else { None }))
+        .unwrap_or(opts.default_mode);
+    let key = (e.type_id.clone(), norm.to_string());
+    token_state
+        .map
+        .entry(key)
+        .or_insert_with(|| match mode {
+            MaskMode::Token => {
+                let label = registry
+                    .get(&e.type_id)
+                    .map(|s| s.token_label.clone())
+                    .unwrap_or_else(|| e.type_id.to_uppercase());
+                match numbering {
+                    Numbering::Sequential => {
+                        let n = token_state.counters.entry(e.type_id.clone()).or_insert(0);
+                        *n += 1;
+                        format!("<<{}_{}>>", label, *n)
+                    }
+                    Numbering::Hash(ref salt) => {
+                        let digest = hash_token(salt, norm);
+                        format!("<<{}_{}>>", label, digest)
                     }
                 }
-                MaskMode::Stars => {
-                    let spec = registry.get(&e.type_id);
-                    stars(
-                        &original,
-                        &e.type_id,
-                        spec.map(|s| s.stars_keep_prefix).unwrap_or(0),
-                        spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
-                    )
-                }
-                MaskMode::Synthetic => synthetic(&original, &e.type_id),
-                MaskMode::Remove => "[removed]".to_string(),
-                MaskMode::Off => unreachable!(),
-            })
-            .clone();
+            }
+            MaskMode::Stars => {
+                let spec = registry.get(&e.type_id);
+                stars(
+                    original,
+                    &e.type_id,
+                    spec.map(|s| s.stars_keep_prefix).unwrap_or(0),
+                    spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
+                )
+            }
+            MaskMode::Synthetic => synthetic(original, &e.type_id),
+            MaskMode::Remove => "[removed]".to_string(),
+            MaskMode::Off => unreachable!(),
+        })
+        .clone()
+}
+
+/// Builds the ordered replacement plan for all active entities.
+fn build_plan(
+    active: &[(usize, &Entity, MaskMode)],
+    text: &str,
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+    numbering: Numbering,
+    token_state: &mut TokenState,
+) -> Vec<(usize, usize, String, String, String)> {
+    let mut plan: Vec<(usize, usize, String, String, String)> = Vec::new();
+    for (_, e, _) in active {
+        let original = text[e.start..e.end].to_string();
+        let norm = normalize(&original);
+        let replacement = replacement_for(e, &original, &norm, registry, opts, &numbering, token_state);
         plan.push((e.start, e.end, replacement, e.type_id.clone(), original));
     }
+    plan
+}
 
+/// Applies the plan right-to-left so earlier byte offsets stay valid.
+fn apply_plan(text: &str, plan: &[(usize, usize, String, String, String)]) -> String {
     let mut result = text.to_string();
-    plan.sort_by_key(|(start, _, _, _, _)| *start);
-    for (start, end, replacement, _, _) in plan.iter().rev() {
+    let mut sorted = plan.to_vec();
+    sorted.sort_by_key(|(start, _, _, _, _)| *start);
+    for (start, end, replacement, _, _) in sorted.iter().rev() {
         result.replace_range(*start..*end, replacement);
     }
+    result
+}
 
+/// Builds deduplicated mappings from the plan.
+fn build_mappings(plan: &[(usize, usize, String, String, String)]) -> Vec<Mapping> {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut mappings = Vec::new();
-    for (_, _, replacement, type_id, original) in &plan {
+    for (_, _, replacement, type_id, original) in plan {
         let norm = normalize(original);
         if seen.insert((type_id.clone(), norm)) {
             mappings.push(Mapping {
@@ -181,20 +276,18 @@ pub fn mask_with_seed(
             });
         }
     }
+    mappings
+}
 
+/// Filters the original entities down to those that were actually masked.
+fn filter_entities(entities: &[Entity], active: &[(usize, &Entity, MaskMode)]) -> Vec<Entity> {
     let active_indices: HashSet<usize> = active.iter().map(|(i, _, _)| *i).collect();
-    let out_entities: Vec<Entity> = entities
+    entities
         .iter()
         .enumerate()
         .filter(|(i, _)| active_indices.contains(i))
         .map(|(_, e)| e.clone())
-        .collect();
-
-    MaskResult {
-        text: result,
-        entities: out_entities,
-        mappings,
-    }
+        .collect()
 }
 
 /// First 6 hex chars of SHA-256(salt + "\0" + normalized value).
@@ -213,18 +306,31 @@ fn hash_token(salt: &str, normalized: &str) -> String {
 
 /// Restores originals using mappings. Tokens `{LABEL_N}` are located by regex anywhere in the text
 /// (any order, any surrounding); stars/synthetic masks are located as substrings, longest first.
-/// Unknown tokens are left untouched.
+/// A token may carry a grammatical-case suffix (`<<FIO_1:дат>>`); when the suffix is a recognized
+/// case and the type is inflectable, the original is inflected to that case. Unknown tokens are
+/// left untouched.
 pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
     let mut result = TOKEN_RE
         .replace_all(text, |caps: &regex::Captures| {
             let token = &caps[0];
-            let norm_token = norm_compare(token);
-            for m in mappings {
-                if norm_compare(&m.masked) == norm_token {
-                    return m.original.clone();
+            let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+            let matched = mappings
+                .iter()
+                .find(|m| norm_compare(&m.masked) == norm_compare(&base_token));
+            match (matched, caps.get(3)) {
+                (Some(m), Some(suffix)) => {
+                    if let Some(case) = morph::Case::parse(suffix.as_str()) {
+                        if let Some(kind) = kind_for_type(&m.type_id, &m.original) {
+                            return morph::inflect(&m.original, kind, case)
+                                .unwrap_or_else(|| m.original.clone());
+                        }
+                        return m.original.clone();
+                    }
+                    token.to_string()
                 }
+                (Some(m), None) => m.original.clone(),
+                (None, _) => token.to_string(),
             }
-            token.to_string()
         })
         .to_string();
 
@@ -240,13 +346,15 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
 }
 
 /// Counts token-format substrings (`<<LABEL_N>>`, case/whitespace tolerant as in `unmask`) in `text`
-/// that have no matching mapping. Used for the `pii_unmask_unresolved_tokens_total` metric.
+/// that have no matching mapping. A token with a case suffix (`<<FIO_1:дат>>`) is resolved when its
+/// base token is present in the mappings. Used for the `pii_unmask_unresolved_tokens_total` metric.
 pub fn count_unresolved_tokens(text: &str, mappings: &[Mapping]) -> usize {
     let mut count = 0;
     for caps in TOKEN_RE.captures_iter(text) {
-        let token = &caps[0];
-        let norm_token = norm_compare(token);
-        let matched = mappings.iter().any(|m| norm_compare(&m.masked) == norm_token);
+        let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+        let matched = mappings
+            .iter()
+            .any(|m| norm_compare(&m.masked) == norm_compare(&base_token));
         if !matched {
             count += 1;
         }

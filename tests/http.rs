@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -31,10 +32,10 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
         _ => Arc::new(Dictionaries::empty()),
     };
     let detector = Detector::new(registry.clone(), dicts);
-    let store = MappingStore::new(
+    let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(registry),
@@ -44,6 +45,8 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path,
+        shutting_down: Arc::new(AtomicBool::new(false)),
+        processed: Arc::new(AtomicU64::new(0)),
     })
 }
 
@@ -410,6 +413,37 @@ async fn logs_do_not_contain_pii() {
     assert!(!text.contains("7707083893"), "log leaked PII: {text}");
 }
 
+#[tokio::test]
+async fn log_contains_payload_id_not_pii() {
+    let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = buf.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || {
+                let w = writer.clone();
+                std::io::BufWriter::new(TestWriter(w))
+            })
+            .json()
+            .finish(),
+    );
+
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+    post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "log-check-123"}),
+        &[],
+    )
+    .await;
+
+    std::thread::sleep(Duration::from_millis(100));
+    let data = buf.lock().unwrap().clone();
+    let text = String::from_utf8_lossy(&data).to_string();
+    assert!(text.contains("log-check-123"), "log missing payload_id: {text}");
+    assert!(!text.contains("7707083893"), "log leaked PII: {text}");
+}
+
 struct TestWriter(Arc<std::sync::Mutex<Vec<u8>>>);
 impl std::io::Write for TestWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -709,4 +743,63 @@ allowlist_file: data/allowlist.yaml
     assert!(json["result"].as_str().unwrap().contains("<<INN_1>>"));
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn graceful_shutdown() {
+    let cfg = load_root_config();
+    let state = build_state(cfg);
+    let app = build_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    let listener = listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    });
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let serve_task = tokio::spawn(async move {
+        detox_proxy::server::serve_with_signal(listener, app, state, async move {
+            let _ = rx.await;
+        })
+        .await
+        .expect("serve");
+    });
+    let base = format!("http://{}", addr);
+
+    let client = reqwest::Client::new();
+    let big = "Клиент ИНН 7707083893, тел. +7 912 345-67-89. ".repeat(1000);
+    let big_task = {
+        let client = client.clone();
+        let base = base.clone();
+        tokio::spawn(async move {
+            client
+                .post(format!("{}/process", base))
+                .json(&serde_json::json!({"payload": big, "payload_id": "shutdown-big"}))
+                .send()
+                .await
+                .expect("send big")
+        })
+    };
+
+    tx.send(()).expect("send signal");
+
+    let mut readyz_503 = false;
+    for _ in 0..50 {
+        let (st, _) = get(&base, "/readyz").await;
+        if st == 503 {
+            readyz_503 = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(readyz_503, "readyz did not become 503 after signal");
+
+    let (st, _) = get(&base, "/healthz").await;
+    assert_eq!(st, 200, "healthz must stay 200 during shutdown");
+
+    let big_resp = big_task.await.expect("join big");
+    assert_eq!(big_resp.status().as_u16(), 200, "in-flight request must complete");
+
+    let _ = tokio::time::timeout(Duration::from_secs(15), serve_task)
+        .await
+        .expect("server did not shut down by itself");
 }
