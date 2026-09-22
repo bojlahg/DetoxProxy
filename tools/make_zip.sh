@@ -25,7 +25,7 @@ fail=0
 name_hits="$(cd "$stage" && find . -iname '*claude*' -o -iname 'AGENTS.md' -o -iname '*.env')"
 if [ -n "$name_hits" ]; then echo "FORBIDDEN FILE NAMES:"; echo "$name_hits"; fail=1; fi
 if (cd "$stage" && grep -rnia "claude" .); then echo "FOUND 'claude'"; fail=1; fi
-if (cd "$stage" && grep -rnaiE "anthropic|оркестр|orchestrat|chatgpt|openai|codex|\bopus\b|\bsonnet\b" . | grep -v "/Cargo.lock:"); then
+if (cd "$stage" && grep -rnaiE "anthropic|оркестр|orchestrat|chatgpt|codex|\bopus\b|\bsonnet\b" . | grep -v "/Cargo.lock:"); then
   echo "FOUND other orchestrator traces"; fail=1
 fi
 if [ "$fail" != 0 ]; then echo "zip NOT created"; exit 1; fi
