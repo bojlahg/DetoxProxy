@@ -886,3 +886,20 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/detect/mod.rs, data/pii_types.yaml, tests/traps.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T31">
+Привет. Рефакторинг без изменения поведения — автопроверка кода у жюри снимает баллы за сложные функции (у нас 4 критических замечания). Цели по clippy (пороги уже в clippy.toml): когнитивная сложность ≤ 10, длина ≤ 80 строк.
+
+Сейчас выше порога:
+- src/detect/mod.rs:487 — сложность 28, 127 строк;
+- src/detect/mod.rs:376 — сложность 24, 82 строки;
+- src/morph/mod.rs:435 — сложность 26, 89 строк;
+- src/morph/mod.rs:341, :748, :972 — сложность 22–23;
+- src/detect/mod.rs:1234, :1398 и src/morph/mod.rs:670 — сложность 12–14.
+
+Как: выносить шаги в отдельные функции с говорящими именами (по одному смысловому шагу на функцию), таблицы окончаний и маркеров — в константы или вспомогательные функции, глубокую вложенность — в ранние `return`. Публичные сигнатуры не менять. Тесты не менять вообще: они и есть доказательство, что поведение не изменилось.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo clippy --lib -- -W clippy::cognitive_complexity -W clippy::too_many_lines 2>&1 | (! grep -E "src.(detect|morph|server|mask).mod.rs") && git diff --quiet -- tests && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh && bash tools/eval_accept.sh`.
+
+Файлы: src/detect/mod.rs, src/morph/mod.rs. Каталог logs/ не трогай.
+</task>
