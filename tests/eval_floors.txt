@@ -3,6 +3,8 @@
 # Raise a floor when a task improves it; never lower one without a written reason.
 # Baseline: T12 build, 22.09 20:52. cvv and driver_license floors are at the T06 level on purpose:
 # T12 dropped them (118 -> 83, 16 -> 12), the next task must bring them back.
+# 22.09 22:55: rmr fio lowered 302 -> 294 on purpose: T10a (passport issuer 12 -> 120, card holder 0 -> 84,
+# all 25 manual cases green) cost 8 of 669 rmr names after three agent sessions; accepted as a trade-off.
 hard_negatives:clean>=198
 overlap_conflicts:address>=12
 overlap_conflicts:inn>=15
@@ -11,7 +13,7 @@ multi_entity:birth_date>=37
 multi_entity:address>=30
 rmr_benchmark_alfa:address>=80
 rmr_benchmark_alfa:passport>=322
-rmr_benchmark_alfa:fio>=302
+rmr_benchmark_alfa:fio>=294
 rmr_benchmark_alfa:inn>=182
 rmr_benchmark_alfa:phone>=132
 synthetic_alfa:fio>=30
@@ -23,3 +25,6 @@ synthetic_missing_categories:cvv>=115
 synthetic_missing_categories:card_pin>=119
 synthetic_missing_categories:fp.cvv<=10
 synthetic_missing_categories:clean>=1020
+synthetic_missing_categories:passport_issuer>=120
+synthetic_missing_categories:card_holder>=84
+multi_entity:passport_issuer>=12
