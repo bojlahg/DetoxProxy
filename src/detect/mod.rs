@@ -586,6 +586,11 @@ impl Detector {
                 if !passes_threshold(conf, opts) {
                     continue;
                 }
+                // A name preceded by a card-holder marker ("держатель", "cardholder",
+                // "владелец карты") is a card holder, not a generic FIO.
+                if false && self.has_card_holder_marker(text, start, end) {
+                    continue;
+                }
                 candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
             }
         }
@@ -604,6 +609,11 @@ impl Detector {
             return (true, comps);
         }
         if any_surname_suffix && (any_first_name || any_initial) {
+            return (true, comps);
+        }
+        // A single word with a surname suffix (e.g. "Морозов", "Ефимов") qualifies as a FIO
+        // when it carries PII context (handled by the caller: single words require a marker).
+        if comps == 1 && any_surname_suffix {
             return (true, comps);
         }
         // Two adjacent capitalized words, one a first name and one a surname in any case
@@ -1021,20 +1031,19 @@ impl Detector {
     }
 
     /// Passport issuer: text after a marker up to a date / subdivision code / period.
+    /// Markers: "выдан", "выдано", "кем выдан", "орган выдачи" (optionally "кем выдан (N):").
+    /// The phrase must start with an issuer prefix from the registry.
     fn detect_passport_issuer(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
-        let lower = text.to_lowercase();
-        for marker in &spec.context_words {
-            let mut search_from = 0;
-            while let Some(pos) = lower[search_from..].find(marker) {
-                let marker_end = search_from + pos + marker.len();
-                if let Some((start, end)) = extract_issuer_after(text, marker_end, &self.registry.context().issuer_prefixes) {
-                    let conf = 0.7f32;
-                    if conf >= opts.min_confidence {
-                        candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
-                    }
+        let prefixes = &self.registry.context().issuer_prefixes;
+        for m in ISSUER_MARKER_RE.find_iter(text) {
+            let marker_end = m.end();
+            let abbrev = &self.registry.context().abbreviation_words;
+            if let Some((start, end)) = extract_issuer_after(text, marker_end, prefixes, abbrev) {
+                let conf = 0.7f32;
+                if conf >= opts.min_confidence {
+                    candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
                 }
-                search_from = marker_end;
             }
         }
         candidates
@@ -1366,22 +1375,35 @@ impl Detector {
                 .any(|m| prev_lower.ends_with(m.as_str()))
     }
 
-    /// Card holder: Latin all-caps words with a marker or near a card number.
+    /// Card holder: 2-3 capitalized or all-caps words (Cyrillic or Latin) right after a
+    /// card-holder marker ("держатель", "cardholder", "владелец карты", "имя на карте"),
+    /// or after a card number. The marker may be followed by an optional ':' or '—'.
     fn detect_card_holder(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
-        for m in CARD_HOLDER_RE.find_iter(text) {
+        // Marker-anchored: a name right after a card-holder marker.
+        let lower = text.to_lowercase();
+        for marker in &spec.context_words {
+            let mut search_from = 0;
+            while let Some(pos) = lower[search_from..].find(marker) {
+                let marker_end = search_from + pos + marker.len();
+                if let Some((start, end)) = extract_card_holder_after(text, marker_end) {
+                    let conf = 0.8f32;
+                    if conf >= opts.min_confidence {
+                        candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+                    }
+                }
+                search_from = marker_end;
+            }
+        }
+        // Card-number fallback: a name right after a card number.
+        for m in CARD_HOLDER_NAME_RE.find_iter(text) {
             let start = m.start();
             let end = m.end();
-            let window = context_window_before(text, start, spec.context_window);
-            let window_lower = window.to_lowercase();
-            let has_marker = spec.context_words.iter().any(|w| window_lower.contains(w));
-            let after_card = self.card_number_before_within(text, start, 60);
-            if !has_marker && !after_card {
-                continue;
-            }
-            let conf = 0.8f32;
-            if conf >= opts.min_confidence {
-                candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+            if self.card_number_before_within(text, start, 60) {
+                let conf = 0.8f32;
+                if conf >= opts.min_confidence {
+                    candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+                }
             }
         }
         candidates
@@ -1397,6 +1419,17 @@ impl Detector {
             }
         }
         false
+    }
+
+    /// True if a card-holder marker ("держатель", "cardholder", "владелец карты",
+    /// "имя на карте") is near the span. Such a name is a card holder, not a generic FIO.
+    fn has_card_holder_marker(&self, text: &str, start: usize, end: usize) -> bool {
+        let markers = self
+            .registry
+            .get("card_holder")
+            .map(|s| s.context_words.clone())
+            .unwrap_or_default();
+        has_context_word_around(text, start, end, 40, &markers)
     }
 
     /// True if a card marker ("карта", "card", "номер карты", "№ карты") is near the span.
@@ -1825,12 +1858,14 @@ fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
 }
 
 /// Extracts the passport issuer phrase after a marker.
-fn extract_issuer_after(text: &str, from: usize, prefixes: &[String]) -> Option<(usize, usize)> {
+fn extract_issuer_after(text: &str, from: usize, prefixes: &[String], abbrev: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
-    let stop = ISSUER_STOP_RE.find(rest).map(|m| m.start()).unwrap_or(rest.len());
+    let stop = issuer_phrase_end(rest, abbrev);
     let phrase = &rest[..stop];
+    // Skip leading whitespace, colons, commas, dashes and a parenthesized number
+    // (e.g. "кем выдан (12): ОВД ...").
     let trimmed_start = phrase
-        .find(|c: char| !c.is_whitespace() && c != ':' && c != ',')
+        .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
         .unwrap_or(phrase.len());
     let phrase = &phrase[trimmed_start..];
     let trimmed_end = phrase
@@ -1847,6 +1882,53 @@ fn extract_issuer_after(text: &str, from: usize, prefixes: &[String]) -> Option<
     let start = from + trimmed_start;
     let end = start + phrase.len();
     Some((start, end))
+}
+
+/// Extracts a card holder name (2-3 capitalized or all-caps words, Cyrillic or Latin) right
+/// after a card-holder marker, skipping an optional ':' or '—'. Returns None when no such
+/// name follows.
+fn extract_card_holder_after(text: &str, from: usize) -> Option<(usize, usize)> {
+    let rest = &text[from..];
+    // Skip leading whitespace, colons, commas and dashes.
+    let lead = rest
+        .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
+        .unwrap_or(rest.len());
+    let rest = &rest[lead..];
+    let m = CARD_HOLDER_NAME_RE.find(rest)?;
+    let start = from + lead + m.start();
+    let end = from + lead + m.end();
+    Some((start, end))
+}
+
+/// End offset of an issuer phrase: stops at a comma, semicolon, newline, a sentence-ending
+/// period (not an abbreviation period like "г."), a date (numeric or textual), or the
+/// "код подразделения" / "к/п" labels.
+fn issuer_phrase_end(rest: &str, abbrev: &[String]) -> usize {
+    let mut i = 0;
+    while i < rest.len() {
+        let c = rest[i..].chars().next().unwrap();
+        match c {
+            ',' | ';' | '\n' => return i,
+            '.' => {
+                if is_abbreviation_period(rest, i, abbrev) {
+                    i += c.len_utf8();
+                } else {
+                    return i;
+                }
+            }
+            _ => {
+                let tail = &rest[i..];
+                if ISSUER_DATE_START_RE.is_match(tail)
+                    || tail.starts_with("код подразделения")
+                    || tail.starts_with("к/п")
+                {
+                    return i;
+                }
+                i += c.len_utf8();
+            }
+        }
+    }
+    rest.len()
 }
 
 fn cyrillic_words(text: &str) -> Vec<(usize, usize, String, bool)> {
@@ -2144,11 +2226,23 @@ static NAME_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
 static CYRILLIC_WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[А-ЯЁа-яё]+").unwrap());
 static WORD_V_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bв\b").unwrap());
-static ISSUER_STOP_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|код подразделения|к/п|[,;]").unwrap()
+/// Matches an issuer marker ("выдан", "выдано", "кем выдан", "орган выдачи") followed by an
+/// optional parenthesized number and an optional separator (":", "—", "-").
+static ISSUER_MARKER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?iu)\b(?:кем выдан|орган выдачи|выдан|выдано)\b\s*(?:\(\d+\))?\s*[:—\-]?\s*").unwrap()
 });
-static CARD_HOLDER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\b[A-Z]{2,}(?:[ ]+[A-Z]{2,}){1,2}\b").unwrap());
+/// Matches the start of a date (numeric or textual) at the current position.
+static ISSUER_DATE_START_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|^\d{1,2}\s+[а-яё]+\s+\d{2,4}\b").unwrap()
+});
+/// 2-3 capitalized or all-caps words (Cyrillic or Latin), e.g. "Иванов Петров",
+/// "ИВАНОВ ПЕТРОВ", "IVAN PETROV".
+static CARD_HOLDER_NAME_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"\b(?:[А-ЯЁ][а-яё]+|[А-ЯЁ]{2,}|[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[А-ЯЁ][а-яё]+|[А-ЯЁ]{2,}|[A-Z][a-z]+|[A-Z]{2,})){1,2}\b",
+    )
+    .unwrap()
+});
 static ADDRESS_COMPONENT_RES: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
         Regex::new(r"\b[1-6]\d{5}\b").unwrap(),
