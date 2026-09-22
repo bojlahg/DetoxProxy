@@ -35,8 +35,11 @@ rmr_benchmark_alfa:driver_license>=326
 rmr_benchmark_alfa:email>=212
 rmr_benchmark_alfa:card_number>=110
 tricky_negatives:clean>=243
+# Control rows with a client's real address next to заказ/тикет/накладная (T28c): markers must not hide PII.
+tricky_negatives:address>=5
+tricky_negatives:phone>=3
 tricky_negatives:snils>=1
-tricky_negatives:fio>=1
+tricky_negatives:fio>=4
 tricky_negatives:card_holder>=1
 tricky_negatives:passport>=1
 tricky_negatives:card_number>=1
