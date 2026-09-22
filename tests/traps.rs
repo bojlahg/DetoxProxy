@@ -276,6 +276,46 @@ fn cvv_without_digits_not_masked() {
 }
 
 #[test]
+fn cvv_conversational_forms_masked() {
+    let cases = [
+        "нужен cvc, вот 123",
+        "cvc был 123",
+        "цвс правильный 123",
+        "код на обороте карты 123",
+        "cvc, хотя код 123",
+        "вот мой cvc 123",
+    ];
+    for text in cases {
+        let entities = detect(text, TrapPolicy::PreferMask);
+        assert_eq!(
+            span_of(text, &entities, "cvv"),
+            Some("123"),
+            "cvv should be found in {:?}: {:?}",
+            text,
+            entities
+        );
+    }
+}
+
+#[test]
+fn cvv_not_masked_after_non_cvv_labels() {
+    let cases = [
+        "заметка № 001/cvv",
+        "CVV находится на обороте карты",
+        "ошибка 317 при вводе cvv",
+    ];
+    for text in cases {
+        let entities = detect(text, TrapPolicy::PreferMask);
+        assert!(
+            !has_type(&entities, "cvv"),
+            "cvv should not be found in {:?}: {:?}",
+            text,
+            entities
+        );
+    }
+}
+
+#[test]
 fn passport_pair_pair_masked() {
     let entities = detect("Паспорт 48 90 234004 выдан", TrapPolicy::PreferMask);
     assert_eq!(span_of("Паспорт 48 90 234004 выдан", &entities, "passport"), Some("48 90 234004"), "passport span: {:?}", entities);

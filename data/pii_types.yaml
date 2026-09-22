@@ -312,9 +312,9 @@ types:
     token_label: CVV
     context_required: true
     requires_companion: true
-    context_words: [cvv, cvc, cvv2, cvc2, код безопасности, защитный код]
+    context_words: [cvv, cvc, cvv2, cvc2, цвв, цвс, свв, свс, код безопасности, защитный код, код на обороте, на обороте карты, с обратной стороны карты]
     patterns:
-      - '\d{3,4}\b'
+      - '\d{3}\b'
 
   - id: card_pin
     name: Card PIN code

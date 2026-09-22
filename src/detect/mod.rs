@@ -751,6 +751,12 @@ impl Detector {
     /// chars, with only spaces, ':', '-', '=', or the word "код" between them. This rejects
     /// values like "001" in "CVV находится на обороте карты (заметка № 001/cvv)" while
     /// keeping glued forms like "CVV317".
+    ///
+    /// For CVV the check is relaxed to catch conversational speech ("нужен cvc, вот 123",
+    /// "код на обороте карты 123"): the marker may be up to 30 chars to the left with at
+    /// most 3 words and no other number in between, in the same sentence. A value right
+    /// after "№", "номер", "заметка", "шаг", "ошибка", "код ошибки" or "версия" is never
+    /// a CVV.
     fn has_cvv_pin_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> bool {
         let markers = &spec.context_words;
         let prefix = &text[..start];
@@ -759,27 +765,55 @@ impl Detector {
             if let Some(pos) = lower.rfind(m) {
                 let marker_end = pos + m.len();
                 let between = &text[marker_end..start];
-                if between.chars().count() > 12 {
-                    continue;
-                }
-                let trimmed = between.trim();
-                // The text between the marker and the value may be empty, a separator
-                // (":", "-", "="), the word "код", or the glued form "-код" / "-код:"
-                // (e.g. "CVV-код 317", "CVC-код: 123").
-                let allowed = trimmed.is_empty()
-                    || trimmed == ":"
-                    || trimmed == "-"
-                    || trimmed == "="
-                    || trimmed == "код"
-                    || trimmed == "-код"
-                    || trimmed == "-код:"
-                    || trimmed == "код:";
-                if allowed {
-                    return true;
+                if spec.id == "cvv" {
+                    if self.cvv_marker_ok(between) {
+                        return true;
+                    }
+                } else if between.chars().count() <= 12 {
+                    let trimmed = between.trim();
+                    // The text between the marker and the value may be empty, a separator
+                    // (":", "-", "="), the word "код", or the glued form "-код" / "-код:"
+                    // (e.g. "CVV-код 317", "CVC-код: 123").
+                    let allowed = trimmed.is_empty()
+                        || trimmed == ":"
+                        || trimmed == "-"
+                        || trimmed == "="
+                        || trimmed == "код"
+                        || trimmed == "-код"
+                        || trimmed == "-код:"
+                        || trimmed == "код:";
+                    if allowed {
+                        return true;
+                    }
                 }
             }
         }
         false
+    }
+
+    /// True when the text between a CVV marker and the value satisfies the conversational
+    /// rule: within 30 chars, at most 3 words, no other number, no sentence boundary, and
+    /// the value is not immediately preceded by a non-CVV label word.
+    fn cvv_marker_ok(&self, between: &str) -> bool {
+        if between.chars().count() > 30 {
+            return false;
+        }
+        // Same sentence: a sentence-ending punctuation or a newline ends the clause.
+        if between.contains('.') || between.contains('!') || between.contains('?') || between.contains('\n') {
+            return false;
+        }
+        // No other number between the marker and the value.
+        if between.chars().any(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        // At most 3 words between the marker and the value.
+        if between.split_whitespace().count() > 3 {
+            return false;
+        }
+        // The value must not be immediately preceded by a non-CVV label word.
+        let trimmed = between.trim_end();
+        const NON_CVV_LABELS: [&str; 7] = ["№", "номер", "заметка", "шаг", "ошибка", "код ошибки", "версия"];
+        !NON_CVV_LABELS.iter().any(|l| trimmed.ends_with(l))
     }
 
     /// True if `spec`'s marker is the effective context for a value at `start`, using the
@@ -1065,7 +1099,7 @@ impl Detector {
                 .char_indices()
                 .rev()
                 .find(|(_, c)| c.is_whitespace())
-                .map(|(i, _)| i + 1)
+                .map(|(i, c)| i + c.len_utf8())
                 .unwrap_or(0);
             let city = &before[city_start..];
             if self.looks_like_city_name(city) {
