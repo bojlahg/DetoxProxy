@@ -1,0 +1,19 @@
+# Quality floors for tools/eval_accept.sh: file:metric>=N or file:metric<=N.
+# metric = service type (typed recall count), fp.<type> (extra masks), clean (rows without PII left untouched).
+# Raise a floor when a task improves it; never lower one without a written reason.
+# Baseline: best of T06/T07 builds, 22.09 19:40.
+hard_negatives:clean>=194
+overlap_conflicts:address>=12
+overlap_conflicts:inn>=15
+multi_entity:fio>=78
+multi_entity:birth_date>=37
+rmr_benchmark_alfa:address>=80
+rmr_benchmark_alfa:passport>=116
+rmr_benchmark_alfa:fio>=298
+rmr_benchmark_alfa:inn>=182
+rmr_benchmark_alfa:phone>=123
+synthetic_alfa:fio>=30
+synthetic_missing_categories:birth_date>=112
+synthetic_missing_categories:citizenship>=120
+synthetic_missing_categories:fp.cvv<=40
+synthetic_missing_categories:clean>=980

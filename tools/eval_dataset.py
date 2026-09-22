@@ -2,7 +2,7 @@
 """Detection quality on tests/data/*.jsonl against a running pii-guard (/v1/detect).
 
   python tools/eval_dataset.py --url http://127.0.0.1:8080 [--files tests/data/a.jsonl,...] [--limit N]
-      [--report docs/QUALITY-raw.md] [--errors 20]
+      [--report docs/QUALITY-raw.md] [--errors 20] [--require "overlap_conflicts:address>=12,synthetic_missing_categories:fp.cvv<=40,hard_negatives:clean>=190"]
 
 Gold offsets are char offsets, service offsets are UTF-8 byte offsets (converted here).
 Metrics:
@@ -13,7 +13,7 @@ Metrics:
 Gold types outside the 17 required ones are ignored: they are neither misses nor false positives.
 Only stdlib.
 """
-import argparse, collections, glob, json, sys, time, urllib.request, urllib.error
+import argparse, collections, glob, json, re, sys, time, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -61,6 +61,7 @@ def main():
     ap.add_argument("--errors", type=int, default=15)
     ap.add_argument("--report", default="")
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--require", default="", help="comma list of file:metric>=N / file:metric<=N; metric = <type> (typed found), fp.<type>, clean")
     a = ap.parse_args()
     files = a.files.split(",") if a.files else sorted(glob.glob("tests/data/*.jsonl"))
     base = a.url.rstrip("/")
@@ -71,6 +72,7 @@ def main():
         lines.append(s)
 
     total = collections.Counter()
+    stats = {}
     for f in files:
         rows = [json.loads(l) for l in open(f, encoding="utf-8")]
         if a.limit:
@@ -106,6 +108,10 @@ def main():
             c["neg_rows_clean"] += (not gold and not pred)
         total.update(c)
         name = f.replace("\\", "/").split("/")[-1]
+        st = {t: v["found"] for t, v in per_type.items()}
+        st.update({f"fp.{t}": n for t, n in fp_types.items()})
+        st["clean"] = c["neg_rows_clean"]
+        stats[name.replace(".jsonl", "")] = st
         log(f"\n## {name} — {c['rows']} строк")
         log(report_line(c))
         if c["neg_rows"]:
@@ -121,8 +127,23 @@ def main():
                     log(f"  {id_} {t} {span!r} | {text[:160]}")
     log("\n## Итого")
     log(report_line(total))
+    failed = []
+    for req in filter(None, (x.strip() for x in a.require.split(","))):
+        m = re.fullmatch(r"([\w-]+):([\w.]+)(>=|<=)(\d+)", req)
+        if not m:
+            sys.exit(f"bad --require item: {req}")
+        fname, metric, op, n = m.group(1), m.group(2), m.group(3), int(m.group(4))
+        if fname not in stats:
+            sys.exit(f"--require names a file that was not evaluated: {fname}")
+        v = stats[fname].get(metric, 0)
+        if not (v >= n if op == ">=" else v <= n):
+            failed.append(f"{req} (actual {v})")
+    if a.require:
+        log("\n## Требования")
+        log("все выполнены" if not failed else "НЕ выполнены: " + "; ".join(failed))
     if a.report:
         open(a.report, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+    sys.exit(1 if failed else 0)
 
 
 def report_line(c):
