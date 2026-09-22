@@ -1,14 +1,14 @@
-# pii-guard — модуль безопасности персональных данных
+# DetoxProxy — модуль безопасности персональных данных
 
 Сервис находит в русском тексте 17 типов персональных данных, заменяет их обратимыми токенами (`<<FIO_1>>`, `<<INN_1>>` …) перед отправкой во внешнюю LLM и восстанавливает исходные значения в ответе. Один статический бинарник на Rust (axum + tokio), без базы данных: таблица соответствий живёт только в памяти процесса и удаляется по TTL.
 
-Код написан coding-агентом DeepSeek-V4-Flash-0731 через AlfaGen (OpenCode) по спецификации и задачам команды; правила агента — `AGENTS.md`.
+Код написан coding-агентом DeepSeek-V4-Flash-0731 через AlfaGen (OpenCode, настройки — `opencode.json`) по спецификации и задачам команды.
 
 ## Быстрый старт
 
 ```bash
 cargo build --release
-./target/release/pii-guard --config config.yaml      # слушает 0.0.0.0:8080
+./target/release/detox-proxy --config config.yaml      # слушает 0.0.0.0:8080
 ```
 
 Проверка:
@@ -23,7 +23,7 @@ curl -s localhost:8080/process -H 'Content-Type: application/json' \
 # {"result":"Клиент Иванов Иван Иванович, ИНН 500100732259"}
 ```
 
-Сборка под Linux из Windows/macOS (glibc, результат — `target/linux/release/pii-guard`):
+Сборка под Linux из Windows/macOS (glibc, результат — `target/linux/release/detox-proxy`):
 
 ```bash
 docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --target-dir target/linux
@@ -107,7 +107,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 
 ```bash
 cargo test                                             # модульные и HTTP-тесты
-python tools/check_process.py --bin target/release/pii-guard --config config.yaml   # контракт /process
+python tools/check_process.py --bin target/release/detox-proxy --config config.yaml   # контракт /process
 bash tools/manual_accept.sh                            # 25 ручных кейсов с ловушками
 python tools/eval_dataset.py --url http://127.0.0.1:8080   # точность на размеченных наборах (tests/data)
 ```

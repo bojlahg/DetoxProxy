@@ -354,7 +354,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
       - /metrics после запросов содержит pii_requests_total и pii_latency_seconds; /healthz 200;
       - логи: захватить вывод tracing в буфер (tracing_subscriber с writer в Arc<Mutex<Vec<u8>>>) и проверить, что после запроса с ИНН 7707083893 буфер не содержит «7707083893».
   </tests>
-  <acceptance>cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml</acceptance>
+  <acceptance>cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml</acceptance>
   <out_of_scope>LLM-прокси /v1/chat/completions (T09). Hot reload по файлу и /admin (T08). Детекция ФИО/дат/адресов (T05). Применение allowlist (T06).</out_of_scope>
 </task>
 <task id="T05">
@@ -433,13 +433,13 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 - `/v1/detect` с «Погода хорошая» → `{"entities": []}`.
 - Старые 68 тестов не ломать.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml`. Файлы: src/detect/mod.rs, src/server/mod.rs, src/config/mod.rs (поле trap_policy у SystemConfig, default prefer_mask), src/registry/mod.rs (новые поля TypeSpec с default), data/pii_types.yaml, data/allowlist.yaml (можно дополнить), config.yaml, tests/traps.rs. Сначала прочитай существующий detect/mod.rs — там уже есть контекстные окна и confidence, встраивайся, не переписывай. После плана сразу пиши код.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml`. Файлы: src/detect/mod.rs, src/server/mod.rs, src/config/mod.rs (поле trap_policy у SystemConfig, default prefer_mask), src/registry/mod.rs (новые поля TypeSpec с default), data/pii_types.yaml, data/allowlist.yaml (можно дополнить), config.yaml, tests/traps.rs. Сначала прочитай существующий detect/mod.rs — там уже есть контекстные окна и confidence, встраивайся, не переписывай. После плана сразу пиши код.
 </task>
 
 <task id="T07">
 Привет. Прогнали 25 ручных кейсов (docs/brief/manual-test-cases.md) — round-trip везде ок, но точность хромает. Эта задача — числа, маркеры, адреса организаций. Имена и биографии — следующей задачей, их не трогай.
 
-Как проверять: `bash tools/manual_accept.sh --only 1,4,5,6,7,8,9,13,16,17,18,19,24` — поднимает release-бинарник, гоняет кейсы, пишет FAIL с причиной. Ожидания лежат в docs/agent-kit/tasks/manual_expect.json (не меняй). Сейчас падают 4, 6, 7, 16, 17, 18.
+Как проверять: `bash tools/manual_accept.sh --only 1,4,5,6,7,8,9,13,16,17,18,19,24` — поднимает release-бинарник, гоняет кейсы, пишет FAIL с причиной. Ожидания лежат в tests/manual_expect.json (не меняй). Сейчас падают 4, 6, 7, 16, 17, 18.
 
 Что поправить:
 
@@ -470,7 +470,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 - «внутренний идентификатор 4512345678» → нет passport.
 Старые тесты не ломать. Если старый тест противоречит пунктам выше — не правь его сам, остановись и напиши в REPORT.md, какой и почему.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh --only 1,4,5,6,7,8,9,13,16,17,18,19,24`.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh --only 1,4,5,6,7,8,9,13,16,17,18,19,24`.
 
 Файлы: src/detect/mod.rs, src/registry/mod.rs (новые поля с default), data/pii_types.yaml, config.yaml, tests/traps.rs. Больше ничего. Сначала прочитай detect/mod.rs — встраивайся в существующие окна контекста, не переписывай. После плана сразу пиши код.
 </task>
@@ -501,7 +501,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 **Тесты** — tests/traps.rs и tests/detect_names_dates_addresses.rs (дописывать можно, старое не менять), по одному тесту на каждый пункт, тексты из кейсов.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh --only 1,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,25`.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh --only 1,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,25`.
 
 Файлы: src/detect/mod.rs, src/registry/mod.rs, data/pii_types.yaml, data/allowlist.yaml, data/dict/countries.txt, data/dict/*.txt (дописывать), tests/traps.rs, tests/detect_names_dates_addresses.rs. После плана сразу пиши код.
 </task>
@@ -519,7 +519,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 **3. Не ломать.** Все тесты, check_process, manual_accept должны остаться зелёными.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && cargo test --release --test perf -- --ignored --nocapture && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh`.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && cargo test --release --test perf -- --ignored --nocapture && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh`.
 
 Файлы: src/detect/mod.rs, src/registry/mod.rs, Cargo.toml (aho-corasick), tests/perf.rs. После плана сразу пиши код.
 </task>
@@ -539,7 +539,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 **Тесты** — tests/detect_documents.rs, по 3 позитива и 2 негатива на пункт, тексты из датасета.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh`.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh`.
 Цель по eval: каждый из пяти типов ≥ 110/120 на synthetic_missing_categories, лишних масок не больше, чем сейчас.
 
 Файлы: src/detect/mod.rs, src/registry/mod.rs, data/pii_types.yaml, data/dict/*.txt, tests/detect_documents.rs. После плана сразу пиши код.
@@ -566,13 +566,13 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 **Тесты** — tests/detect_rmr.rs, по 3 примера на пункт из датасета.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh`. Цель по eval rmr: snils ≥ 180/223, passport ≥ 380/494, driver_license ≥ 250/371, email ≥ 200/221.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh`. Цель по eval rmr: snils ≥ 180/223, passport ≥ 380/494, driver_license ≥ 250/371, email ≥ 200/221.
 
 Файлы: src/detect/mod.rs, src/registry/mod.rs, data/pii_types.yaml, tests/detect_rmr.rs. После плана сразу пиши код.
 </task>
 
 <task id="T12">
-Привет. После T07 на датасетах регрессии — чиним, ничего нового не добавляем. Проверка: `bash tools/eval_accept.sh` — поднимает бинарник, гоняет tests/data/*.jsonl и сверяет с порогами из docs/agent-kit/tasks/eval_floors.txt (не меняй его). Сейчас падает.
+Привет. После T07 на датасетах регрессии — чиним, ничего нового не добавляем. Проверка: `bash tools/eval_accept.sh` — поднимает бинарник, гоняет tests/data/*.jsonl и сверяет с порогами из tests/eval_floors.txt (не меняй его). Сейчас падает.
 
 **1. Адрес без маркера (overlap_conflicts address 12 → 0, rmr address 80 → 38).** После подъёма порога до 0.5 полный адрес без маркера перестал проходить: «Доставить: г. Белгород, ул. Садовая, д. 41». Полный адрес по структуре (город + улица + дом, или улица + дом + квартира) — 0.7 сам по себе, без маркера. Минус только от non_pii маркера адреса (отделение, офис…), как сделано в T07.
 
@@ -582,7 +582,7 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Тесты — в tests/traps.rs, по одному на пункт, тексты выше.
 
-Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml && bash tools/manual_accept.sh --only 1,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,25 && bash tools/eval_accept.sh`.
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml && bash tools/manual_accept.sh --only 1,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,25 && bash tools/eval_accept.sh`.
 
 Файлы: src/detect/mod.rs, data/pii_types.yaml, tests/traps.rs. После плана сразу пиши код.
 </task>

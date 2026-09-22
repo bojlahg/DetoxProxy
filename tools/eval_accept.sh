@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Starts the release binary on a spare port, runs the dataset evaluation with quality floors, stops the binary.
 #   tools/eval_accept.sh ["file:metric>=N,..."] [bin]
-# Without arguments uses the floors in docs/agent-kit/tasks/eval_floors.txt (one requirement per line).
+# Without arguments uses the floors in tests/eval_floors.txt (one requirement per line).
 # Exit code = exit code of eval_dataset.py (0 = every floor holds).
 set -u
 req="${1:-}"
-bin="${2:-target/release/pii-guard.exe}"
-[ -x "$bin" ] || bin="target/release/pii-guard"
+bin="${2:-target/release/detox-proxy.exe}"
+[ -x "$bin" ] || bin="target/release/detox-proxy"
 if [ -z "$req" ]; then
-  req="$(grep -v '^\s*#' docs/agent-kit/tasks/eval_floors.txt | grep -v '^\s*$' | paste -sd, -)"
+  req="$(grep -v '^\s*#' tests/eval_floors.txt | grep -v '^\s*$' | paste -sd, -)"
 fi
 port=18098
 cfg="$(mktemp -t eval-cfg.XXXX.yaml)"

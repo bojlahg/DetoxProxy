@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Runs the manual test cases from docs/brief/manual-test-cases.md against a running pii-guard.
+"""Runs the manual test cases from docs/brief/manual-test-cases.md against a running detox-proxy.
 
   python tools/run_manual_cases.py --url http://127.0.0.1:8080 [--only 3,5,25]
-      [--expect docs/agent-kit/tasks/manual_expect.json] [--report docs/loadtest/manual-cases-report.md]
+      [--expect tests/manual_expect.json] [--report docs/loadtest/manual-cases-report.md]
 
 For every case: mask -> unmask -> retry-mask via /process (default system), plus /v1/detect for entity types.
 Case 20 (retry) and 21 (isolation) are run as scripted steps, cases 22/23 are embedded into a ~100 KB neutral text.

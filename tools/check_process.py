@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Black-box check of the /process contract (Appendix A/B) against a running or spawned pii-guard.
+"""Black-box check of the /process contract (Appendix A/B) against a running or spawned detox-proxy.
 
-  python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml [--port 18090]
+  python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml [--port 18090]
   python tools/check_process.py --url http://host:port            # already running service
 
 Exit 0 when every check passes. Prints one line per check. Only stdlib.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detection quality on tests/data/*.jsonl against a running pii-guard (/v1/detect).
+"""Detection quality on tests/data/*.jsonl against a running detox-proxy (/v1/detect).
 
   python tools/eval_dataset.py --url http://127.0.0.1:8080 [--files tests/data/a.jsonl,...] [--limit N]
       [--report docs/QUALITY-raw.md] [--errors 20] [--require "overlap_conflicts:address>=12,synthetic_missing_categories:fp.cvv<=40,hard_negatives:clean>=190"]
