@@ -66,6 +66,21 @@ fn check_all_variants(det: &Detector, text: &str, reg: &Registry) {
 }
 
 fn dataset_texts() -> Vec<String> {
+    let mut paths = dataset_paths();
+    paths.sort();
+
+    let mut texts = Vec::new();
+    for path in paths {
+        let content = std::fs::read_to_string(&path).expect("read dataset");
+        let file_texts = dataset_file_texts(&content);
+        let step = (file_texts.len() / 15).max(1);
+        texts.extend(file_texts.iter().step_by(step).take(15).cloned());
+    }
+    texts
+}
+
+/// Collects the `.jsonl` dataset paths from `tests/data` and `tests/data/holdout`.
+fn dataset_paths() -> Vec<std::path::PathBuf> {
     let mut paths: Vec<std::path::PathBuf> = Vec::new();
     let root = match std::fs::read_dir("tests/data") {
         Ok(root) => root,
@@ -74,7 +89,16 @@ fn dataset_texts() -> Vec<String> {
             return Vec::new();
         }
     };
-    for entry in root {
+    collect_jsonl_paths(root, &mut paths);
+    if let Ok(holdout) = std::fs::read_dir("tests/data/holdout") {
+        collect_jsonl_paths(holdout, &mut paths);
+    }
+    paths
+}
+
+/// Appends the `.jsonl` file paths from a directory to `paths`.
+fn collect_jsonl_paths(dir: std::fs::ReadDir, paths: &mut Vec<std::path::PathBuf>) {
+    for entry in dir {
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -84,40 +108,24 @@ fn dataset_texts() -> Vec<String> {
             paths.push(path);
         }
     }
-    if let Ok(holdout) = std::fs::read_dir("tests/data/holdout") {
-        for entry in holdout {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(_) => continue,
-            };
-            let path = entry.path();
-            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                paths.push(path);
-            }
-        }
-    }
-    paths.sort();
+}
 
-    let mut texts = Vec::new();
-    for path in paths {
-        let content = std::fs::read_to_string(&path).expect("read dataset");
-        let mut file_texts: Vec<String> = Vec::new();
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_str(line).expect("parse jsonl line");
-            if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
-                if t.len() <= 4096 {
-                    file_texts.push(t.to_string());
-                }
+/// Extracts the `text` fields (up to 4096 chars) from a jsonl dataset file.
+fn dataset_file_texts(content: &str) -> Vec<String> {
+    let mut file_texts: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(line).expect("parse jsonl line");
+        if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+            if t.len() <= 4096 {
+                file_texts.push(t.to_string());
             }
         }
-        let step = (file_texts.len() / 15).max(1);
-        texts.extend(file_texts.iter().step_by(step).take(15).cloned());
     }
-    texts
+    file_texts
 }
 
 #[test]

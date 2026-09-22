@@ -38,22 +38,26 @@ fn check_both(kind: Kind, value: &str, expected: [&str; 6]) {
 
 #[test]
 fn case_parse() {
-    assert_eq!(Case::parse("им"), Some(Case::Nom));
-    assert_eq!(Case::parse("NOM"), Some(Case::Nom));
-    assert_eq!(Case::parse("род"), Some(Case::Gen));
-    assert_eq!(Case::parse("gen"), Some(Case::Gen));
-    assert_eq!(Case::parse("дат"), Some(Case::Dat));
-    assert_eq!(Case::parse("dat"), Some(Case::Dat));
-    assert_eq!(Case::parse("вин"), Some(Case::Acc));
-    assert_eq!(Case::parse("acc"), Some(Case::Acc));
-    assert_eq!(Case::parse("твор"), Some(Case::Ins));
-    assert_eq!(Case::parse("тв"), Some(Case::Ins));
-    assert_eq!(Case::parse("ins"), Some(Case::Ins));
-    assert_eq!(Case::parse("пр"), Some(Case::Prep));
-    assert_eq!(Case::parse("предл"), Some(Case::Prep));
-    assert_eq!(Case::parse("prep"), Some(Case::Prep));
-    assert_eq!(Case::parse("xyz"), None);
-    assert_eq!(Case::parse(""), None);
+    assert_parse("им", Some(Case::Nom));
+    assert_parse("NOM", Some(Case::Nom));
+    assert_parse("род", Some(Case::Gen));
+    assert_parse("gen", Some(Case::Gen));
+    assert_parse("дат", Some(Case::Dat));
+    assert_parse("dat", Some(Case::Dat));
+    assert_parse("вин", Some(Case::Acc));
+    assert_parse("acc", Some(Case::Acc));
+    assert_parse("твор", Some(Case::Ins));
+    assert_parse("тв", Some(Case::Ins));
+    assert_parse("ins", Some(Case::Ins));
+    assert_parse("пр", Some(Case::Prep));
+    assert_parse("предл", Some(Case::Prep));
+    assert_parse("prep", Some(Case::Prep));
+    assert_parse("xyz", None);
+    assert_parse("", None);
+}
+
+fn assert_parse(input: &str, expected: Option<Case>) {
+    assert_eq!(Case::parse(input), expected);
 }
 
 #[test]

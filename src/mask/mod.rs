@@ -366,31 +366,47 @@ pub fn count_unresolved_tokens(text: &str, mappings: &[Mapping]) -> usize {
 /// replaces the rest with '*'. For FIO renders initials "И. И. И.".
 pub fn stars(value: &str, type_id: &str, keep_prefix: usize, keep_suffix: usize) -> String {
     if type_id == "fio" {
-        return value
-            .split_whitespace()
-            .map(|w| {
-                let first = w.chars().next().unwrap_or('*');
-                format!("{}.", first)
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        return stars_fio(value);
     }
     if type_id == "email" {
-        if let Some(at) = value.rfind('@') {
-            let local = &value[..at];
-            let domain = &value[at..];
-            let mut out = String::new();
-            for (i, c) in local.chars().enumerate() {
-                if i < keep_prefix {
-                    out.push(c);
-                } else {
-                    out.push('*');
-                }
-            }
-            out.push_str(domain);
-            return out;
+        if let Some(masked) = stars_email(value, keep_prefix) {
+            return masked;
         }
     }
+    stars_generic(value, keep_prefix, keep_suffix)
+}
+
+/// Renders the FIO stars mask as initials "И. И. И.".
+fn stars_fio(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(|w| {
+            let first = w.chars().next().unwrap_or('*');
+            format!("{}.", first)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Renders the email stars mask: keeps the local prefix and the domain.
+fn stars_email(value: &str, keep_prefix: usize) -> Option<String> {
+    let at = value.rfind('@')?;
+    let local = &value[..at];
+    let domain = &value[at..];
+    let mut out = String::new();
+    for (i, c) in local.chars().enumerate() {
+        if i < keep_prefix {
+            out.push(c);
+        } else {
+            out.push('*');
+        }
+    }
+    out.push_str(domain);
+    Some(out)
+}
+
+/// Renders the generic stars mask: keeps prefix/suffix chars and separators.
+fn stars_generic(value: &str, keep_prefix: usize, keep_suffix: usize) -> String {
     let chars: Vec<char> = value.chars().collect();
     let keep_prefix = keep_prefix.min(chars.len());
     let keep_suffix = keep_suffix.min(chars.len().saturating_sub(keep_prefix));
@@ -410,48 +426,56 @@ fn synthetic(value: &str, type_id: &str) -> String {
     let mut rng = rand::thread_rng();
     match type_id {
         "fio" => FIO_LIST[rng.gen_range(0..FIO_LIST.len())].to_string(),
-        "card_number" => {
-            let mut digits = Vec::with_capacity(16);
-            for _ in 0..15 {
-                digits.push(rng.gen_range(0..10));
-            }
-            digits.push(luhn_check(&digits) as u32);
-            let mut it = digits.into_iter();
-            let mut out = String::new();
-            for c in value.chars() {
-                if c.is_ascii_digit() {
-                    out.push(char::from_digit(it.next().unwrap_or(0), 10).unwrap());
-                } else {
-                    out.push(c);
-                }
-            }
-            out
-        }
-        "email" => {
-            if let Some(at) = value.rfind('@') {
-                let domain = &value[at..];
-                let len = value[..at].chars().count().max(1);
-                let mut local = String::new();
-                for _ in 0..len {
-                    local.push(rng.gen_range(b'a'..=b'z') as char);
-                }
-                format!("{}{}", local, domain)
-            } else {
-                value.to_string()
-            }
-        }
-        _ => {
-            let mut out = String::new();
-            for c in value.chars() {
-                if c.is_ascii_digit() {
-                    out.push(char::from_digit(rng.gen_range(0..10), 10).unwrap());
-                } else {
-                    out.push(c);
-                }
-            }
-            out
+        "card_number" => synthetic_card_number(value, &mut rng),
+        "email" => synthetic_email(value, &mut rng),
+        _ => synthetic_digits(value, &mut rng),
+    }
+}
+
+/// Replaces the digits of a card number with a valid Luhn number, keeping separators.
+fn synthetic_card_number(value: &str, rng: &mut impl rand::Rng) -> String {
+    let mut digits = Vec::with_capacity(16);
+    for _ in 0..15 {
+        digits.push(rng.gen_range(0..10));
+    }
+    digits.push(luhn_check(&digits) as u32);
+    let mut it = digits.into_iter();
+    let mut out = String::new();
+    for c in value.chars() {
+        if c.is_ascii_digit() {
+            out.push(char::from_digit(it.next().unwrap_or(0), 10).unwrap());
+        } else {
+            out.push(c);
         }
     }
+    out
+}
+
+/// Replaces the local part of an email with random letters, keeping the domain.
+fn synthetic_email(value: &str, rng: &mut impl rand::Rng) -> String {
+    let Some(at) = value.rfind('@') else {
+        return value.to_string();
+    };
+    let domain = &value[at..];
+    let len = value[..at].chars().count().max(1);
+    let mut local = String::new();
+    for _ in 0..len {
+        local.push(rng.gen_range(b'a'..=b'z') as char);
+    }
+    format!("{}{}", local, domain)
+}
+
+/// Replaces every digit with a random digit, keeping non-digit characters.
+fn synthetic_digits(value: &str, rng: &mut impl rand::Rng) -> String {
+    let mut out = String::new();
+    for c in value.chars() {
+        if c.is_ascii_digit() {
+            out.push(char::from_digit(rng.gen_range(0..10), 10).unwrap());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn luhn_check(digits: &[u32]) -> u8 {

@@ -928,30 +928,20 @@ impl Detector {
             if let Some(pos) = lower.rfind(m) {
                 let marker_end = pos + m.len();
                 let between = &text[marker_end..start];
-                if spec.id == "cvv" {
-                    if self.cvv_marker_ok(between) {
-                        return true;
-                    }
-                } else if between.chars().count() <= 12 {
-                    let trimmed = between.trim();
-                    // The text between the marker and the value may be empty, a separator
-                    // (":", "-", "="), the word "код", or the glued form "-код" / "-код:"
-                    // (e.g. "CVV-код 317", "CVC-код: 123").
-                    let allowed = trimmed.is_empty()
-                        || trimmed == ":"
-                        || trimmed == "-"
-                        || trimmed == "="
-                        || trimmed == "код"
-                        || trimmed == "-код"
-                        || trimmed == "-код:"
-                        || trimmed == "код:";
-                    if allowed {
-                        return true;
-                    }
+                if self.marker_between_ok(between, spec) {
+                    return true;
                 }
             }
         }
         false
+    }
+
+    /// True when the text between a marker and the value satisfies the pin/cvv rule.
+    fn marker_between_ok(&self, between: &str, spec: &TypeSpec) -> bool {
+        if spec.id == "cvv" {
+            return self.cvv_marker_ok(between);
+        }
+        between.chars().count() <= 12 && is_pin_separator(between.trim())
     }
 
     /// True when the text between a CVV marker and the value satisfies the conversational
@@ -1122,33 +1112,44 @@ impl Detector {
         let mut candidates = Vec::new();
         for re in patterns {
             for m in re.find_iter(text) {
-                let (start, end) = match self.date_span(text, m.start(), m.end(), spec) {
-                    Some(v) => v,
-                    None => continue,
-                };
-                let span = &text[start..end];
-                // Marker must be within the window before the date or within 20 chars after it
-                // (e.g. "10.02.1982 года рождения", "06.06.1988 г.р.").
-                let before = context_window_before(text, start, spec.context_window).to_lowercase();
-                let after = context_window_after(text, end, 20).to_lowercase();
-                let has_marker = spec.context_words.iter().any(|w| before.contains(w) || after.contains(w));
-                if !has_marker {
-                    continue;
+                if let Some(e) = self.date_candidate(text, opts, spec, m.start(), m.end()) {
+                    candidates.push(e);
                 }
-                if date_in_future(span) {
-                    continue;
-                }
-                let mut conf = 0.6f32;
-                if age_exceeds(span, self.historical_date_years) {
-                    conf -= 0.3;
-                }
-                if !passes_threshold(conf, opts) {
-                    continue;
-                }
-                candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
             }
         }
         candidates
+    }
+
+    /// Builds a date entity for a single regex match, or None when the span is rejected.
+    fn date_candidate(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        m_start: usize,
+        m_end: usize,
+    ) -> Option<Entity> {
+        let (start, end) = self.date_span(text, m_start, m_end, spec)?;
+        let span = &text[start..end];
+        // Marker must be within the window before the date or within 20 chars after it
+        // (e.g. "10.02.1982 года рождения", "06.06.1988 г.р.").
+        let before = context_window_before(text, start, spec.context_window).to_lowercase();
+        let after = context_window_after(text, end, 20).to_lowercase();
+        let has_marker = spec.context_words.iter().any(|w| before.contains(w) || after.contains(w));
+        if !has_marker {
+            return None;
+        }
+        if date_in_future(span) {
+            return None;
+        }
+        let mut conf = 0.6f32;
+        if age_exceeds(span, self.historical_date_years) {
+            conf -= 0.3;
+        }
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
     }
 
     /// Extends a date span with a trailing suffix (e.g. " г.", " года"). Returns None when the
@@ -1429,36 +1430,49 @@ impl Detector {
                 j += 1;
             }
             let group = &comps[i..j];
-            let count = group.len();
-            if count >= 2 {
-                let start = group[0].0;
-                let end = group[group.len() - 1].1;
-                // A full address by structure (city + street + house, or street + house +
-                // apartment) is confident on its own (0.7) without a marker. Only a non-pii
-                // marker (отделение, офис...) lowers it.
-                let is_full = self.is_full_address(text, group);
-                let mut conf: f32 = if is_full { 0.7 } else { 0.5 };
-                // The nearest marker to the left decides whether this is a personal address
-                // (pii marker) or an organization address (non-pii marker). No marker -> the
-                // address keeps its structural confidence (full 0.7, other 0.5).
-                match self.nearest_address_marker(text, start, spec) {
-                    Some(true) => conf += 0.3,
-                    Some(false) => conf -= if is_full { 0.5 } else { 0.3 },
-                    None => {}
-                }
-                // An organization near the address is a negative signal.
-                let non_pii = self.effective_non_pii_markers(spec);
-                if self.allowlist.org_near(text, start, end, 60, &non_pii) {
-                    conf -= 0.3;
-                }
-                conf = conf.clamp(0.0, 1.0);
-                if passes_threshold(conf, opts) {
-                    candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+            if group.len() >= 2 {
+                if let Some(e) = self.address_group_candidate(text, opts, spec, group) {
+                    candidates.push(e);
                 }
             }
             i = j;
         }
         candidates
+    }
+
+    /// Builds an address entity for a group of adjacent components, or None when rejected.
+    fn address_group_candidate(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        group: &[(usize, usize)],
+    ) -> Option<Entity> {
+        let start = group[0].0;
+        let end = group[group.len() - 1].1;
+        // A full address by structure (city + street + house, or street + house +
+        // apartment) is confident on its own (0.7) without a marker. Only a non-pii
+        // marker (отделение, офис...) lowers it.
+        let is_full = self.is_full_address(text, group);
+        let mut conf: f32 = if is_full { 0.7 } else { 0.5 };
+        // The nearest marker to the left decides whether this is a personal address
+        // (pii marker) or an organization address (non-pii marker). No marker -> the
+        // address keeps its structural confidence (full 0.7, other 0.5).
+        match self.nearest_address_marker(text, start, spec) {
+            Some(true) => conf += 0.3,
+            Some(false) => conf -= if is_full { 0.5 } else { 0.3 },
+            None => {}
+        }
+        // An organization near the address is a negative signal.
+        let non_pii = self.effective_non_pii_markers(spec);
+        if self.allowlist.org_near(text, start, end, 60, &non_pii) {
+            conf -= 0.3;
+        }
+        conf = conf.clamp(0.0, 1.0);
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
     }
 
     /// True if an address group is a full address by structure: city + street + house, or
@@ -1583,7 +1597,19 @@ impl Detector {
     /// or after a card number. The marker may be followed by an optional ':' or '—'.
     fn detect_card_holder(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
-        // Marker-anchored: a name right after a card-holder marker.
+        self.card_holder_from_markers(text, opts, spec, &mut candidates);
+        self.card_holder_from_card_number(text, opts, spec, &mut candidates);
+        candidates
+    }
+
+    /// Marker-anchored card holders: a name right after a card-holder marker.
+    fn card_holder_from_markers(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        candidates: &mut Vec<Entity>,
+    ) {
         let lower = text.to_lowercase();
         for marker in &spec.context_words {
             let mut search_from = 0;
@@ -1594,27 +1620,29 @@ impl Detector {
                     // Cyrillic name (e.g. "Наталья Чернецкий"). A Latin title-case name after
                     // "держатель" (e.g. "Theodore Weaver") is a generic FIO, not a card holder.
                     if is_card_holder_name(&text[start..end]) {
-                        let conf = 0.8f32;
-                        if conf >= opts.min_confidence {
-                            candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
-                        }
+                        push_card_holder(candidates, spec, start, end, opts);
                     }
                 }
                 search_from = marker_end;
             }
         }
-        // Card-number fallback: a name right after a card number.
+    }
+
+    /// Card-number fallback: a name right after a card number.
+    fn card_holder_from_card_number(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        candidates: &mut Vec<Entity>,
+    ) {
         for m in CARD_HOLDER_NAME_RE.find_iter(text) {
             let start = m.start();
             let end = m.end();
             if self.card_number_before_within(text, start, 60) && is_card_holder_name(&text[start..end]) {
-                let conf = 0.8f32;
-                if conf >= opts.min_confidence {
-                    candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
-                }
+                push_card_holder(candidates, spec, start, end, opts);
             }
         }
-        candidates
     }
 
     fn card_number_before_within(&self, text: &str, start: usize, window: usize) -> bool {
@@ -2012,6 +2040,20 @@ fn context_window_after(text: &str, end: usize, window: usize) -> &str {
     }
 }
 
+/// True when the trimmed text between a pin/cvv marker and the value is a valid
+/// separator: empty, ":", "-", "=", the word "код", or the glued form "-код" / "-код:"
+/// (e.g. "CVV-код 317", "CVC-код: 123").
+fn is_pin_separator(trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || trimmed == ":"
+        || trimmed == "-"
+        || trimmed == "="
+        || trimmed == "код"
+        || trimmed == "-код"
+        || trimmed == "-код:"
+        || trimmed == "код:"
+}
+
 /// Sorts by start; on overlap keeps the longer span, ties broken by higher confidence.
 fn resolve_overlaps(mut candidates: Vec<Entity>) -> Vec<Entity> {
     candidates.sort_by(|a, b| {
@@ -2024,24 +2066,7 @@ fn resolve_overlaps(mut candidates: Vec<Entity>) -> Vec<Entity> {
     for c in candidates {
         if let Some(last) = result.last_mut() {
             if c.start < last.end {
-                let c_len = c.end - c.start;
-                let l_len = last.end - last.start;
-                let replace = if c_len > l_len {
-                    true
-                } else if c_len == l_len {
-                    // A card holder beats a generic FIO on the same span: the name is anchored
-                    // to a card-holder marker or a card number, so it is a card holder, not a FIO.
-                    if (c.type_id == "card_holder" && last.type_id == "fio")
-                        || (last.type_id == "card_holder" && c.type_id == "fio")
-                    {
-                        c.type_id == "card_holder"
-                    } else {
-                        c.confidence > last.confidence
-                    }
-                } else {
-                    false
-                };
-                if replace {
+                if should_replace_overlap(last, &c) {
                     *last = c;
                 }
                 continue;
@@ -2050,6 +2075,26 @@ fn resolve_overlaps(mut candidates: Vec<Entity>) -> Vec<Entity> {
         result.push(c);
     }
     result
+}
+
+/// True when the incoming candidate should replace the current last span on overlap.
+fn should_replace_overlap(last: &Entity, c: &Entity) -> bool {
+    let c_len = c.end - c.start;
+    let l_len = last.end - last.start;
+    if c_len > l_len {
+        return true;
+    }
+    if c_len < l_len {
+        return false;
+    }
+    // A card holder beats a generic FIO on the same span: the name is anchored
+    // to a card-holder marker or a card number, so it is a card holder, not a FIO.
+    if (c.type_id == "card_holder" && last.type_id == "fio")
+        || (last.type_id == "card_holder" && c.type_id == "fio")
+    {
+        return c.type_id == "card_holder";
+    }
+    c.confidence > last.confidence
 }
 
 /// Extracts the place after a birth marker, up to end of sentence / comma / period.
@@ -2235,6 +2280,14 @@ if c.is_alphabetic() {
         }
     }
     has_alpha && (has_cyrillic || !has_latin_lower)
+}
+
+/// Pushes a card-holder entity when the fixed confidence passes the threshold.
+fn push_card_holder(candidates: &mut Vec<Entity>, spec: &TypeSpec, start: usize, end: usize, opts: &DetectOptions<'_>) {
+    let conf = 0.8f32;
+    if conf >= opts.min_confidence {
+        candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+    }
 }
 
 /// End offset of an issuer phrase: stops at a comma, semicolon, newline, a sentence-ending

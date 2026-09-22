@@ -363,41 +363,47 @@ async fn process_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(outcome) => {
-            if outcome.payload_bytes > 0 {
-                record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
-            }
-            if outcome.direction == Direction::Mask {
-                if outcome.is_fresh_mask {
-                    record_entities_per_request(outcome.entity_count);
-                    if outcome.entity_count == 0 {
-                        metrics::counter!("pii_requests_without_entities_total", "system" => sys.id.clone())
-                            .increment(1);
-                    }
-                }
-                if outcome.is_retry {
-                    metrics::counter!("pii_process_retry_total", "system" => sys.id.clone()).increment(1);
-                }
-            } else {
-                record_unresolved(&sys.id, outcome.unresolved_tokens);
-            }
-            log_request(&rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, latency, 200);
-            finish_response(
-                &rid,
-                &sys,
-                outcome.direction,
-                latency,
-                200,
-                &outcome.entity_types,
-                Json(outcome.resp).into_response(),
-            )
-        }
-        Err(resp) => {
-            let status = resp.status();
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
-            finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
-        }
+        Ok(outcome) => process_success(&rid, &sys, latency, outcome),
+        Err(resp) => process_error(&rid, &sys, latency, *resp),
     }
+}
+
+/// Emits per-branch metrics and the success response for a /process outcome.
+fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: ProcessOutcome) -> Response {
+    if outcome.payload_bytes > 0 {
+        record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
+    }
+    if outcome.direction == Direction::Mask {
+        if outcome.is_fresh_mask {
+            record_entities_per_request(outcome.entity_count);
+            if outcome.entity_count == 0 {
+                metrics::counter!("pii_requests_without_entities_total", "system" => sys.id.clone())
+                    .increment(1);
+            }
+        }
+        if outcome.is_retry {
+            metrics::counter!("pii_process_retry_total", "system" => sys.id.clone()).increment(1);
+        }
+    } else {
+        record_unresolved(&sys.id, outcome.unresolved_tokens);
+    }
+    log_request(rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, latency, 200);
+    finish_response(
+        rid,
+        sys,
+        outcome.direction,
+        latency,
+        200,
+        &outcome.entity_types,
+        Json(outcome.resp).into_response(),
+    )
+}
+
+/// Emits the error response for a /process failure.
+fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response) -> Response {
+    let status = resp.status();
+    log_request(rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
+    finish_response(rid, sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), resp)
 }
 
 /// Parses the /process body and runs the mask/unmask/retry decision tree.

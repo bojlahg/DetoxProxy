@@ -611,6 +611,13 @@ allowlist_file: data/allowlist.yaml
     let (st, body) = get(&base, "/metrics").await;
     assert_eq!(st, 200);
 
+    assert_metric_names(&body);
+    assert_metric_values(&body);
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+/// Asserts that all expected metric names are present in the metrics body.
+fn assert_metric_names(body: &str) {
     for name in [
         "pii_payload_bytes",
         "pii_entities_per_request",
@@ -621,7 +628,10 @@ allowlist_file: data/allowlist.yaml
     ] {
         assert!(body.contains(name), "missing {name} in metrics: {body}");
     }
+}
 
+/// Asserts that the expected metric values are present in the metrics body.
+fn assert_metric_values(body: &str) {
     assert!(
         body.contains("pii_requests_without_entities_total{system=\"metrics-test\"} 1"),
         "metrics: {body}"
@@ -638,8 +648,6 @@ allowlist_file: data/allowlist.yaml
         body.contains("pii_unmask_requests_with_unresolved_total{system=\"metrics-test\"} 1"),
         "metrics: {body}"
     );
-
-    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
 }
 
 #[tokio::test]

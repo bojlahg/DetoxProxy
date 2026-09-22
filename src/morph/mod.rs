@@ -587,15 +587,8 @@ fn inflect_name(word: &str, gender: Gender, case: Case) -> Option<String> {
     if case == Case::Nom {
         return Some(word.to_string());
     }
-    for (nom, table) in M_NAME_EXC {
-        if word == nom {
-            return Some(table[case_index(case)].to_string());
-        }
-    }
-    for (nom, table) in F_NAME_EXC {
-        if word == nom {
-            return Some(table[case_index(case)].to_string());
-        }
+    if let Some(inflected) = name_exception(word, case) {
+        return Some(inflected);
     }
     if word.ends_with("ия") && word.len() > 2 {
         return inflect_word(word, &NAME_IYA, case);
@@ -614,6 +607,21 @@ fn inflect_name(word: &str, gender: Gender, case: Case) -> Option<String> {
     }
     if word.ends_with(is_consonant) {
         return inflect_word(word, &M_NAME_CONS, case);
+    }
+    None
+}
+
+/// Looks up a given name in the male/female exception tables.
+fn name_exception(word: &str, case: Case) -> Option<String> {
+    for (nom, table) in M_NAME_EXC {
+        if word == nom {
+            return Some(table[case_index(case)].to_string());
+        }
+    }
+    for (nom, table) in F_NAME_EXC {
+        if word == nom {
+            return Some(table[case_index(case)].to_string());
+        }
     }
     None
 }
@@ -638,28 +646,42 @@ fn inflect_patronymic(word: &str, case: Case) -> Option<String> {
 
 /// Determine gender from normalized patronymics and given names.
 fn gender_of_normalized(normalized: &[String], is_patr: &[bool], is_name: &[bool]) -> Gender {
+    if let Some(g) = gender_from_patronymics(normalized, is_patr) {
+        return g;
+    }
+    gender_from_names(normalized, is_name)
+}
+
+/// Gender from a patronymic suffix ("ович"/"евич"/"ич" male, "овна"/"евна"/"ична"/"инична" female).
+fn gender_from_patronymics(normalized: &[String], is_patr: &[bool]) -> Option<Gender> {
     for (i, w) in normalized.iter().enumerate() {
-        if is_patr[i] {
-            if w.ends_with("ович") || w.ends_with("евич") || w.ends_with("ич") {
-                return Gender::Male;
-            }
-            if w.ends_with("овна") || w.ends_with("евна") || w.ends_with("ична")
-                || w.ends_with("инична")
-            {
-                return Gender::Female;
-            }
+        if !is_patr[i] {
+            continue;
+        }
+        if w.ends_with("ович") || w.ends_with("евич") || w.ends_with("ич") {
+            return Some(Gender::Male);
+        }
+        if w.ends_with("овна") || w.ends_with("евна") || w.ends_with("ична") || w.ends_with("инична") {
+            return Some(Gender::Female);
         }
     }
+    None
+}
+
+/// Gender from a given name: male names in `MALE_A_NAMES`, names ending in 'а'/'я' female,
+/// otherwise male.
+fn gender_from_names(normalized: &[String], is_name: &[bool]) -> Gender {
     for (i, w) in normalized.iter().enumerate() {
-        if is_name[i] {
-            if MALE_A_NAMES.contains(&w.as_str()) {
-                return Gender::Male;
-            }
-            if w.ends_with('а') || w.ends_with('я') {
-                return Gender::Female;
-            }
+        if !is_name[i] {
+            continue;
+        }
+        if MALE_A_NAMES.contains(&w.as_str()) {
             return Gender::Male;
         }
+        if w.ends_with('а') || w.ends_with('я') {
+            return Gender::Female;
+        }
+        return Gender::Male;
     }
     Gender::Unknown
 }
