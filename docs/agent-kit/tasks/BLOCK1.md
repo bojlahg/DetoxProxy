@@ -731,3 +731,23 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Файлы: src/llm/mod.rs (новый), src/lib.rs, src/server/mod.rs, src/config/mod.rs (блок llm, default — демо), tests/llm.rs, Cargo.toml (только если нужна фича зависимости). Каталог logs/ не трогай. После плана сразу пиши код.
 </task>
+
+<task id="T22">
+Привет. Рефакторинг без изменения поведения — автопроверка кода жюри (Sonar) снимает баллы за сложные и длинные функции. Только src/server/mod.rs и src/mask/mod.rs.
+
+Цели (clippy): когнитивная сложность каждой функции ≤ 10, длина ≤ 80 строк. Сейчас выше:
+- src/mask/mod.rs:75 `mask_with_seed` — сложность 12, 108 строк;
+- src/server/mod.rs:314 (158 строк), :484 (102 строки), :720 (108 строк), :967 (сложность 12).
+
+Как: выносить шаги в отдельные функции с понятными именами (разбор запроса, выбор системы, поиск в store, маскирование, запись метрик, ответ); повторяющиеся блоки обработчиков /process, /v1/mask, /v1/detect — в общую функцию (DRY); глубокую вложенность `match`/`if` — ранними `return` / `?`. Публичные сигнатуры (`pub fn` в lib) не менять. Поведение не менять ни на байт: все существующие тесты — без правок.
+
+Добавь в корень clippy.toml:
+```
+cognitive-complexity-threshold = 10
+too-many-lines-threshold = 80
+```
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo clippy --lib -- -W clippy::cognitive_complexity -W clippy::too_many_lines 2>&1 | (! grep -E "src.(server|mask).mod.rs") && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21,22,23`.
+
+Файлы: src/server/mod.rs, src/mask/mod.rs, clippy.toml (новый). Тесты не трогать. Каталог logs/ не трогай. После плана сразу пиши код.
+</task>
