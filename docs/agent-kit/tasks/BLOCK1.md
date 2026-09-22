@@ -700,3 +700,34 @@ pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: Mask
 
 Файлы: только tests/unicode_safety.rs. Код продукта не менять: если тест находит панику — остановись и опиши её в REPORT.md (текст-пример и строку паники), не чини. Каталог logs/ не трогай.
 </task>
+
+<task id="T21">
+Привет. Сквозной сценарий для жюри: OpenAI-совместимый прокси к LLM. Новый модуль src/llm/mod.rs + маршрут в src/server/mod.rs.
+
+`POST /v1/chat/completions`, тело — как у OpenAI (`model`, `messages: [{role, content}]`, `stream` опционально, остальные поля пробрасываются как есть через `serde_json::Value`).
+
+1. Маскирование: `content` каждого сообщения маскируется детектором системы (X-System-Id, как в /process); все сообщения одного запроса — одна таблица соответствий (одинаковое значение → один токен во всех сообщениях). Хранить в store под ключом `store_key(system, "chat:" + request_id)`, TTL обычный.
+2. Upstream задаётся в config.yaml новым блоком (все поля опциональны):
+   ```yaml
+   llm:
+     upstream_url: "https://.../v1/chat/completions"   # нет → демо-режим
+     api_key_env: "DETOX_LLM_API_KEY"                  # имя переменной окружения с ключом
+     timeout_ms: 60000
+   ```
+   Ключ читается из переменной окружения, никогда не логируется и не попадает в ответы/ошибки.
+3. Запрос в upstream: reqwest, тело с замаскированными messages, `stream: true` всегда (некоторые upstream принимают только stream). Ответ SSE (`data: {...}` и `data:{...}` — оба варианта, `data: [DONE]`) собрать в текст из `choices[0].delta.content`.
+4. Демо-режим (upstream не задан): ответ LLM имитируется — «Принято. Запрос по клиенту обработан: » + все токены из запроса через запятую. Так видно, что токены доходят и восстанавливаются.
+5. Ответ клиенту: текст модели демаскируется (`unmask` с таблицей этого запроса). Если клиент просил `stream: true` — отдать SSE с одним чанком `delta.content` и `[DONE]`; иначе обычный JSON `{"id","object":"chat.completion","model","choices":[{"index":0,"message":{"role":"assistant","content":...},"finish_reason":"stop"}]}`.
+6. В ответ добавить заголовок `X-Detox-Masked-Entities: <число>`. В лог — только число сущностей по типам, длины, статус upstream; никаких текстов.
+7. Ошибка upstream (таймаут, не-200) → 502 `{"error":{"message":"upstream error","type":"upstream"}}` без деталей тела upstream.
+
+Тесты в tests/llm.rs:
+- демо-режим: messages с «Клиент Иванов Иван Иванович, ИНН 7707083893» → в ответе исходные значения восстановлены, заголовок X-Detox-Masked-Entities ≥ 2;
+- фейковый upstream: поднять в тесте свой axum-сервер на 127.0.0.1:0, который проверяет, что в полученном теле НЕТ «7707083893» и «Иванов», и отвечает SSE с чанками, содержащими токены из запроса (эхо) → клиент получает исходные значения; проверить оба формата `data:{` и `data: {`;
+- upstream отвечает 500 → клиент получает 502 без текста upstream;
+- stream: true у клиента → ответ SSE с `[DONE]`.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21`.
+
+Файлы: src/llm/mod.rs (новый), src/lib.rs, src/server/mod.rs, src/config/mod.rs (блок llm, default — демо), tests/llm.rs, Cargo.toml (только если нужна фича зависимости). Каталог logs/ не трогай. После плана сразу пиши код.
+</task>
