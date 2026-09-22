@@ -1,0 +1,72 @@
+# --- Rust ---
+target/
+**/*.rs.bk
+*.pdb
+
+# --- Go ---
+*.test
+*.out
+/vendor/
+
+# --- Build outputs and binaries ---
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+bakeoff/c/proxy
+bakeoff/c/proxy-asan
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- Checker and load-test artifacts ---
+check-config.yaml
+check-result.json
+proxy.log
+*.log
+*.accept.log
+
+# --- Agent session logs (raw OpenCode event streams; summaries live in RESULTS.md and runs.jsonl) ---
+bakeoff/logs/*.jsonl
+tools/logs/*.jsonl
+logs/*.jsonl
+!bakeoff/logs/runs.jsonl
+!tools/logs/runs.jsonl
+!logs/runs.jsonl
+*.err
+
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+auth.json
+**/secrets/
+
+# --- Local agent and editor state ---
+.opencode/
+.kilo/
+.kilocode/
+.claude/
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- OS ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Docker and runtime data ---
+**/grafana-data/
+**/prometheus-data/
+**/redis-data/

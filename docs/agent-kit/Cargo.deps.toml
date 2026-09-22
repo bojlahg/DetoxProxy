@@ -1,0 +1,41 @@
+# Verified 2026-09-22 on rustc 1.98.1 (x86_64-pc-windows-msvc): cargo check, clippy -D warnings, build --release all pass.
+# Copy this block into Cargo.toml as is. Do not change versions or features without an explicit task.
+
+[dependencies]
+anyhow = "1.0.104"
+arc-swap = "1.9.2"
+axum = "0.8"
+bytes = "1.12.1"
+dashmap = "6.2.1"
+deadpool-redis = "0.23.1"
+futures-util = "0.3.34"
+governor = "0.10.4"
+hyper = "1"
+metrics = "0.24.6"
+metrics-exporter-prometheus = "0.18.3"
+mimalloc = "0.1.52"
+moka = { version = "0.12.16", features = ["future"] }
+notify = "8.2.0"
+redis = { version = "1.7.0", features = ["tokio-comp", "script"] }
+reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "http2", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+serde_yaml_ng = "0.10.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-stream = "0.1.19"
+tokio-util = { version = "0.7.19", features = ["io"] }
+tower-http = { version = "0.7", features = ["trace", "timeout"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+regex = "1"
+once_cell = "1"
+unicode-segmentation = "1"
+rand = "0.8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = true

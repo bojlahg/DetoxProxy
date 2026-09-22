@@ -1,0 +1,11 @@
+{"stack": "go", "round": 1, "exit": 0, "seconds": 94}
+{"stack": "rust", "round": 1, "exit": 0, "seconds": 180}
+{"stack": "c", "round": 1, "exit": 0, "seconds": 747}
+{"stack": "go", "round": 2, "exit": 0, "seconds": 201}
+{"dir": "_selftest", "round": 1, "verdict": "PASS", "stop": "exit", "agent_exit": 0, "steps": 2, "accept_exit": "0", "tampered": 0, "seconds": 10, "session": "ses_f3abbb45affecGvFBOLHh0vu6W"}
+{"dir": "_selftest", "round": 2, "verdict": "ACCEPT_FAILED", "stop": "exit", "agent_exit": 0, "steps": 2, "accept_exit": "1", "tampered": 0, "seconds": 11, "session": "ses_f3abb88f6ffewzRDIGJPO1Aaj3"}
+{"dir": "_selftest", "round": 3, "verdict": "PROTECTED_FILE_CHANGED", "stop": "exit", "agent_exit": 0, "steps": 4, "accept_exit": "0", "tampered": 1, "seconds": 10, "session": "ses_f3abb6117ffevR5eje1XPG2W1H"}
+{"dir": "_selftest", "round": 4, "verdict": "PASS_AGENT_INTERRUPTED", "stop": "timeout_0m", "agent_exit": -1, "steps": 1, "accept_exit": "0", "tampered": 0, "seconds": 5, "session": "ses_f3abb37b5ffeW49aI47bK2vp2M"}
+{"dir": "_selftest", "round": 5, "verdict": "PASS_AGENT_INTERRUPTED", "stop": "timeout_0m", "agent_exit": -1, "steps": 1, "accept_exit": "0", "tampered": 0, "seconds": 5, "session": "ses_f3aba8f6affeaRyNUcHoE3xHBR"}
+{"dir": "gittest2", "round": 1, "verdict": "AGENT_COMMITTED", "stop": "exit", "agent_exit": 0, "steps": 3, "accept_exit": "0", "tampered": 0, "agent_committed": 1, "seconds": 10, "session": "ses_f3aa89c42ffeBZtOoc5pcjN47p"}
+{"dir": "gittest2", "round": 2, "verdict": "PASS", "stop": "exit", "agent_exit": 0, "steps": 3, "accept_exit": "0", "tampered": 0, "agent_committed": 0, "seconds": 15, "session": "ses_f3aa872d2ffeEAnQtiGktj1kW3"}
