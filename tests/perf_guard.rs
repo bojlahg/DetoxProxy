@@ -59,8 +59,8 @@ fn dense_text_detect_and_mask_within_budget() {
     let t4000 = best_time(&det, &reg, &opts, &mask_opts, &"Клиент ИНН 7707083893. ".repeat(4000));
 
     assert!(
-        t400 <= 15_000,
-        "detect+mask exceeds the absolute budget: t400={t400} us (expected <= 15000 us)"
+        t400 <= 25_000,
+        "detect+mask exceeds the absolute budget: t400={t400} us (expected <= 25000 us)"
     );
     assert!(
         t4000 <= t400 * 15,

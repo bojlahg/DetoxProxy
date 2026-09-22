@@ -161,6 +161,9 @@ pub struct Detector {
     marker_re: Option<Regex>,
     /// Maps a lowercase marker word to the type id it belongs to.
     marker_type_of: HashMap<String, String>,
+    /// Regex of the fio type's context words (клиент, фио, гр., заявитель...), used as an
+    /// anchor for detecting lowercase (chat-style) FIOs.
+    fio_marker_re: Option<Regex>,
     /// Lowercased context words of every registry type except `address`, plus the document
     /// markers. A "word number" address component whose word is in this set is not a street
     /// (e.g. "Паспорт 4509", "Карта 4276", "Телефон 8..."). Built once at construction.
@@ -230,10 +233,27 @@ fn build_non_address_context_words(registry: &Registry) -> HashSet<String> {
     set
 }
 
+/// Builds a regex matching the fio type's context words (клиент, фио, гр., заявитель...)
+/// as standalone words. Used as an anchor for detecting lowercase (chat-style) FIOs.
+fn build_fio_marker_re(registry: &Registry) -> Option<Regex> {
+    let spec = registry.get("fio")?;
+    let words: Vec<String> = spec.context_words.iter().map(|w| regex::escape(w)).collect();
+    if words.is_empty() {
+        return None;
+    }
+    let alt = words.join("|");
+    RegexBuilder::new(&format!(r"\b(?:{})\b", alt))
+        .case_insensitive(true)
+        .unicode(true)
+        .build()
+        .ok()
+}
+
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
         let (marker_re, marker_type_of) = build_marker_map(&registry);
         let non_address_context_words = build_non_address_context_words(&registry);
+        let fio_marker_re = build_fio_marker_re(&registry);
         Self {
             registry,
             dicts,
@@ -241,6 +261,7 @@ impl Detector {
             allowlist: std::sync::Arc::new(Allowlist::empty()),
             marker_re,
             marker_type_of,
+            fio_marker_re,
             non_address_context_words,
         }
     }
@@ -253,6 +274,7 @@ impl Detector {
     ) -> Self {
         let (marker_re, marker_type_of) = build_marker_map(&registry);
         let non_address_context_words = build_non_address_context_words(&registry);
+        let fio_marker_re = build_fio_marker_re(&registry);
         Self {
             registry,
             dicts,
@@ -260,6 +282,7 @@ impl Detector {
             allowlist: std::sync::Arc::new(allowlist),
             marker_re,
             marker_type_of,
+            fio_marker_re,
             non_address_context_words,
         }
     }
@@ -633,7 +656,168 @@ impl Detector {
                 }
             }
         }
+        // Lowercase (chat-style) FIOs via cheap anchors: a patronymic-suffixed word or a
+        // FIO marker. This avoids tokenizing every word of the text, keeping large prose fast.
+        self.detect_lowercase_fio(text, opts, spec, &mut candidates);
         candidates
+    }
+
+    /// Detects lowercase (chat-style) FIOs from two cheap anchors, without tokenizing every
+    /// word of the text:
+    /// - a lowercase word ending in a patronymic suffix (ович, евич, ич, овна, евна, ична,
+    ///   инична) -> the 3-word rule ("Ф И О" or "И О Ф");
+    /// - a FIO marker (клиент, фио, гр., заявитель...) -> the 2-word rule (surname + first
+    ///   name in any order).
+    fn detect_lowercase_fio(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        candidates: &mut Vec<Entity>,
+    ) {
+        // Anchor 1: a lowercase word ending in a patronymic suffix.
+        for m in LOWERCASE_PATRONYMIC_RE.find_iter(text) {
+            if let Some((start, end)) = self.lowercase_fio_patronymic(text, opts, spec, m.start(), m.end()) {
+                if let Some(e) = self.fio_lowercase_entity(text, opts, spec, start, end, 3) {
+                    candidates.push(e);
+                }
+            }
+        }
+        // Anchor 2: a FIO marker followed by two lowercase words (surname + first name).
+        if let Some(re) = &self.fio_marker_re {
+            for m in re.find_iter(text) {
+                if let Some((start, end)) = self.lowercase_fio_marker(text, opts, spec, m.end()) {
+                    if let Some(e) = self.fio_lowercase_entity(text, opts, spec, start, end, 2) {
+                        candidates.push(e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handles the patronymic anchor: "Ф И О" (two words to the left) or "И О Ф" (one word
+    /// to the left, one to the right). Returns the validated span, or None when rejected.
+    fn lowercase_fio_patronymic(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        patr_start: usize,
+        patr_end: usize,
+    ) -> Option<(usize, usize)> {
+        let patronymic = &text[patr_start..patr_end];
+        // "Ф И О": two words to the left (surname, first name).
+        if let (Some((s_start, s_end)), Some((f_start, f_end))) = (
+            word_before(text, patr_start).and_then(|(a, _)| word_before(text, a)),
+            word_before(text, patr_start),
+        ) {
+            let surname = &text[s_start..s_end];
+            let first = &text[f_start..f_end];
+            if is_lowercase_word(surname)
+                && is_lowercase_word(first)
+                && self.fio_lowercase_valid(spec, &[surname, first, patronymic])
+            {
+                return Some((s_start, patr_end));
+            }
+        }
+        // "И О Ф": one word to the left (first name), one to the right (surname).
+        if let (Some((f_start, f_end)), Some((s_start, s_end))) =
+            (word_before(text, patr_start), word_after(text, patr_end))
+        {
+            let first = &text[f_start..f_end];
+            let surname = &text[s_start..s_end];
+            if is_lowercase_word(first)
+                && is_lowercase_word(surname)
+                && self.fio_lowercase_valid(spec, &[first, patronymic, surname])
+            {
+                return Some((f_start, s_end));
+            }
+        }
+        None
+    }
+
+    /// Handles the marker anchor: two lowercase words (surname + first name) after a FIO
+    /// marker. Returns the validated span, or None when rejected.
+    fn lowercase_fio_marker(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        marker_end: usize,
+    ) -> Option<(usize, usize)> {
+        if let Some((w1s, w1e)) = word_after(text, marker_end) {
+            if let Some((w2s, w2e)) = word_after(text, w1e) {
+                let w1 = &text[w1s..w1e];
+                let w2 = &text[w2s..w2e];
+                if is_lowercase_word(w1)
+                    && is_lowercase_word(w2)
+                    && self.fio_lowercase_valid(spec, &[w1, w2])
+                {
+                    return Some((w1s, w2e));
+                }
+            }
+        }
+        None
+    }
+
+    /// Context and confidence checks for a validated lowercase FIO span.
+    fn fio_lowercase_entity(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        start: usize,
+        end: usize,
+        comps: usize,
+    ) -> Option<Entity> {
+        let span = &text[start..end];
+        let first_word = span.split_whitespace().next().unwrap_or("");
+        let has_pii = self.has_pii_context(text, start, end, spec);
+        let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
+        // A leading word that is itself a non-PII marker (e.g. "роман толстого") counts as
+        // non-PII context even though it is inside the span.
+        if !has_non_pii {
+            let non_pii = self.effective_non_pii_markers(spec);
+            if non_pii.iter().any(|m| m == first_word) {
+                has_non_pii = true;
+            }
+        }
+        // Non-PII marker without PII marker suppresses the candidate.
+        if has_non_pii && !has_pii {
+            return None;
+        }
+        // A name in guillemets after a brand marker is a brand name, not a FIO.
+        if in_guillemets(text, start, end) && self.has_brand_marker_before(text, start) {
+            return None;
+        }
+        let conf = self.fio_lowercase_confidence(span, opts, comps, has_pii, has_non_pii);
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
+    }
+
+    /// Confidence for a validated lowercase FIO span: same as the capitalized form (0.6 for
+    /// three words, 0.7 for a two-word surname + first name), plus marker adjustment and the
+    /// allow-list penalty.
+    fn fio_lowercase_confidence(
+        &self,
+        span: &str,
+        opts: &DetectOptions<'_>,
+        comps: usize,
+        has_pii: bool,
+        has_non_pii: bool,
+    ) -> f32 {
+        let mut conf: f32 = match comps {
+            3 => 0.6,
+            _ => 0.7,
+        };
+        conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
+        let span_words = normalize_name_words(span);
+        if self.allowlist.matches_person_subset(&span_words) {
+            conf -= 0.3;
+        }
+        conf.clamp(0.0, 1.0)
     }
 
     /// Builds a FIO candidate from a Latin patronymic pattern match, or None when rejected.
@@ -777,6 +961,27 @@ impl Detector {
         let start = window[0].start;
         let end = window[window.len() - 1].end;
         Some((start, end, comps))
+    }
+
+    /// True if the given lowercase words form a valid lowercase FIO. Two words: a surname
+    /// and a first name in any order (the FIO marker is guaranteed by the caller's anchor).
+    /// Three words: surname + first name + patronymic in "Ф И О" or "И О Ф" order.
+    fn fio_lowercase_valid(&self, spec: &TypeSpec, words: &[&str]) -> bool {
+        match words.len() {
+            2 => {
+                let has_surname = words.iter().any(|w| self.dicts.contains("surnames", w));
+                let has_first = words.iter().any(|w| self.dicts.contains("first_names", w));
+                has_surname && has_first
+            }
+            3 => {
+                let is_surname = |w: &str| self.dicts.contains("surnames", w);
+                let is_first = |w: &str| self.dicts.contains("first_names", w);
+                let is_patr = |w: &str| self.dicts.contains("patronymics", w);
+                (is_surname(words[0]) && is_first(words[1]) && is_patr(words[2]))
+                    || (is_first(words[0]) && is_patr(words[1]) && is_surname(words[2]))
+            }
+            _ => false,
+        }
     }
 
     /// PII / non-PII context flags for a FIO window.
@@ -2153,6 +2358,46 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
         });
     }
     out
+}
+
+/// Matches a lowercase word ending in a patronymic suffix (ович, евич, ич, овна, евна,
+/// ична, инична). Used as a cheap anchor for detecting lowercase (chat-style) FIOs.
+static LOWERCASE_PATRONYMIC_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\b[а-яё]+(?:ович|евич|ич|овна|евна|ична|инична)\b").unwrap()
+});
+
+/// True if the word starts with a lowercase letter (so it is a lowercase word).
+fn is_lowercase_word(w: &str) -> bool {
+    w.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+}
+
+/// Returns the byte range of the word immediately before `pos`, or None when there is none.
+fn word_before(text: &str, pos: usize) -> Option<(usize, usize)> {
+    let prefix = &text[..pos];
+    let trimmed = prefix.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let word_end = trimmed.len();
+    let word_start = trimmed
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    Some((word_start, word_end))
+}
+
+/// Returns the byte range of the word immediately after `pos`, or None when there is none.
+fn word_after(text: &str, pos: usize) -> Option<(usize, usize)> {
+    let rest = &text[pos..];
+    let trimmed = rest.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let word_start = pos + (rest.len() - trimmed.len());
+    let word_end = word_start + trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    Some((word_start, word_end))
 }
 
 /// True if two name tokens are separated only by spaces, or by a period that follows a

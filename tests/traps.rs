@@ -595,3 +595,62 @@ fn resident_address_kept() {
     let entities = detect("Проживает: г. Казань, ул. Баумана, д. 14, кв. 8", TrapPolicy::PreferMask);
     assert!(has_type(&entities, "address"), "address should be found: {:?}", entities);
 }
+
+#[test]
+fn lowercase_full_fio_masked() {
+    let entities = detect("иванов иван иванович, тел 89123456789", TrapPolicy::PreferMask);
+    assert_eq!(
+        span_of("иванов иван иванович, тел 89123456789", &entities, "fio"),
+        Some("иванов иван иванович"),
+        "lowercase full fio should be found: {:?}",
+        entities
+    );
+    assert!(has_type(&entities, "phone"), "phone should be found: {:?}", entities);
+}
+
+#[test]
+fn lowercase_full_fio_with_marker_masked() {
+    let entities = detect("клиент петрова анна сергеевна просит перезвонить.", TrapPolicy::PreferMask);
+    assert_eq!(
+        span_of("клиент петрова анна сергеевна просит перезвонить.", &entities, "fio"),
+        Some("петрова анна сергеевна"),
+        "lowercase full fio with marker should be found: {:?}",
+        entities
+    );
+}
+
+#[test]
+fn lowercase_two_word_fio_with_marker_masked() {
+    let entities = detect("клиент петров иван оставил заявку.", TrapPolicy::PreferMask);
+    assert_eq!(
+        span_of("клиент петров иван оставил заявку.", &entities, "fio"),
+        Some("петров иван"),
+        "lowercase two-word fio with marker should be found: {:?}",
+        entities
+    );
+}
+
+#[test]
+fn lowercase_first_patronymic_without_marker_not_masked() {
+    let entities = detect("иван иванович сказал, что перезвонит", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "fio"), "first+patronymic without marker must not be a fio: {:?}", entities);
+}
+
+#[test]
+fn lowercase_common_words_not_masked() {
+    let cases = [
+        "роман толстого мы читали в школе",
+        "вера в победу и надежда на лучшее",
+        "любовь к родине",
+    ];
+    for text in cases {
+        let entities = detect(text, TrapPolicy::PreferMask);
+        assert!(!has_type(&entities, "fio"), "common words must not be a fio in {:?}: {:?}", text, entities);
+    }
+}
+
+#[test]
+fn mixed_case_fio_still_masked() {
+    let entities = detect("иванов Иван Иванович", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "fio"), "mixed-case fio should be found: {:?}", entities);
+}
