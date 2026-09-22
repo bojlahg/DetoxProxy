@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let text = std::fs::read_to_string(&config_path)?;
-    let cfg = detox_proxy::config::Config::from_yaml(&text)?;
+    let mut cfg = detox_proxy::config::Config::from_yaml(&text)?;
     cfg.validate()?;
     if !std::path::Path::new(&cfg.pii_types_file).exists() {
         anyhow::bail!("pii_types_file not found: {}", cfg.pii_types_file);

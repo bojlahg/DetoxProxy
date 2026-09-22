@@ -48,7 +48,7 @@ fn build_state(cfg: Config) -> Arc<AppState> {
 
 fn base_cfg() -> Config {
     let text = std::fs::read_to_string("config.yaml").expect("read config.yaml");
-    let cfg = Config::from_yaml(&text).expect("parse config");
+    let mut cfg = Config::from_yaml(&text).expect("parse config");
     cfg.validate().expect("validate config");
     cfg
 }

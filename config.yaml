@@ -44,6 +44,7 @@ systems:
     trap_policy: prefer_skip
     session_mode: stateless
     token_numbering: sequential
+    api_key_env: DETOX_KEY_STRICT
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 dictionaries_dir: data/dict

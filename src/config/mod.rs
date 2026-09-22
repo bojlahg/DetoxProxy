@@ -31,6 +31,28 @@ pub enum TrapPolicy {
     PreferSkip,
 }
 
+/// A system API key. Wraps the value so that `Debug` never prints it.
+#[derive(Clone)]
+pub struct ApiKey(Arc<str>);
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApiKey(***)")
+    }
+}
+
+impl ApiKey {
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl From<Arc<str>> for ApiKey {
+    fn from(v: Arc<str>) -> Self {
+        Self(v)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum TypeSelection {
@@ -110,6 +132,13 @@ pub struct SystemConfig {
     pub token_numbering: TokenNumbering,
     #[serde(default)]
     pub hash_salt: Option<String>,
+    /// Name of the environment variable holding this system's API key. When set and the variable
+    /// is non-empty, requests to this system require a matching `X-Api-Key` header.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Resolved API key value, read from the environment at config load. Never logged.
+    #[serde(skip)]
+    pub api_key: Option<ApiKey>,
 }
 fn default_enabled() -> bool { true }
 fn default_mask_mode() -> MaskMode { MaskMode::Token }
@@ -160,7 +189,7 @@ impl Config {
         serde_yaml_ng::from_str(text)
     }
 
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&mut self) -> Result<(), ConfigError> {
         if self.version != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version));
         }
@@ -168,7 +197,7 @@ impl Config {
             return Err(ConfigError::EmptyListen);
         }
         let mut seen = std::collections::HashSet::new();
-        for sys in &self.systems {
+        for sys in &mut self.systems {
             if !seen.insert(sys.id.clone()) {
                 return Err(ConfigError::DuplicateSystem(sys.id.clone()));
             }
@@ -178,6 +207,13 @@ impl Config {
             if sys.token_numbering == TokenNumbering::Hash && sys.hash_salt.is_none() {
                 return Err(ConfigError::MissingHashSalt(sys.id.clone()));
             }
+            sys.api_key = sys
+                .api_key_env
+                .as_ref()
+                .and_then(|env| std::env::var(env).ok())
+                .filter(|k| !k.is_empty())
+                .map(Arc::from)
+                .map(ApiKey::from);
         }
         let default = self.system(&self.default_system);
         match default {
@@ -224,6 +260,7 @@ impl ConfigStore {
 
     /// Validates and swaps the config; on error the previous snapshot is kept.
     pub fn replace(&self, cfg: Config) -> Result<(), ConfigError> {
+        let mut cfg = cfg;
         cfg.validate()?;
         self.inner.store(Arc::new(cfg));
         Ok(())
