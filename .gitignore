@@ -70,3 +70,5 @@ Desktop.ini
 **/grafana-data/
 **/prometheus-data/
 **/redis-data/
+check-modes-config.yaml
+check-modes.log

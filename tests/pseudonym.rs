@@ -370,3 +370,21 @@ fn card_pseudonym_starts_with_2_4_5() {
     let first = digits.chars().next().unwrap();
     assert!(matches!(first, '2' | '4' | '5'), "card must start with 2/4/5, got {out}");
 }
+
+#[test]
+fn address_parts_preserved_and_replaced() {
+    let reg = load();
+    let text = "г. Казань, ул. Баумана, д. 14, кв. 8";
+    let s = text.find(text).unwrap();
+    let entities = vec![ent("address", s, s + text.len())];
+    let res = mask(text, &entities, &reg, &pseudonym_opts(&HashMap::new()));
+    let out = &res.text;
+    assert!(out.contains("г. "), "city marker preserved, got {out}");
+    assert!(out.contains("ул. "), "street marker preserved, got {out}");
+    assert!(out.contains("д. "), "house marker preserved, got {out}");
+    assert!(out.contains("кв. "), "flat marker preserved, got {out}");
+    assert!(!out.contains("Казань"), "city must be replaced, got {out}");
+    assert!(!out.contains("Баумана"), "street must be replaced, got {out}");
+    let restored = unmask(&res.text, &res.mappings);
+    assert_eq!(restored, text, "round-trip failed");
+}
