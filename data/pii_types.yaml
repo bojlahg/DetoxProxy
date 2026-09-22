@@ -70,6 +70,91 @@ context:
     - моя
     - мне
     - я
+  place_markers:
+    - "г."
+    - город
+    - "с."
+    - "пос."
+    - "обл."
+    - область
+    - край
+    - "респ."
+    - деревня
+  city_markers:
+    - "г"
+    - город
+  abbreviation_words:
+    - "г"
+    - "с"
+    - "п"
+    - "пос"
+    - "обл"
+    - "ул"
+    - "пер"
+    - "наб"
+    - "ш"
+    - "б-р"
+    - "пл"
+    - "пр"
+    - "д"
+    - "к"
+    - "стр"
+    - "кв"
+    - "оф"
+    - "пом"
+    - "корп"
+    - "респ"
+    - "край"
+  street_markers:
+    - "ул"
+    - улица
+    - "пл"
+    - площадь
+    - "пр"
+    - "пр-т"
+    - проспект
+    - "пер"
+    - переулок
+    - "наб"
+    - набережная
+    - "ш"
+    - шоссе
+    - "б-р"
+    - бульвар
+  issuer_prefixes:
+    - оуфмс
+    - уфмс
+    - овд
+    - гу мвд
+    - мвд
+    - тп
+    - овм
+    - отделом
+    - отделением
+    - управлением
+  address_separators:
+    - ","
+    - "г."
+    - "г"
+  card_markers:
+    - карта
+    - card
+    - номер карты
+    - "№ карты"
+  birth_markers:
+    - родился
+    - родилась
+    - дата рождения
+    - д.р
+    - г.р
+  country_suffixes:
+    - ии
+    - а
+    - и
+    - ы
+    - я
+    - ов
+    - ев
 types:
   - id: fio
     name: Full name
@@ -84,7 +169,7 @@ types:
   - id: birth_date
     name: Birth date
     token_label: BDATE
-    context_words: [родился, родилась, дата рождения, д.р, г.р, "др:", day of birth]
+    context_words: [родился, родилась, дата рождения, д.р, г.р, "др:", day of birth, рождения, года рождения, год рождения, г. р]
     date_suffixes: [" г.", " года"]
     patterns:
       - '\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
@@ -102,7 +187,7 @@ types:
   - id: passport
     name: Passport series and number
     token_label: PASSPORT
-    context_words: [паспорт, серия, номер, паспортные данные]
+    context_words: [паспорт, серия, паспортные данные]
     validator: none
     stars_keep_prefix: 2
     stars_keep_suffix: 2
@@ -160,6 +245,8 @@ types:
     name: Address
     token_label: ADDR
     context_words: [адрес, проживает, зарегистрирован, прописан, индекс]
+    pii_markers: [проживает, живёт, адрес регистрации, зарегистрирован, прописан, адрес]
+    non_pii_markers: [отделение, отделении, офис, офисе, филиал, банк, банка, адрес банка]
     patterns: []
 
   - id: email
@@ -175,6 +262,7 @@ types:
     validator: phone
     stars_keep_prefix: 2
     stars_keep_suffix: 2
+    non_pii_markers: [версия, сборка, build, version, релиз, ver]
     patterns:
       - '(?:\+7|\b(?:8|7))[\s\-().]*\d{3}[\s\-().]*\d{3}[\s\-().]*\d{2}[\s\-().]*\d{2}'
       - '\(\d{3}\)[\s\-().]*\d{3}[\s\-().]*\d{2}[\s\-().]*\d{2}'
@@ -193,6 +281,7 @@ types:
     validator: luhn
     stars_keep_prefix: 4
     stars_keep_suffix: 4
+    context_words: [карта, card, номер карты, "№ карты"]
     patterns:
       - '(?:\d[ -]?){12,18}\d'
 
@@ -203,7 +292,7 @@ types:
     requires_companion: true
     context_words: [cvv, cvc, cvv2, cvc2, код безопасности, защитный код]
     patterns:
-      - '\b\d{3,4}\b'
+      - '\d{3,4}\b'
 
   - id: card_pin
     name: Card PIN code
@@ -212,7 +301,7 @@ types:
     requires_companion: true
     context_words: [пин, pin, пин-код, pin-код]
     patterns:
-      - '\b\d{4}\b'
+      - '\d{4}\b'
 
   - id: card_holder
     name: Card holder name

@@ -28,12 +28,37 @@ fn detect(text: &str, policy: TrapPolicy) -> Vec<Entity> {
     detector().detect(text, &opts)
 }
 
+fn detect_at(text: &str, min_confidence: f32) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector().detect(text, &opts)
+}
+
 fn has_type(entities: &[Entity], type_id: &str) -> bool {
     entities.iter().any(|e| e.type_id == type_id)
 }
 
 fn confidence_of(entities: &[Entity], type_id: &str) -> Option<f32> {
     entities.iter().find(|e| e.type_id == type_id).map(|e| e.confidence)
+}
+
+fn span_of<'a>(text: &'a str, entities: &[Entity], type_id: &str) -> Option<&'a str> {
+    entities
+        .iter()
+        .find(|e| e.type_id == type_id)
+        .map(|e| &text[e.start..e.end])
+}
+
+fn spans_of<'a>(text: &'a str, entities: &[Entity], type_id: &str) -> Vec<&'a str> {
+    entities
+        .iter()
+        .filter(|e| e.type_id == type_id)
+        .map(|e| &text[e.start..e.end])
+        .collect()
 }
 
 #[test]
@@ -125,6 +150,61 @@ fn invalid_luhn_card_with_marker_found() {
 fn invalid_luhn_card_without_marker_not_found() {
     let entities = detect("1234 5678 9012 3456", TrapPolicy::PreferMask);
     assert!(!has_type(&entities, "card_number"), "card_number should not be found: {:?}", entities);
+}
+
+#[test]
+fn nearest_label_resolves_passport_vs_internal_id() {
+    let text = "Паспорт клиента: 4512 345678. Код заявки: 4512 345679.";
+    let entities = detect_at(text, 0.5);
+    let passports = spans_of(text, &entities, "passport");
+    assert_eq!(passports, vec!["4512 345678"], "only the first number is a passport: {:?}", entities);
+}
+
+#[test]
+fn nearest_label_resolves_cvv_vs_pin() {
+    let text = "Для карты клиента CVV 317 и PIN 4821.";
+    let entities = detect(text, TrapPolicy::PreferMask);
+    assert_eq!(span_of(text, &entities, "cvv"), Some("317"), "cvv span: {:?}", entities);
+    assert_eq!(span_of(text, &entities, "card_pin"), Some("4821"), "pin span: {:?}", entities);
+}
+
+#[test]
+fn glued_markers_mask_only_digits() {
+    let text = "Карта 4276-5500-1122-3347,CVV317,PIN4821.";
+    let entities = detect(text, TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "card_number"), "card_number should be found: {:?}", entities);
+    assert_eq!(span_of(text, &entities, "cvv"), Some("317"), "cvv span must be digits only: {:?}", entities);
+    assert_eq!(span_of(text, &entities, "card_pin"), Some("4821"), "pin span must be digits only: {:?}", entities);
+}
+
+#[test]
+fn version_string_not_phone() {
+    let entities = detect("Версия сборки 8.900.123.45.67", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "phone"), "version must not be a phone: {:?}", entities);
+    let entities = detect("телефон 8.900.123.45.67", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "phone"), "phone with marker should be found: {:?}", entities);
+}
+
+#[test]
+fn birth_date_with_marker_after() {
+    let entities = detect("Иванов, 10.02.1982 года рождения", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "birth_date"), "birth_date should be found: {:?}", entities);
+    let entities = detect("06.06.1988 г.р.", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "birth_date"), "birth_date should be found: {:?}", entities);
+}
+
+#[test]
+fn organization_address_not_masked_nearest_marker() {
+    let entities = detect("Адрес отделения банка: г. Москва, ул. Тверская, д. 1", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "address"), "organization address should not be found: {:?}", entities);
+    let entities = detect("Клиент проживает по адресу: г. Москва, ул. Лесная, д. 17, кв. 42", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "resident address should be found: {:?}", entities);
+}
+
+#[test]
+fn internal_identifier_not_passport() {
+    let entities = detect_at("внутренний идентификатор 4512345678", 0.5);
+    assert!(!has_type(&entities, "passport"), "internal id must not be a passport: {:?}", entities);
 }
 
 // ---- /process and /v1/detect via HTTP ----

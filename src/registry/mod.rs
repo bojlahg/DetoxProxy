@@ -17,6 +17,33 @@ pub struct ContextSpec {
     /// Words that raise confidence when found near a candidate (e.g. "клиент", "паспорт").
     #[serde(default)]
     pub pii_markers: Vec<String>,
+    /// Words that mark a span as a place (city/region markers) for birth_place detection.
+    #[serde(default)]
+    pub place_markers: Vec<String>,
+    /// Words that mark a preceding token as a city (e.g. "г", "город").
+    #[serde(default)]
+    pub city_markers: Vec<String>,
+    /// Abbreviation words whose trailing period is not a sentence delimiter.
+    #[serde(default)]
+    pub abbreviation_words: Vec<String>,
+    /// Street markers used to recognize street components in addresses.
+    #[serde(default)]
+    pub street_markers: Vec<String>,
+    /// Prefixes that a passport issuer phrase must start with.
+    #[serde(default)]
+    pub issuer_prefixes: Vec<String>,
+    /// Separators allowed between adjacent address components.
+    #[serde(default)]
+    pub address_separators: Vec<String>,
+    /// Words that mark a nearby value as a bank card number.
+    #[serde(default)]
+    pub card_markers: Vec<String>,
+    /// Words that mark a nearby value as a birth date.
+    #[serde(default)]
+    pub birth_markers: Vec<String>,
+    /// Genitive suffixes stripped from a country word before dictionary lookup.
+    #[serde(default)]
+    pub country_suffixes: Vec<String>,
 }
 
 /// Declarative description of one PII type. Loaded from YAML; adding a type needs no code.

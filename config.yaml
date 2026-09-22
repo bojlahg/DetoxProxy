@@ -15,7 +15,7 @@ systems:
     types: all
     overrides: {}
     combination_rule: false
-    min_confidence: 0.3
+    min_confidence: 0.5
     allow_substrings: []
     session_mode: stateless
     token_numbering: sequential
@@ -26,7 +26,7 @@ systems:
     types: [fio, phone, email, card_number, passport, inn]
     overrides: {}
     combination_rule: false
-    min_confidence: 0.3
+    min_confidence: 0.5
     allow_substrings:
       - "ул. Каланчёвская, д. 27"
     session_mode: stateful

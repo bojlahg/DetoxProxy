@@ -2,7 +2,7 @@ use crate::config::TrapPolicy;
 use crate::registry::{Registry, TypeSpec, Validator};
 use crate::types::Entity;
 use once_cell::sync::Lazy;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
 
 /// Allow-list of public persons and organizations that must NOT be treated as personal data.
@@ -140,15 +140,53 @@ pub struct Detector {
     historical_date_years: u32,
     /// Public persons and organizations that must not be treated as PII.
     allowlist: std::sync::Arc<Allowlist>,
+    /// Combined regex of all marker-type context words (cvv, pin, passport, inn, ...).
+    marker_re: Option<Regex>,
+    /// Maps a lowercase marker word to the type id it belongs to.
+    marker_type_of: HashMap<String, String>,
+}
+
+/// Marker types that use the nearest-left-marker rule to resolve context.
+fn is_marker_type(id: &str) -> bool {
+    matches!(id, "cvv" | "card_pin" | "passport" | "inn" | "subdivision_code" | "driver_license")
+}
+
+/// Builds the combined marker regex and word->type map from the registry.
+fn build_marker_map(registry: &Registry) -> (Option<Regex>, HashMap<String, String>) {
+    let mut marker_type_of: HashMap<String, String> = HashMap::new();
+    let mut words: Vec<String> = Vec::new();
+    for spec in registry.types() {
+        if is_marker_type(&spec.id) {
+            for w in &spec.context_words {
+                let wl = w.to_lowercase();
+                if marker_type_of.insert(wl.clone(), spec.id.clone()).is_none() {
+                    words.push(wl);
+                }
+            }
+        }
+    }
+    if words.is_empty() {
+        return (None, marker_type_of);
+    }
+    let alt = words.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|");
+    let re = RegexBuilder::new(&format!(r"\b(?:{})\b", alt))
+        .case_insensitive(true)
+        .unicode(true)
+        .build()
+        .expect("valid marker regex");
+    (Some(re), marker_type_of)
 }
 
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
+        let (marker_re, marker_type_of) = build_marker_map(&registry);
         Self {
             registry,
             dicts,
             historical_date_years: 120,
             allowlist: std::sync::Arc::new(Allowlist::empty()),
+            marker_re,
+            marker_type_of,
         }
     }
 
@@ -158,11 +196,14 @@ impl Detector {
         dicts: std::sync::Arc<Dictionaries>,
         allowlist: Allowlist,
     ) -> Self {
+        let (marker_re, marker_type_of) = build_marker_map(&registry);
         Self {
             registry,
             dicts,
             historical_date_years: 120,
             allowlist: std::sync::Arc::new(allowlist),
+            marker_re,
+            marker_type_of,
         }
     }
 
@@ -249,9 +290,12 @@ impl Detector {
                 let end = m.end();
                 let span = &text[start..end];
 
-                let mut conf = 0.6f32;
+                let mut conf = 0.4f32;
+                let mut skip_context_boost = false;
 
-                let has_context = if spec.context_words.is_empty() {
+                let has_context = if is_marker_type(&spec.id) {
+                    self.has_nearest_marker(text, start, spec)
+                } else if spec.context_words.is_empty() {
                     false
                 } else {
                     let window = context_window_before(text, start, spec.context_window);
@@ -261,18 +305,19 @@ impl Detector {
 
                 if spec.validator != Validator::None {
                     if validator_passes(spec.validator, span) {
-                        conf += 0.3;
+                        conf += 0.4;
                     } else if spec.id == "card_number" && self.has_card_marker(text, start, end) {
                         // A 16-digit card in 4x4 format after a card marker is masked even
                         // when Luhn fails (synthetic jury numbers), at confidence 0.6.
                         conf = 0.6;
+                        skip_context_boost = true;
                     } else {
                         continue;
                     }
                 }
 
-                if has_context {
-                    conf += 0.1;
+                if has_context && !skip_context_boost {
+                    conf += 0.3;
                 }
                 if spec.context_required && !has_context {
                     continue;
@@ -321,7 +366,7 @@ impl Detector {
                 if followed_by_initial {
                     return true;
                 }
-                !preceded_by_city_marker(text, t.start)
+                !self.preceded_by_city_marker(text, t.start)
             })
             .map(|(_, t)| NameToken {
                 start: t.start,
@@ -347,7 +392,7 @@ impl Detector {
                     continue;
                 }
                 // Skip tokens that are part of an address (after street markers).
-                if window.iter().any(|t| preceded_by_street_marker(text, t.start)) {
+                if window.iter().any(|t| self.preceded_by_street_marker(text, t.start)) {
                     continue;
                 }
                 let (qualifies, comps) = self.fio_qualifies(window);
@@ -488,15 +533,110 @@ impl Detector {
         }
     }
 
-    /// Effective non-PII markers for a type: per-type `non_pii_markers`, else per-type
-    /// `non_pii_context`, else the global `context.non_pii_markers`.
+    /// Effective non-PII markers for a type: per-type `non_pii_markers` (or `non_pii_context`)
+/// combined with the global `context.non_pii_markers`.
     fn effective_non_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
         if !spec.non_pii_markers.is_empty() {
-            spec.non_pii_markers.clone()
+            out.extend(spec.non_pii_markers.iter().cloned());
         } else if !spec.non_pii_context.is_empty() {
-            spec.non_pii_context.clone()
-        } else {
-            self.registry.context().non_pii_markers.clone()
+            out.extend(spec.non_pii_context.iter().cloned());
+        }
+        for m in &self.registry.context().non_pii_markers {
+            if !out.contains(m) {
+                out.push(m.clone());
+            }
+        }
+        out
+    }
+
+    /// True if `spec`'s marker is the effective context for a value at `start`, using the
+    /// nearest-left-marker rule: a marker counts only when it is the nearest field label
+    /// (word followed by ':') or the nearest marker of any marker type to the left.
+    fn has_nearest_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> bool {
+        let markers = &spec.context_words;
+        if markers.is_empty() {
+            return false;
+        }
+        let field_end = self.nearest_field_label_end(text, start);
+        let marker = self.nearest_marker_type(text, start);
+        match (field_end, marker) {
+            (Some(fe), Some((ty, me))) => {
+                if fe > me {
+                    self.field_label_has_marker(text, fe, markers)
+                } else {
+                    ty == spec.id
+                }
+            }
+            (Some(fe), None) => self.field_label_has_marker(text, fe, markers),
+            (None, Some((ty, _))) => ty == spec.id,
+            (None, None) => false,
+        }
+    }
+
+    /// Returns the type id and end offset of the nearest marker-type context word to the left
+    /// of `start` (within a bounded window), if any.
+    fn nearest_marker_type(&self, text: &str, start: usize) -> Option<(String, usize)> {
+        let re = self.marker_re.as_ref()?;
+        let prefix = context_window_before(text, start, 200);
+        let window_start = start - prefix.len();
+        let mut best: Option<(String, usize)> = None;
+        for m in re.find_iter(prefix) {
+            let word = prefix[m.start()..m.end()].to_lowercase();
+            if let Some(ty) = self.marker_type_of.get(&word) {
+                best = Some((ty.clone(), window_start + m.end()));
+            }
+        }
+        best
+    }
+
+    /// Returns the end offset of the nearest field label (word followed by ':') to the left
+    /// of `start` (within a bounded window), if any.
+    fn nearest_field_label_end(&self, text: &str, start: usize) -> Option<usize> {
+        let prefix = context_window_before(text, start, 200);
+        let window_start = start - prefix.len();
+        FIELD_LABEL_RE.find_iter(prefix).map(|m| window_start + m.end()).max()
+    }
+
+    /// True if the phrase before a field label's colon (since the last sentence boundary)
+    /// contains any of the given markers.
+    fn field_label_has_marker(&self, text: &str, colon_end: usize, markers: &[String]) -> bool {
+        let prefix = &text[..colon_end];
+        let boundary = prefix
+            .rfind(['.', ';', '\n', '!', '?'])
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let phrase = &text[boundary..colon_end];
+        let lower = phrase.to_lowercase();
+        markers.iter().any(|m| lower.contains(m))
+    }
+
+    /// Nearest address marker to the left of `start`: Some(true) if pii, Some(false) if
+    /// non-pii, None if no marker. The nearest marker decides the address type.
+    fn nearest_address_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> Option<bool> {
+        let pii = self.effective_pii_markers(spec);
+        let non_pii = self.effective_non_pii_markers(spec);
+        let prefix = &text[..start];
+        let lower = prefix.to_lowercase();
+        let mut best_pii: Option<usize> = None;
+        let mut best_non_pii: Option<usize> = None;
+        for m in &pii {
+            if let Some(pos) = lower.rfind(m) {
+                let end = pos + m.len();
+                best_pii = Some(best_pii.map_or(end, |b| b.max(end)));
+            }
+        }
+        for m in &non_pii {
+            if let Some(pos) = lower.rfind(m) {
+                let end = pos + m.len();
+                best_non_pii = Some(best_non_pii.map_or(end, |b| b.max(end)));
+            }
+        }
+        match (best_pii, best_non_pii) {
+            (Some(p), Some(n)) => Some(p > n),
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (None, None) => None,
         }
     }
 
@@ -520,12 +660,20 @@ impl Detector {
                 }
                 let span = &text[start..end];
                 if !validators::date(span) {
-                    continue;
+                    // The suffix extension may have produced an invalid date (e.g. "10.02.1982 года").
+                    // Fall back to the unextended span when it is a valid date.
+                    let unextended = &text[start..m.end()];
+                    if validators::date(unextended) {
+                        end = m.end();
+                    } else {
+                        continue;
+                    }
                 }
-                // Marker must be within the window before the date.
-                let window = context_window_before(text, start, spec.context_window);
-                let window_lower = window.to_lowercase();
-                let has_marker = spec.context_words.iter().any(|w| window_lower.contains(w));
+                // Marker must be within the window before the date or within 20 chars after it
+                // (e.g. "10.02.1982 года рождения", "06.06.1988 г.р.").
+                let before = context_window_before(text, start, spec.context_window).to_lowercase();
+                let after = context_window_after(text, end, 20).to_lowercase();
+                let has_marker = spec.context_words.iter().any(|w| before.contains(w) || after.contains(w));
                 if !has_marker {
                     continue;
                 }
@@ -553,7 +701,7 @@ impl Detector {
             let mut search_from = 0;
             while let Some(pos) = lower[search_from..].find(marker) {
                 let marker_end = search_from + pos + marker.len();
-                if let Some((start, end)) = extract_place_after(text, marker_end) {
+                if let Some((start, end)) = extract_place_after(text, marker_end, &self.registry.context().abbreviation_words) {
                     let span = &text[start..end];
                     // Only accept a place that looks like a toponym (city marker or city name),
                     // or when the marker itself strongly implies a place follows.
@@ -579,10 +727,8 @@ impl Detector {
         if validators::date(span) {
             return false;
         }
-        if span.contains("г.") || span.contains("город") || span.contains("с.") || span.contains("пос.")
-            || span.contains("обл.") || span.contains("область") || span.contains("край")
-            || span.contains("респ.") || span.contains("деревня")
-        {
+        let markers = &self.registry.context().place_markers;
+        if markers.iter().any(|m| span.contains(m.as_str())) {
             return true;
         }
         cyrillic_words(span).iter().any(|(_, _, lower, _)| self.is_city(lower))
@@ -596,7 +742,7 @@ impl Detector {
             let mut search_from = 0;
             while let Some(pos) = lower[search_from..].find(marker) {
                 let marker_end = search_from + pos + marker.len();
-                if let Some((start, end)) = find_country_after(text, marker_end, &self.dicts) {
+                if let Some((start, end)) = find_country_after(text, marker_end, &self.dicts, &self.registry.context().country_suffixes) {
                     let conf = 0.7f32;
                     if conf >= opts.min_confidence {
                         candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -616,7 +762,7 @@ impl Detector {
             let mut search_from = 0;
             while let Some(pos) = lower[search_from..].find(marker) {
                 let marker_end = search_from + pos + marker.len();
-                if let Some((start, end)) = extract_issuer_after(text, marker_end) {
+                if let Some((start, end)) = extract_issuer_after(text, marker_end, &self.registry.context().issuer_prefixes) {
                     let conf = 0.7f32;
                     if conf >= opts.min_confidence {
                         candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -638,7 +784,7 @@ impl Detector {
         let mut i = 0;
         while i < comps.len() {
             let mut j = i + 1;
-            while j < comps.len() && components_adjacent(text, comps[j - 1].1, comps[j].0) {
+            while j < comps.len() && self.components_adjacent(text, comps[j - 1].1, comps[j].0) {
                 j += 1;
             }
             let group = &comps[i..j];
@@ -647,17 +793,12 @@ impl Detector {
                 let start = group[0].0;
                 let end = group[group.len() - 1].1;
                 let mut conf: f32 = 0.5;
-                let has_pii = self.has_pii_context(text, start, end, spec);
-                let has_non_pii = self.has_non_pii_context(text, start, end, spec);
-                if has_pii && has_non_pii {
-                    match opts.trap_policy {
-                        TrapPolicy::PreferMask => conf += 0.3,
-                        TrapPolicy::PreferSkip => conf -= 0.3,
-                    }
-                } else if has_pii {
-                    conf += 0.3;
-                } else if has_non_pii {
-                    conf -= 0.3;
+                // The nearest marker to the left decides whether this is a personal address
+                // (pii marker) or an organization address (non-pii marker). No marker -> skip.
+                match self.nearest_address_marker(text, start, spec) {
+                    Some(true) => conf += 0.3,
+                    Some(false) => conf -= 0.3,
+                    None => conf -= 0.3,
                 }
                 // An organization near the address is a negative signal.
                 let non_pii = self.effective_non_pii_markers(spec);
@@ -741,9 +882,11 @@ impl Detector {
         let prev_lower = prev_span.to_lowercase();
         // A street component may carry the marker at the start ("ул. Ленина") or at the
         // end ("Невский пр-т").
-        STREET_MARKERS
+        self.registry
+            .context()
+            .street_markers
             .iter()
-            .any(|m| prev_lower.starts_with(m) || prev_lower.ends_with(m))
+            .any(|m| prev_lower.starts_with(m.as_str()) || prev_lower.ends_with(m.as_str()))
     }
 
     /// Card holder: Latin all-caps words with a marker or near a card number.
@@ -781,18 +924,70 @@ impl Detector {
 
     /// True if a card marker ("карта", "card", "номер карты", "№ карты") is near the span.
     fn has_card_marker(&self, text: &str, start: usize, end: usize) -> bool {
-        const MARKERS: [&str; 4] = ["карта", "card", "номер карты", "№ карты"];
+        let markers = &self.registry.context().card_markers;
         let before = context_window_before(text, start, 40).to_lowercase();
         let after = context_window_after(text, end, 40).to_lowercase();
-        MARKERS.iter().any(|m| before.contains(m) || after.contains(m))
+        markers.iter().any(|m| before.contains(m.as_str()) || after.contains(m.as_str()))
     }
 
     /// True if a birth marker ("родился", "родилась", "дата рождения", "д.р", "г.р") is near.
     fn has_birth_marker(&self, text: &str, start: usize, end: usize) -> bool {
-        const MARKERS: [&str; 5] = ["родился", "родилась", "дата рождения", "д.р", "г.р"];
+        let markers = &self.registry.context().birth_markers;
         let before = context_window_before(text, start, 40).to_lowercase();
         let after = context_window_after(text, end, 40).to_lowercase();
-        MARKERS.iter().any(|m| before.contains(m) || after.contains(m))
+        markers.iter().any(|m| before.contains(m.as_str()) || after.contains(m.as_str()))
+    }
+
+    /// True if the token at `start` is preceded by a street marker ("ул.", "улица").
+    fn preceded_by_street_marker(&self, text: &str, start: usize) -> bool {
+        let prefix = &text[..start];
+        let trimmed = prefix.trim_end();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let last_word_start = trimmed
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0);
+        let last_word = &trimmed[last_word_start..];
+        let last_word = last_word.trim_end_matches('.');
+        let markers = &self.registry.context().street_markers;
+        markers.iter().any(|m| last_word.to_lowercase() == *m)
+    }
+
+    /// True if the token at `start` is preceded by a city marker ("г.", "город").
+    fn preceded_by_city_marker(&self, text: &str, start: usize) -> bool {
+        let prefix = &text[..start];
+        let trimmed = prefix.trim_end();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let last_word_start = trimmed
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0);
+        let last_word = &trimmed[last_word_start..];
+        let last_word = last_word.trim_end_matches('.');
+        let markers = &self.registry.context().city_markers;
+        markers.iter().any(|m| last_word.to_lowercase() == *m)
+    }
+
+    /// True if two address components are separated only by separators (comma, space, "г." etc.).
+    fn components_adjacent(&self, text: &str, prev_end: usize, next_start: usize) -> bool {
+        if prev_end > next_start {
+            return false;
+        }
+        let between = &text[prev_end..next_start];
+        let between = between.trim();
+        if between.is_empty() {
+            return true;
+        }
+        let seps = &self.registry.context().address_separators;
+        seps.iter().any(|s| between == s.as_str())
     }
 }
 
@@ -821,41 +1016,6 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
         });
     }
     out
-}
-
-fn preceded_by_street_marker(text: &str, start: usize) -> bool {
-    let prefix = &text[..start];
-    let trimmed = prefix.trim_end();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let last_word_start = trimmed
-        .char_indices()
-        .rev()
-        .find(|(_, c)| c.is_whitespace())
-        .map(|(i, _)| i + 1)
-        .unwrap_or(0);
-    let last_word = &trimmed[last_word_start..];
-    let last_word = last_word.trim_end_matches('.');
-    STREET_MARKERS.contains(&last_word.to_lowercase().as_str())
-}
-
-/// True if the token at `start` is preceded by a city marker ("г.", "город").
-fn preceded_by_city_marker(text: &str, start: usize) -> bool {
-    let prefix = &text[..start];
-    let trimmed = prefix.trim_end();
-    if trimmed.is_empty() {
-        return false;
-    }
-    let last_word_start = trimmed
-        .char_indices()
-        .rev()
-        .find(|(_, c)| c.is_whitespace())
-        .map(|(i, _)| i + 1)
-        .unwrap_or(0);
-    let last_word = &trimmed[last_word_start..];
-    let last_word = last_word.trim_end_matches('.');
-    matches!(last_word.to_lowercase().as_str(), "г" | "город")
 }
 
 /// True if two name tokens are separated only by spaces or periods (initials).
@@ -966,14 +1126,14 @@ fn resolve_overlaps(mut candidates: Vec<Entity>) -> Vec<Entity> {
 }
 
 /// Extracts the place after a birth marker, up to end of sentence / comma / period.
-fn extract_place_after(text: &str, from: usize) -> Option<(usize, usize)> {
+fn extract_place_after(text: &str, from: usize, abbrev: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
     // Skip leading whitespace, colons and commas.
     let lead = rest
         .find(|c: char| !c.is_whitespace() && c != ':' && c != ',')
         .unwrap_or(rest.len());
     let rest = &rest[lead..];
-    let end_rel = place_end(rest);
+    let end_rel = place_end(rest, abbrev);
     let sentence = &rest[..end_rel];
     // Find a standalone "в" and take the text after it.
     let after_v = if let Some(m) = WORD_V_RE.find(sentence) {
@@ -999,14 +1159,14 @@ fn extract_place_after(text: &str, from: usize) -> Option<(usize, usize)> {
 /// End offset of a place phrase: stops at comma, semicolon, newline, colon, or a
 /// sentence-ending period. A period that terminates an abbreviation ("г.", "с.", "п.",
 /// "пос.", "обл.") is not a delimiter.
-fn place_end(rest: &str) -> usize {
+fn place_end(rest: &str, abbrev: &[String]) -> usize {
     let mut i = 0;
     while i < rest.len() {
         let c = rest[i..].chars().next().unwrap();
         match c {
             ',' | ';' | '\n' | ':' => return i,
             '.' => {
-                if is_abbreviation_period(rest, i) {
+                if is_abbreviation_period(rest, i, abbrev) {
                     i += c.len_utf8();
                 } else {
                     // Sentence-ending period: delimiter if followed by space + uppercase
@@ -1028,7 +1188,7 @@ fn place_end(rest: &str) -> usize {
 }
 
 /// True if the period at `period_idx` terminates an abbreviation like "г.", "с.", "п.".
-fn is_abbreviation_period(rest: &str, period_idx: usize) -> bool {
+fn is_abbreviation_period(rest: &str, period_idx: usize, abbrev: &[String]) -> bool {
     let before = &rest[..period_idx];
     let word_start = before
         .char_indices()
@@ -1037,33 +1197,29 @@ fn is_abbreviation_period(rest: &str, period_idx: usize) -> bool {
         .map(|(i, _)| i + 1)
         .unwrap_or(0);
     let word = &before[word_start..];
-    matches!(
-        word,
-        "г" | "с" | "п" | "пос" | "обл" | "ул" | "пер" | "наб" | "ш" | "б-р" | "пл"
-            | "пр" | "д" | "к" | "стр" | "кв" | "оф" | "пом" | "корп" | "респ" | "край"
-    )
+    abbrev.iter().any(|a| word == a.as_str())
 }
 
 /// Finds a country word after a marker.
-fn find_country_after(text: &str, from: usize, dicts: &Dictionaries) -> Option<(usize, usize)> {
+fn find_country_after(text: &str, from: usize, dicts: &Dictionaries, suffixes: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
     let end_rel = rest.find([',', '.', ';', '\n']).unwrap_or(rest.len());
     let sentence = &rest[..end_rel];
     for (start, end, lower, _) in cyrillic_words(sentence) {
-        if is_country(&lower, dicts) {
+        if is_country(&lower, dicts, suffixes) {
             return Some((from + start, from + end));
         }
     }
     None
 }
 
-fn is_country(lower: &str, dicts: &Dictionaries) -> bool {
+fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
     if dicts.contains("countries", lower) {
         return true;
     }
-    // Handle common genitive forms by stripping a trailing vowel.
-    for suffix in ["ии", "а", "и", "ы", "я", "ов", "ев"] {
-        if let Some(stripped) = lower.strip_suffix(suffix) {
+    // Handle common genitive forms by stripping a trailing suffix.
+    for suffix in suffixes {
+        if let Some(stripped) = lower.strip_suffix(suffix.as_str()) {
             if dicts.contains("countries", stripped) {
                 return true;
             }
@@ -1073,7 +1229,7 @@ fn is_country(lower: &str, dicts: &Dictionaries) -> bool {
 }
 
 /// Extracts the passport issuer phrase after a marker.
-fn extract_issuer_after(text: &str, from: usize) -> Option<(usize, usize)> {
+fn extract_issuer_after(text: &str, from: usize, prefixes: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
     let stop = ISSUER_STOP_RE.find(rest).map(|m| m.start()).unwrap_or(rest.len());
     let phrase = &rest[..stop];
@@ -1089,22 +1245,12 @@ fn extract_issuer_after(text: &str, from: usize) -> Option<(usize, usize)> {
         return None;
     }
     let lower = phrase.to_lowercase();
-    if !ISSUER_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+    if !prefixes.iter().any(|p| lower.starts_with(p.as_str())) {
         return None;
     }
     let start = from + trimmed_start;
     let end = start + phrase.len();
     Some((start, end))
-}
-
-/// True if two address components are separated only by separators (comma, space, "г." etc.).
-fn components_adjacent(text: &str, prev_end: usize, next_start: usize) -> bool {
-    if prev_end > next_start {
-        return false;
-    }
-    let between = &text[prev_end..next_start];
-    let between = between.trim();
-    between.is_empty() || between == "," || between == "г." || between == "г"
 }
 
 fn cyrillic_words(text: &str) -> Vec<(usize, usize, String, bool)> {
@@ -1425,13 +1571,7 @@ static BARE_NUMBER_RE: Lazy<Regex> = Lazy::new(|| {
 static HYPHENATED_WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[А-ЯЁ][а-яё]+-[А-ЯЁ][а-яё]+").unwrap());
 
-static STREET_MARKERS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-    ["ул", "улица", "пл", "площадь", "пр", "пр-т", "проспект", "пер", "переулок", "наб", "набережная", "ш", "шоссе", "б-р", "бульвар"]
-        .iter()
-        .copied()
-        .collect()
-});
-
-static ISSUER_PREFIXES: Lazy<Vec<&'static str>> = Lazy::new(|| {
-    vec!["оуфмс", "уфмс", "овд", "гу мвд", "мвд", "тп", "овм", "отделом", "отделением", "управлением"]
+/// Matches a field label: a word followed by a colon (e.g. "Код заявки:").
+static FIELD_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?iu)\b[а-яёa-z0-9\-]+\s*:").unwrap()
 });
