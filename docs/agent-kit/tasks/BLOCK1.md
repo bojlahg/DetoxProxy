@@ -857,3 +857,14 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/server/mod.rs, src/config/mod.rs, tests/http.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T27">
+Привет. Только тесты, код продукта не трогай (если найдёшь баг — опиши в REPORT.md, не чини).
+
+1. `tests/unicode_safety.rs` идёт 107 секунд в debug и тормозит каждую приёмку. Ускорь до < 15 секунд, сохранив смысл: бери из каждого файла tests/data/*.jsonl и tests/data/holdout/*.jsonl не первые 40 строк подряд, а 15 штук с равномерным шагом (`step_by`), и для варианта с U+202F — только 5 из них; тексты длиннее 4 КБ пропускай (их проверяет отдельный тест на один большой текст с NBSP). Ручные строки и проверки границ символов оставь все.
+2. Новый тест `tests/perf_guard.rs`: плотный текст — «Клиент ИНН 7707083893. » × 400 (≈9 КБ, 400 сущностей). В release-сборке `Detector::detect` + `mask` должны укладываться в 120 мс (лучшее из 3 прогонов); в debug тест ничего не проверяет (`if cfg!(debug_assertions) { return; }`). Сейчас это ~150 мс в release, то есть тест должен падать — так и оставь: он фиксирует известную проблему, чинить её будет задача T09. В начале файла комментарий: `// Fails until T09 makes context checks linear in the number of entities.` Из-за этого добавь атрибут `#[ignore]`, чтобы обычный `cargo test` был зелёным, а запуск — `cargo test --release --test perf_guard -- --ignored --nocapture`.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && timeout 30 cargo test --test unicode_safety && cargo test && git diff --quiet -- src`.
+
+Файлы: tests/unicode_safety.rs, tests/perf_guard.rs. Каталог logs/ не трогай.
+</task>
