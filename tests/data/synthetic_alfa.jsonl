@@ -1,0 +1,302 @@
+{"id": "a-0001", "text": "Пациент Фролова Дмитрий Павловна записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 32, "text": "Фролова Дмитрий Павловна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0002", "text": "Пациент Анна Сергеевич, фамилия Смирнов записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 39, "text": "Анна Сергеевич, фамилия Смирнов"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0003", "text": "Пациент клиент Сидорова Тимур Петрович записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 38, "text": "клиент Сидорова Тимур Петрович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0004", "text": "Обратился клиент Зубарева Наталья Ермилович.", "entities": [{"type": "FIO", "start": 10, "end": 43, "text": "клиент Зубарева Наталья Ермилович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0005", "text": "Договор на имя Зубарева, Ренат Ивановна подписан.", "entities": [{"type": "FIO", "start": 15, "end": 39, "text": "Зубарева, Ренат Ивановна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0006", "text": "Договор на имя Дмитрий Феофанович, фамилия Мехренцев подписан.", "entities": [{"type": "FIO", "start": 15, "end": 52, "text": "Дмитрий Феофанович, фамилия Мехренцев"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0007", "text": "Договор на имя гражданин Смирнов Елена Александрович подписан.", "entities": [{"type": "FIO", "start": 15, "end": 52, "text": "гражданин Смирнов Елена Александрович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0008", "text": "Договор на имя Ермакова Онуфрий Сергеевна подписан.", "entities": [{"type": "FIO", "start": 15, "end": 41, "text": "Ермакова Онуфрий Сергеевна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0009", "text": "Пациент Пётр Ивановна Морозова записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 30, "text": "Пётр Ивановна Морозова"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0010", "text": "Заявитель: Петров Данил Дмитриевич.", "entities": [{"type": "FIO", "start": 11, "end": 34, "text": "Петров Данил Дмитриевич"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0011", "text": "Заявитель: Вениамин Афанасьевна, фамилия Новиков.", "entities": [{"type": "FIO", "start": 11, "end": 48, "text": "Вениамин Афанасьевна, фамилия Новиков"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0012", "text": "клиент Петров Пульхерия Александрович подтвердил данные.", "entities": [{"type": "FIO", "start": 0, "end": 37, "text": "клиент Петров Пульхерия Александрович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0013", "text": "Договор на имя Комарова Григорий Сергеевич подписан.", "entities": [{"type": "FIO", "start": 15, "end": 42, "text": "Комарова Григорий Сергеевич"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0014", "text": "Пациент Пульхерия Александрович Борткевич записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 41, "text": "Пульхерия Александрович Борткевич"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0015", "text": "Пациент клиент Борткевич Иван Дмитриевич записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 40, "text": "клиент Борткевич Иван Дмитриевич"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0016", "text": "Пациент Ольга Мирославович Зубарева записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 35, "text": "Ольга Мирославович Зубарева"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0017", "text": "Пациент Тарасова Онуфрий Феофанович записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 35, "text": "Тарасова Онуфрий Феофанович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0018", "text": "Пациент гражданин Соколов Анна Иосифович записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 40, "text": "гражданин Соколов Анна Иосифович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0019", "text": "Обратился Кузнецов Григорий Афанасьевна.", "entities": [{"type": "FIO", "start": 10, "end": 39, "text": "Кузнецов Григорий Афанасьевна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0020", "text": "Договор на имя Волков, Афанасий Маратович подписан.", "entities": [{"type": "FIO", "start": 15, "end": 41, "text": "Волков, Афанасий Маратович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0021", "text": "Обратился Харлампий Ермилович, фамилия Сидоров.", "entities": [{"type": "FIO", "start": 10, "end": 46, "text": "Харлампий Ермилович, фамилия Сидоров"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0022", "text": "Заявитель: Сидоров, Андрей Петрович.", "entities": [{"type": "FIO", "start": 11, "end": 35, "text": "Сидоров, Андрей Петрович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0023", "text": "Обратился Ольга Иванович, фамилия Новикова.", "entities": [{"type": "FIO", "start": 10, "end": 42, "text": "Ольга Иванович, фамилия Новикова"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0024", "text": "Обратился Юлия Феофанович Козлова.", "entities": [{"type": "FIO", "start": 10, "end": 33, "text": "Юлия Феофанович Козлова"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0025", "text": "Григорий Петрович, фамилия Коробин подтвердил данные.", "entities": [{"type": "FIO", "start": 0, "end": 34, "text": "Григорий Петрович, фамилия Коробин"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0026", "text": "клиент Новикова Агата Афанасьевна подтвердил данные.", "entities": [{"type": "FIO", "start": 0, "end": 33, "text": "клиент Новикова Агата Афанасьевна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0027", "text": "Договор на имя клиент Козлова Родион Григорьевна подписан.", "entities": [{"type": "FIO", "start": 15, "end": 48, "text": "клиент Козлова Родион Григорьевна"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0028", "text": "Обратился гражданин Морозова Пётр Мирославович.", "entities": [{"type": "FIO", "start": 10, "end": 46, "text": "гражданин Морозова Пётр Мирославович"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0029", "text": "Обратился Елисей Петрович Кузнецов.", "entities": [{"type": "FIO", "start": 10, "end": 34, "text": "Елисей Петрович Кузнецов"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0030", "text": "Пациент Елисей Феофанович Коробин записан на приём.", "entities": [{"type": "FIO", "start": 8, "end": 33, "text": "Елисей Феофанович Коробин"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0031", "text": "родился: 17-01-1974, заявитель Морозов.", "entities": [{"type": "BIRTH_DATE", "start": 9, "end": 19, "text": "17-01-1974"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0032", "text": "Клиент, Дата рождения 26-12-1992, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 32, "text": "26-12-1992"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0033", "text": "Клиент, родился 15/05/1998, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 16, "end": 26, "text": "15/05/1998"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0034", "text": "Клиент, г.р. 17-08-1981, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 13, "end": 23, "text": "17-08-1981"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0035", "text": "Анкета: Д/р 04-07-1960.", "entities": [{"type": "BIRTH_DATE", "start": 12, "end": 22, "text": "04-07-1960"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0036", "text": "Клиент, г.р. 18/04/1993, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 13, "end": 23, "text": "18/04/1993"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0037", "text": "г.р.: 15/06/1993, заявитель Морозова.", "entities": [{"type": "BIRTH_DATE", "start": 6, "end": 16, "text": "15/06/1993"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0038", "text": "родился: 12-12-1974, заявитель Фролова.", "entities": [{"type": "BIRTH_DATE", "start": 9, "end": 19, "text": "12-12-1974"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0039", "text": "Анкета: Дата рождения 26/09/1999.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 32, "text": "26/09/1999"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0040", "text": "Анкета: дата рождения 17 июля 2000.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 34, "text": "17 июля 2000"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0041", "text": "Анкета: Д/р 06/09/1965.", "entities": [{"type": "BIRTH_DATE", "start": 12, "end": 22, "text": "06/09/1965"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0042", "text": "Клиент, родилась 1957-08-09, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 17, "end": 27, "text": "1957-08-09"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0043", "text": "Анкета: Дата рождения 27-04-1968.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 32, "text": "27-04-1968"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0044", "text": "Анкета: родился 01.11.1994.", "entities": [{"type": "BIRTH_DATE", "start": 16, "end": 26, "text": "01.11.1994"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0045", "text": "родился: 01-09-1960, заявитель Ермакова.", "entities": [{"type": "BIRTH_DATE", "start": 9, "end": 19, "text": "01-09-1960"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0046", "text": "Дата рождения: 1958-12-02, заявитель Ефимов.", "entities": [{"type": "BIRTH_DATE", "start": 15, "end": 25, "text": "1958-12-02"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0047", "text": "Дата рождения: 7 июня 05 года, заявитель Медведев.", "entities": [{"type": "BIRTH_DATE", "start": 15, "end": 29, "text": "7 июня 05 года"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0048", "text": "Клиент, Дата рождения 15-04-2002, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 32, "text": "15-04-2002"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0049", "text": "Клиент, дата рождения 16-11-1979, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 32, "text": "16-11-1979"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0050", "text": "Анкета: Дата рождения 22 марта 86 года.", "entities": [{"type": "BIRTH_DATE", "start": 22, "end": 38, "text": "22 марта 86 года"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0051", "text": "Анкета: Д/р 15 марта 73 года.", "entities": [{"type": "BIRTH_DATE", "start": 12, "end": 28, "text": "15 марта 73 года"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0052", "text": "Клиент, г.р. 14-09-1988, подтвердил.", "entities": [{"type": "BIRTH_DATE", "start": 13, "end": 23, "text": "14-09-1988"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0053", "text": "Уроженец г. Димитровград, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 9, "end": 24, "text": "г. Димитровград"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0054", "text": "Уроженец г. Воронеж, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 12, "end": 19, "text": "Воронеж"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0055", "text": "Место рождения — Вольск.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 23, "text": "Вольск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0056", "text": "Уроженец г. Хабаровск, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 12, "end": 21, "text": "Хабаровск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0057", "text": "Родился в городе Рыбинск.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 24, "text": "Рыбинск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0058", "text": "Место рождения: г. Белореченск.", "entities": [{"type": "BIRTH_PLACE", "start": 16, "end": 30, "text": "г. Белореченск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0059", "text": "Место рождения — Новосибирск.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 28, "text": "Новосибирск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0060", "text": "Место рождения: г. Североморск.", "entities": [{"type": "BIRTH_PLACE", "start": 16, "end": 30, "text": "г. Североморск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0061", "text": "Место рождения: г. Вольск.", "entities": [{"type": "BIRTH_PLACE", "start": 16, "end": 25, "text": "г. Вольск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0062", "text": "Место рождения — Калуга.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 23, "text": "Калуга"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0064", "text": "Уроженец г. Вольск, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 12, "end": 18, "text": "Вольск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0065", "text": "Место рождения — Самара.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 23, "text": "Самара"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0066", "text": "Место рождения — Хабаровск.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 26, "text": "Хабаровск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0067", "text": "Место рождения — Белгород.", "entities": [{"type": "BIRTH_PLACE", "start": 17, "end": 25, "text": "Белгород"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0068", "text": "Уроженец г. Курган, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 9, "end": 18, "text": "г. Курган"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0069", "text": "Уроженец г. Рыбинск, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 12, "end": 19, "text": "Рыбинск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0070", "text": "Уроженец г. Ясенево, проживает в Москве.", "entities": [{"type": "BIRTH_PLACE", "start": 12, "end": 19, "text": "Ясенево"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0071", "text": "Паспорт серии 84 97 номер 714233.", "entities": [{"type": "PASSPORT", "start": 14, "end": 19, "text": "84 97"}, {"type": "PASSPORT", "start": 26, "end": 32, "text": "714233"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0072", "text": "Паспорт серии 59 79 номер 552025.", "entities": [{"type": "PASSPORT", "start": 14, "end": 19, "text": "59 79"}, {"type": "PASSPORT", "start": 26, "end": 32, "text": "552025"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0073", "text": "Паспорт серии 48 31 номер 384398.", "entities": [{"type": "PASSPORT", "start": 14, "end": 19, "text": "48 31"}, {"type": "PASSPORT", "start": 26, "end": 32, "text": "384398"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0074", "text": "Серия 99 47, номер 171929 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "99 47"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "171929"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0075", "text": "Паспорт серии 20 49 номер 583659.", "entities": [{"type": "PASSPORT", "start": 14, "end": 19, "text": "20 49"}, {"type": "PASSPORT", "start": 26, "end": 32, "text": "583659"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0076", "text": "Паспорт: 25 10-347828.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "25 10-347828"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0077", "text": "паспорт: 51 82 120232 предъявлен.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "51 82 120232"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0078", "text": "паспорт: 97 76 210088 предъявлен.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "97 76 210088"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0079", "text": "Паспорт: 36 42-816599.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "36 42-816599"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0080", "text": "Паспорт: 23 97-792317.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "23 97-792317"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0081", "text": "Паспорт серии 80 19 номер 907913.", "entities": [{"type": "PASSPORT", "start": 14, "end": 19, "text": "80 19"}, {"type": "PASSPORT", "start": 26, "end": 32, "text": "907913"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0082", "text": "Паспорт 58 16 555644.", "entities": [{"type": "PASSPORT", "start": 8, "end": 20, "text": "58 16 555644"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0083", "text": "Серия 38 99, номер 799478 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "38 99"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "799478"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0084", "text": "Паспорт: 83 42-180521.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "83 42-180521"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0085", "text": "Паспорт: 55 35-337635.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "55 35-337635"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0086", "text": "Серия 94 27, номер 386986 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "94 27"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "386986"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0087", "text": "Серия 53 54, номер 284187 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "53 54"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "284187"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0088", "text": "Паспорт: 57 72-373357.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "57 72-373357"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0089", "text": "Паспорт: 63 85-527086.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "63 85-527086"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0090", "text": "Паспорт: 71 20-465892.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "71 20-465892"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0091", "text": "Паспорт: 74 35-836501.", "entities": [{"type": "PASSPORT", "start": 9, "end": 21, "text": "74 35-836501"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0092", "text": "Серия 97 65, номер 239342 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "97 65"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "239342"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0093", "text": "ПАСПОРТ 62 21 851964 проверен.", "entities": [{"type": "PASSPORT", "start": 8, "end": 20, "text": "62 21 851964"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0094", "text": "Серия 64 35, номер 899010 (паспорт).", "entities": [{"type": "PASSPORT", "start": 6, "end": 11, "text": "64 35"}, {"type": "PASSPORT", "start": 19, "end": 25, "text": "899010"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0095", "text": "Гражданство: Россия.", "entities": [{"type": "CITIZENSHIP", "start": 13, "end": 19, "text": "Россия"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0096", "text": "Гражданство: Казахстан.", "entities": [{"type": "CITIZENSHIP", "start": 13, "end": 22, "text": "Казахстан"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0097", "text": "Гражданин Российская Федерация.", "entities": [{"type": "CITIZENSHIP", "start": 10, "end": 30, "text": "Российская Федерация"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0098", "text": "Гражданин Россия.", "entities": [{"type": "CITIZENSHIP", "start": 10, "end": 16, "text": "Россия"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0101", "text": "гражданство — Республика Беларусь, паспорт приложен.", "entities": [{"type": "CITIZENSHIP", "start": 14, "end": 33, "text": "Республика Беларусь"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0102", "text": "гражданство — Российская Федерация, паспорт приложен.", "entities": [{"type": "CITIZENSHIP", "start": 14, "end": 34, "text": "Российская Федерация"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0103", "text": "гражданство — Казахстан, паспорт приложен.", "entities": [{"type": "CITIZENSHIP", "start": 14, "end": 23, "text": "Казахстан"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0106", "text": "Гражданство: Российская Федерация.", "entities": [{"type": "CITIZENSHIP", "start": 13, "end": 33, "text": "Российская Федерация"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0107", "text": "Гражданин Республика Беларусь.", "entities": [{"type": "CITIZENSHIP", "start": 10, "end": 29, "text": "Республика Беларусь"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0108", "text": "Гражданин Казахстан.", "entities": [{"type": "CITIZENSHIP", "start": 10, "end": 19, "text": "Казахстан"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0109", "text": "Кем выдан: МФЦ района Ясенево.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 11, "end": 29, "text": "МФЦ района Ясенево"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0110", "text": "Орган выдачи — Паспортный стол г. Торжка.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 15, "end": 40, "text": "Паспортный стол г. Торжка"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0111", "text": "Кем выдан: Паспортный стол г. Торжка.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 11, "end": 36, "text": "Паспортный стол г. Торжка"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0112", "text": "Паспорт выдан ОВД района Преображенское.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 14, "end": 39, "text": "ОВД района Преображенское"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0113", "text": "Орган выдачи — УФМС России по г. Москве.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 15, "end": 39, "text": "УФМС России по г. Москве"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0114", "text": "Паспорт выдан ГУВМ МВД по Московской области.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 14, "end": 44, "text": "ГУВМ МВД по Московской области"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0115", "text": "Паспорт выдан ОМВД России по району Хамовники.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 14, "end": 45, "text": "ОМВД России по району Хамовники"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0116", "text": "Орган выдачи — Управа района Котловка.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 15, "end": 37, "text": "Управа района Котловка"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0118", "text": "Кем выдан: ОВД района Преображенское.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 11, "end": 36, "text": "ОВД района Преображенское"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0119", "text": "Паспорт выдан УФМС России по г. Москве.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 14, "end": 38, "text": "УФМС России по г. Москве"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0121", "text": "Кем выдан: УФМС России по г. Москве.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 11, "end": 35, "text": "УФМС России по г. Москве"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0124", "text": "Паспорт выдан Отдел полиции № 7 г. Казани.", "entities": [{"type": "ISSUE_AUTHORITY", "start": 14, "end": 41, "text": "Отдел полиции № 7 г. Казани"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0125", "text": "код подразделения 925-806.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "925-806"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0126", "text": "Код подразделения 557-475.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "557-475"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0127", "text": "Код подразделения 472-364.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "472-364"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0128", "text": "код подразделения 916-755.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "916-755"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0129", "text": "Код подразделения 350-567.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "350-567"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0130", "text": "К/п 174-942.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "174-942"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0131", "text": "код подразделения 920-407.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "920-407"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0132", "text": "К/п 710-394.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "710-394"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0133", "text": "К/п 494-867.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "494-867"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0134", "text": "К/п 387-411.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "387-411"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0135", "text": "Код подразделения 803-760.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "803-760"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0136", "text": "код подразделения 708-404.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "708-404"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0137", "text": "Код подразделения 485-352.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "485-352"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0138", "text": "Код подразделения 716-957.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "716-957"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0139", "text": "К/п 908-259.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "908-259"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0140", "text": "К/п 829-984.", "entities": [{"type": "DIVISION_CODE", "start": 4, "end": 11, "text": "829-984"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0141", "text": "Выдан 07.06.2015 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "07.06.2015"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0142", "text": "Выдан 24.06.2016 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "24.06.2016"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0143", "text": "Выдан 12.09.2017 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "12.09.2017"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0144", "text": "Дата выдачи 14.10.2024.", "entities": [{"type": "ISSUE_DATE", "start": 12, "end": 22, "text": "14.10.2024"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0145", "text": "Дата выдачи 27.01.2015.", "entities": [{"type": "ISSUE_DATE", "start": 12, "end": 22, "text": "27.01.2015"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0146", "text": "Паспорт выдан 12.10.2013, код 770-001.", "entities": [{"type": "ISSUE_DATE", "start": 14, "end": 24, "text": "12.10.2013"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0147", "text": "Выдан 21.06.2017 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "21.06.2017"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0148", "text": "Выдан 17.11.2021 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "17.11.2021"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0149", "text": "Выдан 23.08.2011 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "23.08.2011"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0150", "text": "Выдан 21.05.2014 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "21.05.2014"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0151", "text": "Паспорт выдан 13.09.2014, код 770-001.", "entities": [{"type": "ISSUE_DATE", "start": 14, "end": 24, "text": "13.09.2014"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0152", "text": "Паспорт выдан 11.01.2023, код 770-001.", "entities": [{"type": "ISSUE_DATE", "start": 14, "end": 24, "text": "11.01.2023"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0153", "text": "Дата выдачи 19.08.2017.", "entities": [{"type": "ISSUE_DATE", "start": 12, "end": 22, "text": "19.08.2017"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0154", "text": "Паспорт выдан 23.10.2016, код 770-001.", "entities": [{"type": "ISSUE_DATE", "start": 14, "end": 24, "text": "23.10.2016"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0155", "text": "Выдан 04.05.2012 года.", "entities": [{"type": "ISSUE_DATE", "start": 6, "end": 16, "text": "04.05.2012"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0156", "text": "Дата выдачи 03.11.2015.", "entities": [{"type": "ISSUE_DATE", "start": 12, "end": 22, "text": "03.11.2015"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0157", "text": "Водительское удостоверение 44 11 925585.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "44 11 925585"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0158", "text": "Водительское удостоверение 29 85 503948.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "29 85 503948"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0159", "text": "Права 97 33 963772 предъявлены.", "entities": [{"type": "DRIVER_LICENSE", "start": 6, "end": 18, "text": "97 33 963772"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0160", "text": "Водительское удостоверение 78 14 895245.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "78 14 895245"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0161", "text": "Водительское удостоверение 57 71 218139.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "57 71 218139"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0162", "text": "В/у 50 24 716020 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "50 24 716020"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0163", "text": "Права 17 98 297509 предъявлены.", "entities": [{"type": "DRIVER_LICENSE", "start": 6, "end": 18, "text": "17 98 297509"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0164", "text": "Права 18 97 570137 предъявлены.", "entities": [{"type": "DRIVER_LICENSE", "start": 6, "end": 18, "text": "18 97 570137"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0165", "text": "В/у 63 66 876413 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "63 66 876413"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0166", "text": "В/у 60 96 234456 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "60 96 234456"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0167", "text": "Водительское удостоверение 63 11 600904.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "63 11 600904"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0168", "text": "Права 57 54 729728 предъявлены.", "entities": [{"type": "DRIVER_LICENSE", "start": 6, "end": 18, "text": "57 54 729728"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0169", "text": "Водительское удостоверение 48 56 646892.", "entities": [{"type": "DRIVER_LICENSE", "start": 27, "end": 39, "text": "48 56 646892"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0170", "text": "В/у 85 52 947670 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "85 52 947670"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0171", "text": "В/у 65 98 720424 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "65 98 720424"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0172", "text": "В/у 17 33 588671 действительно.", "entities": [{"type": "DRIVER_LICENSE", "start": 4, "end": 16, "text": "17 33 588671"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0173", "text": "Проживает: г. Ижевск, ул. Придорожная, д. 98, кв. 75.", "entities": [{"type": "ADDRESS", "start": 11, "end": 52, "text": "г. Ижевск, ул. Придорожная, д. 98, кв. 75"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0174", "text": "Проживает: г. Тюмень, пр. Придорожная, д. 28/4.", "entities": [{"type": "ADDRESS", "start": 11, "end": 46, "text": "г. Тюмень, пр. Придорожная, д. 28/4"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0175", "text": "Адрес регистрации: ул. Маршала Жукова, д. 110, г. Хабаровск.", "entities": [{"type": "ADDRESS", "start": 19, "end": 59, "text": "ул. Маршала Жукова, д. 110, г. Хабаровск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0176", "text": "Адрес регистрации: ул. Рокоссовского, д. 142, г. Плёсово.", "entities": [{"type": "ADDRESS", "start": 19, "end": 56, "text": "ул. Рокоссовского, д. 142, г. Плёсово"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0177", "text": "Доставить по адресу Хабаровск, Маршала Жукова, 188.", "entities": [{"type": "ADDRESS", "start": 20, "end": 50, "text": "Хабаровск, Маршала Жукова, 188"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0178", "text": "Адрес регистрации: ул. Раздольная, д. 7, г. Омск.", "entities": [{"type": "ADDRESS", "start": 19, "end": 48, "text": "ул. Раздольная, д. 7, г. Омск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0179", "text": "Проживает: ул. Строителей, д. 19, г. Челябинск.", "entities": [{"type": "ADDRESS", "start": 11, "end": 46, "text": "ул. Строителей, д. 19, г. Челябинск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0180", "text": "Адрес регистрации: Воронеж, бул. Придорожная, дом 117, кв. 82.", "entities": [{"type": "ADDRESS", "start": 19, "end": 61, "text": "Воронеж, бул. Придорожная, дом 117, кв. 82"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0181", "text": "Адрес регистрации: Тюмень, бул. Строителей, дом 191, кв. 99.", "entities": [{"type": "ADDRESS", "start": 19, "end": 59, "text": "Тюмень, бул. Строителей, дом 191, кв. 99"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0182", "text": "Доставить по адресу Новосибирск, бул. Волкова, дом 175, кв. 146.", "entities": [{"type": "ADDRESS", "start": 20, "end": 63, "text": "Новосибирск, бул. Волкова, дом 175, кв. 146"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0183", "text": "Доставить по адресу ул. Дружбы, д. 3, г. Плёсово.", "entities": [{"type": "ADDRESS", "start": 20, "end": 48, "text": "ул. Дружбы, д. 3, г. Плёсово"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0184", "text": "Доставить по адресу г. Ижевск, пр. Раздольная, д. 151/1.", "entities": [{"type": "ADDRESS", "start": 20, "end": 55, "text": "г. Ижевск, пр. Раздольная, д. 151/1"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0185", "text": "Проживает: Димитровград, бул. Крымский Вал, дом 108, кв. 7.", "entities": [{"type": "ADDRESS", "start": 11, "end": 58, "text": "Димитровград, бул. Крымский Вал, дом 108, кв. 7"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0186", "text": "Доставить по адресу г. Омск, пр. Рокоссовского, д. 173/4.", "entities": [{"type": "ADDRESS", "start": 20, "end": 56, "text": "г. Омск, пр. Рокоссовского, д. 173/4"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0187", "text": "Адрес регистрации: Вольск, Рокоссовского, 131.", "entities": [{"type": "ADDRESS", "start": 19, "end": 45, "text": "Вольск, Рокоссовского, 131"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0188", "text": "Адрес регистрации: Новосибирск, Космонавтов, 16.", "entities": [{"type": "ADDRESS", "start": 19, "end": 47, "text": "Новосибирск, Космонавтов, 16"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0189", "text": "Доставить по адресу г. Тверь, пр. Рокоссовского, д. 77/4.", "entities": [{"type": "ADDRESS", "start": 20, "end": 56, "text": "г. Тверь, пр. Рокоссовского, д. 77/4"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0190", "text": "Проживает: ул. Бригадная, д. 70, г. Плёсово.", "entities": [{"type": "ADDRESS", "start": 11, "end": 43, "text": "ул. Бригадная, д. 70, г. Плёсово"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0191", "text": "Адрес регистрации: Димитровград, бул. Бригадная, дом 110, кв. 81.", "entities": [{"type": "ADDRESS", "start": 19, "end": 64, "text": "Димитровград, бул. Бригадная, дом 110, кв. 81"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0192", "text": "Проживает: г. Белореченск, ул. Мира, д. 69, кв. 42.", "entities": [{"type": "ADDRESS", "start": 11, "end": 50, "text": "г. Белореченск, ул. Мира, д. 69, кв. 42"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0193", "text": "Доставить по адресу г. Белореченск, пр. Строителей, д. 93/2.", "entities": [{"type": "ADDRESS", "start": 20, "end": 59, "text": "г. Белореченск, пр. Строителей, д. 93/2"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0194", "text": "Проживает: Белгород, Раздольная, 186.", "entities": [{"type": "ADDRESS", "start": 11, "end": 36, "text": "Белгород, Раздольная, 186"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0195", "text": "Адрес регистрации: ул. Мира, д. 45, г. Томск.", "entities": [{"type": "ADDRESS", "start": 19, "end": 44, "text": "ул. Мира, д. 45, г. Томск"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0196", "text": "Доставить по адресу Калуга, бул. Крымский Вал, дом 180, кв. 91.", "entities": [{"type": "ADDRESS", "start": 20, "end": 62, "text": "Калуга, бул. Крымский Вал, дом 180, кв. 91"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0197", "text": "e-mail: user9504@mail.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 24, "text": "user9504@mail.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0198", "text": "Напишите на ivan376@pochta.ru.", "entities": [{"type": "EMAIL", "start": 12, "end": 29, "text": "ivan376@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0199", "text": "e-mail: client5824@pochta.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 28, "text": "client5824@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0200", "text": "Напишите на user6060@pochta.ru.", "entities": [{"type": "EMAIL", "start": 12, "end": 30, "text": "user6060@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0201", "text": "Почта client7076@pochta.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 26, "text": "client7076@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0202", "text": "Почта ivan124@mail.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 21, "text": "ivan124@mail.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0203", "text": "e-mail: user5409@mail.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 24, "text": "user5409@mail.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0204", "text": "e-mail: ivan4008@example.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 27, "text": "ivan4008@example.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0205", "text": "Напишите на user912@list.ru.", "entities": [{"type": "EMAIL", "start": 12, "end": 27, "text": "user912@list.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0206", "text": "Почта client8390@pochta.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 26, "text": "client8390@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0207", "text": "e-mail: ivan2076@list.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 24, "text": "ivan2076@list.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0208", "text": "e-mail: petr8759@list.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 24, "text": "petr8759@list.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0209", "text": "Почта olga4071@pochta.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 24, "text": "olga4071@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0210", "text": "Почта ivan1828@example.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 25, "text": "ivan1828@example.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0211", "text": "e-mail: user7612@mail.ru для связи.", "entities": [{"type": "EMAIL", "start": 8, "end": 24, "text": "user7612@mail.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0212", "text": "Почта olga2774@pochta.ru.", "entities": [{"type": "EMAIL", "start": 6, "end": 24, "text": "olga2774@pochta.ru"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0213", "text": "Тел. 8 (530) 032-09-37.", "entities": [{"type": "PHONE", "start": 5, "end": 22, "text": "8 (530) 032-09-37"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0214", "text": "Тел. 85759251505.", "entities": [{"type": "PHONE", "start": 5, "end": 16, "text": "85759251505"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0215", "text": "Телефон 8 (375) 796-24-90.", "entities": [{"type": "PHONE", "start": 8, "end": 25, "text": "8 (375) 796-24-90"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0216", "text": "Тел. 85249480149.", "entities": [{"type": "PHONE", "start": 5, "end": 16, "text": "85249480149"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0217", "text": "Тел. 8-941-511-81-37.", "entities": [{"type": "PHONE", "start": 5, "end": 20, "text": "8-941-511-81-37"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0218", "text": "Телефон 8 (171) 550-11-60.", "entities": [{"type": "PHONE", "start": 8, "end": 25, "text": "8 (171) 550-11-60"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0219", "text": "Телефон +70514195144.", "entities": [{"type": "PHONE", "start": 8, "end": 20, "text": "+70514195144"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0220", "text": "моб. +7 (618) 251 25 66.", "entities": [{"type": "PHONE", "start": 5, "end": 23, "text": "+7 (618) 251 25 66"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0221", "text": "телефон +7 230 971-69-98.", "entities": [{"type": "PHONE", "start": 8, "end": 24, "text": "+7 230 971-69-98"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0222", "text": "Тел. +7 (335) 072 08 36.", "entities": [{"type": "PHONE", "start": 5, "end": 23, "text": "+7 (335) 072 08 36"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0223", "text": "телефон 8 (620) 140-63-11.", "entities": [{"type": "PHONE", "start": 8, "end": 25, "text": "8 (620) 140-63-11"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0224", "text": "моб. 8-108-563-51-35.", "entities": [{"type": "PHONE", "start": 5, "end": 20, "text": "8-108-563-51-35"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0225", "text": "телефон 80384219707.", "entities": [{"type": "PHONE", "start": 8, "end": 19, "text": "80384219707"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0226", "text": "Телефон +75732380478.", "entities": [{"type": "PHONE", "start": 8, "end": 20, "text": "+75732380478"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0227", "text": "телефон +76538098767.", "entities": [{"type": "PHONE", "start": 8, "end": 20, "text": "+76538098767"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0228", "text": "Телефон 8-007-390-88-49.", "entities": [{"type": "PHONE", "start": 8, "end": 23, "text": "8-007-390-88-49"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0229", "text": "Телефон +73009953812.", "entities": [{"type": "PHONE", "start": 8, "end": 20, "text": "+73009953812"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0230", "text": "Тел. 80626420075.", "entities": [{"type": "PHONE", "start": 5, "end": 16, "text": "80626420075"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0231", "text": "Тел. +7 (528) 578 48 98.", "entities": [{"type": "PHONE", "start": 5, "end": 23, "text": "+7 (528) 578 48 98"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0232", "text": "телефон +7 303 714-24-62.", "entities": [{"type": "PHONE", "start": 8, "end": 24, "text": "+7 303 714-24-62"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0233", "text": "Инн 98/38177524.", "entities": [{"type": "INN", "start": 4, "end": 15, "text": "98/38177524"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0234", "text": "Инн 6302160153.", "entities": [{"type": "INN", "start": 4, "end": 14, "text": "6302160153"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0235", "text": "инн 327420879892.", "entities": [{"type": "INN", "start": 4, "end": 16, "text": "327420879892"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0236", "text": "ИНН 99/13900417.", "entities": [{"type": "INN", "start": 4, "end": 15, "text": "99/13900417"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0237", "text": "ИНН 9379 пробел 203084.", "entities": [{"type": "INN", "start": 4, "end": 22, "text": "9379 пробел 203084"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0238", "text": "ИНН 94/10716281.", "entities": [{"type": "INN", "start": 4, "end": 15, "text": "94/10716281"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0239", "text": "Инн 11/72122966.", "entities": [{"type": "INN", "start": 4, "end": 15, "text": "11/72122966"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0240", "text": "инн 3901426054.", "entities": [{"type": "INN", "start": 4, "end": 14, "text": "3901426054"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0241", "text": "ИНН 7249 пробел 97971848.", "entities": [{"type": "INN", "start": 4, "end": 24, "text": "7249 пробел 97971848"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0242", "text": "Инн 7954312450.", "entities": [{"type": "INN", "start": 4, "end": 14, "text": "7954312450"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0243", "text": "Инн 2991 899 49656.", "entities": [{"type": "INN", "start": 4, "end": 18, "text": "2991 899 49656"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0244", "text": "Инн 8829 525 20063.", "entities": [{"type": "INN", "start": 4, "end": 18, "text": "8829 525 20063"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0245", "text": "ИНН 7974 987 59300.", "entities": [{"type": "INN", "start": 4, "end": 18, "text": "7974 987 59300"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0246", "text": "ИНН 3206 166 01345.", "entities": [{"type": "INN", "start": 4, "end": 18, "text": "3206 166 01345"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0247", "text": "инн 19/36/695/543.", "entities": [{"type": "INN", "start": 4, "end": 17, "text": "19/36/695/543"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0248", "text": "ИНН 1549-063-820.", "entities": [{"type": "INN", "start": 4, "end": 16, "text": "1549-063-820"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0249", "text": "Инн 5497-525-757.", "entities": [{"type": "INN", "start": 4, "end": 16, "text": "5497-525-757"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0250", "text": "ИНН 8023-589-35150.", "entities": [{"type": "INN", "start": 4, "end": 18, "text": "8023-589-35150"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0251", "text": "Инн 9398-995-607.", "entities": [{"type": "INN", "start": 4, "end": 16, "text": "9398-995-607"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0252", "text": "Инн 9091 пробел 92508540.", "entities": [{"type": "INN", "start": 4, "end": 24, "text": "9091 пробел 92508540"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0253", "text": "Инн 12/45/009/255.", "entities": [{"type": "INN", "start": 4, "end": 17, "text": "12/45/009/255"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0254", "text": "ИНН 5738 пробел 82813906.", "entities": [{"type": "INN", "start": 4, "end": 24, "text": "5738 пробел 82813906"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0255", "text": "Номер карты: 427640003331517.", "entities": [{"type": "CARD", "start": 13, "end": 28, "text": "427640003331517"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0256", "text": "Карта 5536-9137-5000-4323.", "entities": [{"type": "CARD", "start": 6, "end": 25, "text": "5536-9137-5000-4323"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0257", "text": "Карта 427640003331517.", "entities": [{"type": "CARD", "start": 6, "end": 21, "text": "427640003331517"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0258", "text": "Оплата картой 220015550000436 прошла.", "entities": [{"type": "CARD", "start": 14, "end": 29, "text": "220015550000436"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0259", "text": "Номер карты: 4111 1111 1111 1111.", "entities": [{"type": "CARD", "start": 13, "end": 32, "text": "4111 1111 1111 1111"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0260", "text": "Оплата картой 220220010000006 прошла.", "entities": [{"type": "CARD", "start": 14, "end": 29, "text": "220220010000006"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0261", "text": "Номер карты: 546901234567899.", "entities": [{"type": "CARD", "start": 13, "end": 28, "text": "546901234567899"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0264", "text": "Карта 220015550000436.", "entities": [{"type": "CARD", "start": 6, "end": 21, "text": "220015550000436"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0265", "text": "Номер карты: 5536913750004323.", "entities": [{"type": "CARD", "start": 13, "end": 29, "text": "5536913750004323"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0266", "text": "Номер карты: 220015550000436.", "entities": [{"type": "CARD", "start": 13, "end": 28, "text": "220015550000436"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0267", "text": "Карта 5536 9137 5000 4323.", "entities": [{"type": "CARD", "start": 6, "end": 25, "text": "5536 9137 5000 4323"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0268", "text": "Оплата картой 546901234567899 прошла.", "entities": [{"type": "CARD", "start": 14, "end": 29, "text": "546901234567899"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0269", "text": "Оплата картой 427640003331517 прошла.", "entities": [{"type": "CARD", "start": 14, "end": 29, "text": "427640003331517"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0270", "text": "Карта 546901234567899.", "entities": [{"type": "CARD", "start": 6, "end": 21, "text": "546901234567899"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0273", "text": "Номер карты: 4111-1111-1111-1111.", "entities": [{"type": "CARD", "start": 13, "end": 32, "text": "4111-1111-1111-1111"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0275", "text": "CVV 300.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "300"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0276", "text": "CVC 622 на обороте.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "622"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0277", "text": "CVC 406 на обороте.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "406"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0278", "text": "CVC 562 на обороте.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "562"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0279", "text": "CVV 458.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "458"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0280", "text": "код безопасности 292.", "entities": [{"type": "CVV", "start": 17, "end": 20, "text": "292"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0281", "text": "CVV 890.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "890"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0282", "text": "CVC 823 на обороте.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "823"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0283", "text": "CVV 337.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "337"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0284", "text": "CVV 254.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "254"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0285", "text": "CVV 371.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "371"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0286", "text": "CVV 674.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "674"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0287", "text": "CVV 581.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "581"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0288", "text": "CVC 990 на обороте.", "entities": [{"type": "CVV", "start": 4, "end": 7, "text": "990"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0289", "text": "PIN 7168.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "7168"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0290", "text": "пин-код 2569 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "2569"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0291", "text": "пин-код 1078 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "1078"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0292", "text": "пин-код 6610 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "6610"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0293", "text": "ПИН 2927 для активации.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "2927"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0294", "text": "пин-код 4227 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "4227"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0295", "text": "ПИН 7592 для активации.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "7592"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0296", "text": "ПИН 2327 для активации.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "2327"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0297", "text": "пин-код 9094 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "9094"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0298", "text": "пин-код 3022 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "3022"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0299", "text": "ПИН 9737 для активации.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "9737"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0300", "text": "PIN 7115.", "entities": [{"type": "PIN", "start": 4, "end": 8, "text": "7115"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0301", "text": "пин-код 8795 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "8795"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0302", "text": "пин-код 1699 введён.", "entities": [{"type": "PIN", "start": 8, "end": 12, "text": "1699"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0303", "text": "Cardholder ВИССАРИОН ЧЕРНЕЦКИЙ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 30, "text": "ВИССАРИОН ЧЕРНЕЦКИЙ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0304", "text": "Cardholder АРТЁМ ЕРМАКОВА.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 25, "text": "АРТЁМ ЕРМАКОВА"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0305", "text": "Владелец карты АННА ИВАНОВ.", "entities": [{"type": "CARDHOLDER", "start": 15, "end": 26, "text": "АННА ИВАНОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0306", "text": "Держатель: АЛЕКСАНДРА НИКИТИНА.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 30, "text": "АЛЕКСАНДРА НИКИТИНА"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0307", "text": "Cardholder МАРФА СТРЕЛЬЦОВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 26, "text": "МАРФА СТРЕЛЬЦОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0308", "text": "Cardholder ДМИТРИЙ СМИРНОВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 26, "text": "ДМИТРИЙ СМИРНОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0309", "text": "Cardholder АЛЕКСАНДРА КОВАЛЁВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 29, "text": "АЛЕКСАНДРА КОВАЛЁВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0310", "text": "Cardholder ПЁТР БОРТКЕВИЧ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 25, "text": "ПЁТР БОРТКЕВИЧ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0311", "text": "Cardholder ДАНИЛ ФРОЛОВА.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 24, "text": "ДАНИЛ ФРОЛОВА"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0312", "text": "Держатель: ИВАН ТАРАСОВА.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 24, "text": "ИВАН ТАРАСОВА"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0313", "text": "Держатель: ФЕОФАН КУЗНЕЦОВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 26, "text": "ФЕОФАН КУЗНЕЦОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0314", "text": "Держатель: ПЁТР СМИРНОВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 23, "text": "ПЁТР СМИРНОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0315", "text": "Держатель: МАРИЯ МОРОЗОВ.", "entities": [{"type": "CARDHOLDER", "start": 11, "end": 24, "text": "МАРИЯ МОРОЗОВ"}], "source": "synthetic", "tags": ["positive"]}
+{"id": "a-0316", "text": "Владелец карты АННА ЗУБАРЕВА.", "entities": [{"type": "CARDHOLDER", "start": 15, "end": 28, "text": "АННА ЗУБАРЕВА"}], "source": "synthetic", "tags": ["positive"]}

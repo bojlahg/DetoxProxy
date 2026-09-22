@@ -41,6 +41,18 @@ pub struct TypeSpec {
     /// Masked only when another confidently detected type is present in the same text (cvv, pin).
     #[serde(default)]
     pub requires_companion: bool,
+    /// Patronymic suffixes (e.g. "-ович", "-овна"); a word ending with one is a patronymic.
+    #[serde(default)]
+    pub patronymic_suffixes: Vec<String>,
+    /// Surname suffixes (e.g. "-ов", "-ский"); a word ending with one is a surname.
+    #[serde(default)]
+    pub surname_suffixes: Vec<String>,
+    /// PII markers that raise confidence when found near a candidate (e.g. "клиент", "паспорт").
+    #[serde(default)]
+    pub pii_context: Vec<String>,
+    /// Non-PII markers that lower confidence when found near a candidate (e.g. "поэт", "писатель").
+    #[serde(default)]
+    pub non_pii_context: Vec<String>,
 }
 fn default_context_window() -> usize { 40 }
 fn default_validator() -> Validator { Validator::None }

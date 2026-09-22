@@ -1,0 +1,219 @@
+{"id": "hn-0001", "text": "Александр Сергеевич Пушкин родился в 1934 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0002", "text": "Лев Николаевич Толстой родился в 1828 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0003", "text": "Юрий Алексеевич Гагарин родился в 1799 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0004", "text": "Михаил Васильевич Ломоносов родился в 1711 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0005", "text": "Дмитрий Иванович Менделеев родился в 1828 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0006", "text": "Фёдор Михайлович Достоевский родился в 1711 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0007", "text": "Иван Васильевич Грозный родился в 1711 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0008", "text": "Сергей Павлович Королёв родился в 1799 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0009", "text": "Юрий Владимирович Никулин родился в 1934 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0010", "text": "Анна Андреевна Ахматова родился в 1799 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0011", "text": "Пётр Ильич Чайковский родился в 1934 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0012", "text": "Михаил Афанасьевич Булгаков родился в 1799 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0013", "text": "Роман Фёдор Михайлович Достоевский написан в 1850 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0014", "text": "Михаил Васильевич Ломоносов умер в 1902 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0015", "text": "Памятник Михаил Васильевич Ломоносов установлен в Плёсово.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0016", "text": "Памятник Сергей Павлович Королёв установлен в Казань.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0017", "text": "Фильм о Юрий Алексеевич Гагарин вышел в прокат.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0019", "text": "Лекция о Сергей Павлович Королёв состоится в 17.10.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0020", "text": "Фильм о Лев Николаевич Толстой вышел в прокат.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0021", "text": "Роман Дмитрий Иванович Менделеев написан в 1847 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0022", "text": "Памятник Дмитрий Иванович Менделеев установлен в Белгород.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0023", "text": "Лекция о Иван Васильевич Грозный состоится в 18.03.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0024", "text": "Роман Михаил Васильевич Ломоносов написан в 1937 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0025", "text": "Юрий Алексеевич Гагарин умер в 1948 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0026", "text": "Памятник Иван Васильевич Грозный установлен в Торжок.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0027", "text": "Роман Анна Андреевна Ахматова написан в 1884 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0028", "text": "Фёдор Михайлович Достоевский умер в 1927 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0029", "text": "Пётр Ильич Чайковский умер в 1921 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0030", "text": "Пётр Ильич Чайковский умер в 1895 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0032", "text": "Памятник Лев Николаевич Толстой установлен в Тверь.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0033", "text": "Фёдор Михайлович Достоевский умер в 1907 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0034", "text": "Лекция о Лев Николаевич Толстой состоится в 26.02.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0035", "text": "Лекция о Михаил Афанасьевич Булгаков состоится в 22.06.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0037", "text": "Лекция о Юрий Алексеевич Гагарин состоится в 20.03.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0038", "text": "Лекция о Фёдор Михайлович Достоевский состоится в 15.01.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0039", "text": "Лекция о Юрий Владимирович Никулин состоится в 4.08.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0041", "text": "Фильм о Михаил Афанасьевич Булгаков вышел в прокат.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0043", "text": "Фильм о Иван Васильевич Грозный вышел в прокат.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0044", "text": "Роман Михаил Васильевич Ломоносов написан в 1824 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0045", "text": "Памятник Фёдор Михайлович Достоевский установлен в Димитровград.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0046", "text": "Памятник Юрий Владимирович Никулин установлен в Самара.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0047", "text": "Анна Андреевна Ахматова умер в 1891 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0048", "text": "Памятник Юрий Алексеевич Гагарин установлен в Калуга.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0049", "text": "Роман Анна Андреевна Ахматова написан в 1879 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0050", "text": "Лекция о Анна Андреевна Ахматова состоится в 10.01.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0051", "text": "Роман Михаил Васильевич Ломоносов написан в 1831 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0052", "text": "Иван Васильевич Грозный умер в 1902 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "famous-person"]}
+{"id": "hn-0053", "text": "Юридический адрес компании: г. Казань, Придорожная, 38.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0054", "text": "Адрес отделения банка: г. Казань, ул. Рокоссовского, д. 38.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0055", "text": "Офис: г. Самара, просп. Строителей, д. 23.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0056", "text": "Адрес отделения банка: г. Тверь, ул. Рокоссовского, д. 34.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0057", "text": "Адрес отделения банка: г. Алатырь, ул. Химиков, д. 7.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0058", "text": "Адрес отделения банка: г. Хабаровск, ул. Ленина, д. 7.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0059", "text": "Филиал в г. Томск: Крымский Вал, д. 39, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0060", "text": "Юридический адрес компании: г. Омск, Волкова, 17.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0061", "text": "Юридический адрес компании: г. Омск, Химиков, 8.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0062", "text": "Филиал в г. Томск: Космонавтов, д. 7, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0063", "text": "Юридический адрес компании: г. Алатырь, Бригадная, 13.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0064", "text": "Юридический адрес компании: г. Хабаровск, Жуковского, 3.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0065", "text": "Юридический адрес компании: г. Алатырь, Космонавтов, 19.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0066", "text": "Адрес отделения банка: г. Самара, ул. Пролетарский, д. 20.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0067", "text": "Адрес отделения банка: г. Курган, ул. Садовая, д. 15.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0068", "text": "Офис: г. Североморск, просп. Космонавтов, д. 20.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0069", "text": "Пункт выдачи заказов: г. Димитровград, Строителей, 19 (самовывоз).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0070", "text": "Филиал в г. Омск: Маршала Жукова, д. 15, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0071", "text": "Юридический адрес компании: г. Челябинск, Волкова, 4.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0072", "text": "Офис: г. Вольск, просп. Космонавтов, д. 9.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0073", "text": "Филиал в г. Курган: Крымский Вал, д. 10, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0074", "text": "Юридический адрес компании: г. Вольск, Строителей, 1.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0075", "text": "Адрес отделения банка: г. Новосибирск, ул. Космонавтов, д. 43.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0076", "text": "Юридический адрес компании: г. Челябинск, Волкова, 32.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0077", "text": "Адрес отделения банка: г. Белгород, ул. Крымский Вал, д. 24.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0078", "text": "Юридический адрес компании: г. Североморск, Придорожная, 30.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0079", "text": "Офис: г. Казань, просп. Волкова, д. 20.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0080", "text": "Филиал в г. Ижевск: Ленина, д. 43, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0081", "text": "Филиал в г. Воронеж: Раздольная, д. 46, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0082", "text": "Юридический адрес компании: г. Вольск, Рокоссовского, 3.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0083", "text": "Офис: г. Курган, просп. Строителей, д. 8.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0084", "text": "Филиал в г. Курган: Пролетарский, д. 2, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0085", "text": "Адрес отделения банка: г. Томск, ул. Дружбы, д. 9.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0086", "text": "Адрес отделения банка: г. Вольск, ул. Бригадная, д. 36.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0087", "text": "Адрес отделения банка: г. Омск, ул. Крымский Вал, д. 50.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0088", "text": "Пункт выдачи заказов: г. Тверь, Жуковского, 31 (самовывоз).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0089", "text": "Юридический адрес компании: г. Тюмень, Волкова, 3.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0090", "text": "Филиал в г. Челябинск: Крымский Вал, д. 26, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0091", "text": "Пункт выдачи заказов: г. Тверь, Космонавтов, 26 (самовывоз).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0092", "text": "Офис: г. Ижевск, просп. Маршала Жукова, д. 27.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0093", "text": "Офис: г. Омск, просп. Раздольная, д. 48.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0094", "text": "Юридический адрес компании: г. Белгород, Маршала Жукова, 5.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0095", "text": "Офис: г. Тверь, просп. Дружбы, д. 23.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0096", "text": "Юридический адрес компании: г. Алатырь, Придорожная, 24.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0097", "text": "Адрес отделения банка: г. Казань, ул. Химиков, д. 38.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0098", "text": "Филиал в г. Североморск: Ленина, д. 44, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0099", "text": "Пункт выдачи заказов: г. Вольск, Придорожная, 19 (самовывоз).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0100", "text": "Филиал в г. Курган: Придорожная, д. 5, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0101", "text": "Пункт выдачи заказов: г. Ижевск, Рокоссовского, 48 (самовывоз).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0102", "text": "Адрес отделения банка: г. Плёсово, ул. Раздольная, д. 33.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0103", "text": "Юридический адрес компании: г. Рыбинск, Придорожная, 20.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0104", "text": "Филиал в г. Белгород: Бригадная, д. 22, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0105", "text": "Филиал в г. Томск: Строителей, д. 49, тел. офиса.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0106", "text": "Юридический адрес компании: г. Омск, Пролетарский, 6.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0107", "text": "Юридический адрес компании: г. Омск, Садовая, 31.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0108", "text": "Адрес Кремля: Москва, Кремль, 103132.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "org-address"]}
+{"id": "hn-0109", "text": "Событие произошло в 988 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0110", "text": "Событие произошло в 1147 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0111", "text": "Событие произошло в 1380 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0112", "text": "Событие произошло в 1612 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0113", "text": "Событие произошло в 1703 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0114", "text": "Событие произошло в 1812 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0115", "text": "Событие произошло в 1945 году — учебник истории.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0116", "text": "Битва произошла в 1395 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0117", "text": "Битва произошла в 1514 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0118", "text": "Битва произошла в 1446 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0119", "text": "Битва произошла в 1444 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0120", "text": "Битва произошла в 1646 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0121", "text": "Битва произошла в 1803 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0122", "text": "Битва произошла в 1615 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0123", "text": "Битва произошла в 1385 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0124", "text": "Битва произошла в 1365 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0125", "text": "Битва произошла в 1907 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0126", "text": "Битва произошла в 1399 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0127", "text": "Битва произошла в 1674 году.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "historic-date"]}
+{"id": "hn-0128", "text": "Запись 4414599150 из лога № 1000 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0129", "text": "ИНН 1222959646 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0130", "text": "В черновике ИНН 822875680129, контрольная сумма не сошлась.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0131", "text": "Строка 5202674610 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0132", "text": "Строка 291858543233 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0133", "text": "Строка 961047797208 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0134", "text": "Строка 917229980489 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0135", "text": "В черновике ИНН 3396783017, контрольная сумма не сошлась.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0136", "text": "Строка 6021825706 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0137", "text": "Запись 349434151209 из лога № 1009 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0138", "text": "Запись 5655807784 из лога № 1010 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0139", "text": "ИНН 7690788227 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0140", "text": "ИНН 4580425662 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0141", "text": "Строка 541635419216 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0142", "text": "ИНН 820533653682 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0143", "text": "ИНН 925815020373 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0144", "text": "В черновике ИНН 3672778842, контрольная сумма не сошлась.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0145", "text": "Запись 239043105299 из лога № 1017 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0146", "text": "ИНН 606848432589 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0147", "text": "В черновике ИНН 249622502808, контрольная сумма не сошлась.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0148", "text": "Запись 843446737460 из лога № 1020 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0149", "text": "Запись 443770232169 из лога № 1021 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0150", "text": "Запись 0537896525 из лога № 1022 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0151", "text": "Запись 2207173561 из лога № 1023 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0152", "text": "ИНН 7851599971 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0153", "text": "Строка 7061375139 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0154", "text": "Запись 4068933074 из лога № 1026 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0155", "text": "В черновике ИНН 965457479016, контрольная сумма не сошлась.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0156", "text": "Строка 627799412762 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0157", "text": "ИНН 8562184838 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0158", "text": "ИНН 3525542987 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0159", "text": "ИНН 7918273168 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0160", "text": "Запись 1005063550 из лога № 1032 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0161", "text": "Строка 166307583248 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0162", "text": "ИНН 872518774925 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0163", "text": "Запись 541452053350 из лога № 1035 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0164", "text": "Запись 337011771807 из лога № 1036 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0165", "text": "Строка 8387659783 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0166", "text": "ИНН 9222208261 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0167", "text": "Строка 230927505619 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0168", "text": "Строка 903478013776 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0169", "text": "ИНН 381525561383 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0170", "text": "Запись 3040354006 из лога № 1042 — не ИНН, а внутренний ID.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0171", "text": "ИНН 9289465874 отклонён: неверная контрольная цифра.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0172", "text": "Строка 147733637303 похожа на ИНН, но checksum неверен.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0173", "text": "Карта 4111 1111 1111 1112 не прошла проверку Луна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0174", "text": "Номер 1003365864 слишком короткий для ИНН.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0175", "text": "Телефон +1-530-652-09 укорочен и невалиден.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0176", "text": "Номер 7592262649 слишком короткий для ИНН.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0177", "text": "Серия 12 номер 3456 — всего 4 цифры, это не паспорт.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "bad-checksum"]}
+{"id": "hn-0185", "text": "PIN-код состоит из четырёх цифр и вводится отдельно.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0186", "text": "CVV находится на обратной стороне карты.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0187", "text": "ИНН содержит 10 или 12 цифр.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0188", "text": "Паспорт состоит из серии (4 цифры) и номера (6 цифр).", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0189", "text": "Код подразделения имеет формат 000-000.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0190", "text": "Дата рождения — это день, месяц и год.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0191", "text": "БИК состоит из 9 цифр и начинается с 04.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0192", "text": "Справка: PIN — см. раздел «Форматы документов».", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0193", "text": "Справка: CVV — см. раздел «Форматы документов».", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0195", "text": "Справка: БИК — см. раздел «Форматы документов».", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0197", "text": "Справка: ИНН — см. раздел «Форматы документов».", "entities": [], "source": "synthetic", "tags": ["hard-negative", "format-talk"]}
+{"id": "hn-0200", "text": "В документации используется номер +7 000 000-00-00 как пример.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0201", "text": "Тестовый e-mail test@example.com не является персональными данными.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0202", "text": "СНИЛС 000-000-000 00 формально проходит проверки, но не выдавался.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0203", "text": "Пример карты 4111 1111 1111 1111 только для тестов.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0205", "text": "Демо-стенд № 6: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0206", "text": "Демо-стенд № 7: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0207", "text": "Демо-стенд № 8: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0208", "text": "Демо-стенд № 9: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0210", "text": "Выдуманный адрес: г. Тестов, ул. Примерная, д. 0.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0220", "text": "Демо-стенд № 21: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0225", "text": "Демо-стенд № 26: все номера вымышлены.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction"]}
+{"id": "hn-0230", "text": "Парсер вернул статус 'Service Unavailable', модуль Parser.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0232", "text": "Сервер обработал 10 000 запросов за 02:15:30 без ошибок.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0233", "text": "Сборка 20230925-156157 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0234", "text": "Заказ № 31612-АБ-2024 обработан, код ошибки 503.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0235", "text": "Тикет 6914: таймаут 23с, повтор 6.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0238", "text": "Сборка 20232474-297784 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0240", "text": "Тикет 1631: таймаут 98с, повтор 11.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0241", "text": "Тикет 9075: таймаут 100с, повтор 12.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0243", "text": "Сборка 20232354-504791 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0245", "text": "Сборка 20235366-106429 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0247", "text": "Сборка 20234629-799022 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0248", "text": "Тикет 7963: таймаут 32с, повтор 19.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0249", "text": "Сборка 20238411-837615 успешна.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "meta-numbers"]}
+{"id": "hn-0250", "text": "Логин anna41 — системный аккаунт.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0251", "text": "Гость Андрей Зубарева — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0252", "text": "Гость Дмитрий Новикова — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0253", "text": "Гость Данил Медведев — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0254", "text": "IP 192.168.0.1 — адрес принтера в офисе.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0255", "text": "Гость Александра Медведев — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0256", "text": "Логин ivan59 — системный аккаунт.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0257", "text": "Индекс 135711 — номер склада, не почтовый.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0258", "text": "Индекс 169026 — номер склада, не почтовый.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0259", "text": "Гость Анна Филиппова — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0260", "text": "Индекс 190968 — номер склада, не почтовый.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}
+{"id": "hn-0261", "text": "Гость Андрей Коробин — персонаж пьесы.", "entities": [], "source": "synthetic", "tags": ["hard-negative", "fiction-person-or-infra"]}

@@ -6,18 +6,26 @@ types:
     name: Full name
     token_label: FIO
     context_words: [клиент, гражданин, физлицо, заявитель, ф.и.о, фио]
+    pii_context: [клиент, гражданин, заявитель, заёмщик, держатель, пользователь, сотрудник, фио, паспорт, родился, проживает, зарегистрирован, телефон, прошу, мой, моя]
+    non_pii_context: [поэт, писатель, композитор, художник, учёный, режиссёр, актёр, президент, памятник, музей, улица имени, роман, стихотворение, произведение, автор, книга]
+    patronymic_suffixes: [ович, евич, ич, овна, евна, ична, инична]
+    surname_suffixes: [ов, ев, ин, ын, ский, цкий, ова, ева, ина, ская, цкая, ко, ук, юк, ян, дзе]
     patterns: []
 
   - id: birth_date
     name: Birth date
     token_label: BDATE
-    context_words: [родился, родилась, дата рождения, д.р, г.р, рождения]
-    patterns: []
+    context_words: [родился, родилась, дата рождения, д.р, г.р, "др:", day of birth]
+    patterns:
+      - '\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
+      - '\b\d{4}-\d{2}-\d{2}\b'
+      - '\b\d{1,2}\s+[а-яё]+\s+\d{2,4}\b'
+      - '\b[а-яё]+\s+[а-яё]+\s+\d{2,4}\b'
 
   - id: birth_place
     name: Birth place
     token_label: BPLACE
-    context_words: [место рождения, родился в, родилась в, уроженец, уроженка]
+    context_words: [место рождения, родился, родилась, уроженец, уроженка]
     patterns: []
 
   - id: passport
@@ -45,7 +53,7 @@ types:
   - id: passport_issuer
     name: Passport issuing authority
     token_label: PASSISS
-    context_words: [выдан, кем выдан, выдал, орган]
+    context_words: [выдан, кем выдан, выдано, выдал, орган]
     patterns: []
 
   - id: subdivision_code
@@ -59,8 +67,12 @@ types:
   - id: passport_issue_date
     name: Passport issue date
     token_label: ISSDATE
-    context_words: [дата выдачи, выдан, выдана, выдачи]
-    patterns: []
+    context_words: [дата выдачи, выдан, выдана, выдано, выдачи]
+    patterns:
+      - '\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
+      - '\b\d{4}-\d{2}-\d{2}\b'
+      - '\b\d{1,2}\s+[а-яё]+\s+\d{2,4}\b'
+      - '\b[а-яё]+\s+[а-яё]+\s+\d{2,4}\b'
 
   - id: driver_license
     name: Driver license series and number
@@ -75,7 +87,7 @@ types:
   - id: address
     name: Address
     token_label: ADDR
-    context_words: [адрес, проживает, зарегистрирован, прописан]
+    context_words: [адрес, проживает, зарегистрирован, прописан, индекс]
     patterns: []
 
   - id: email
@@ -133,7 +145,7 @@ types:
   - id: card_holder
     name: Card holder name
     token_label: CARDHLD
-    context_words: [держатель, cardholder, владелец карты]
+    context_words: [держатель, cardholder, holder, на имя, владелец карты]
     patterns: []
 
   - id: snils

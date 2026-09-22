@@ -41,12 +41,16 @@ pub struct ServerConfig {
     pub mapping_max_entries: usize,
     #[serde(default = "default_request_deadline_ms")]
     pub request_deadline_ms: u64,
+    /// Birth dates older than this many years are treated as historical (confidence penalty).
+    #[serde(default = "default_historical_date_years")]
+    pub historical_date_years: u32,
 }
 fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
 fn default_mapping_ttl_sec() -> u64 { 900 }
 fn default_mapping_max_entries() -> usize { 200_000 }
 fn default_request_deadline_ms() -> u64 { 5000 }
+fn default_historical_date_years() -> u32 { 120 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
