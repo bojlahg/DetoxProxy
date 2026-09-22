@@ -30,6 +30,12 @@ context:
     - герой
     - персонаж
     - фильм
+    - лекция о
+    - фильм о
+    - книга о
+    - биография
+    - умер
+    - скончался
     - отделение
     - офис
     - филиал
@@ -164,6 +170,10 @@ types:
     non_pii_context: [поэт, писатель, композитор, художник, учёный, режиссёр, актёр, президент, памятник, музей, улица имени, роман, стихотворение, произведение, автор, книга]
     patronymic_suffixes: [ович, евич, ич, овна, евна, ична, инична]
     surname_suffixes: [ов, ев, ин, ын, ский, цкий, ова, ева, ина, ская, цкая, ко, ук, юк, ян, дзе]
+    # Case endings stripped from a first name before dictionary lookup (oblique cases).
+    first_name_case_endings: [у, ю, а, я, е, ом, ем, ой, ей, ым, им, ого, ему]
+    # Suffixes stripped from a surname in oblique cases before dictionary lookup.
+    surname_case_suffixes: [ову, еву, ину, ым, ой, овой, евой, иной, ского, скому, ской]
     patterns: []
 
   - id: birth_date
@@ -245,7 +255,7 @@ types:
     name: Address
     token_label: ADDR
     context_words: [адрес, проживает, зарегистрирован, прописан, индекс]
-    pii_markers: [проживает, живёт, адрес регистрации, зарегистрирован, прописан, адрес]
+    pii_markers: [проживает, живёт, адрес регистрации, зарегистрирован, прописан]
     non_pii_markers: [отделение, отделении, офис, офисе, филиал, банк, банка, адрес банка]
     patterns: []
 

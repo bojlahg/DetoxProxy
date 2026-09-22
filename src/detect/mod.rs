@@ -243,7 +243,95 @@ impl Detector {
         }
 
         self.apply_neighbor_boost(text, &mut candidates);
-        resolve_overlaps(candidates)
+        self.drop_bare_public_persons(text, &mut candidates);
+        let all_fios: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| e.type_id == "fio")
+            .map(|e| (e.start, e.end))
+            .collect();
+        let mut result = resolve_overlaps(candidates);
+        self.drop_biography_fios(text, &mut result);
+        self.drop_historical_dates_bound_to_biography(text, &mut result, &all_fios);
+        result
+    }
+
+    /// A FIO that is a full match with a public person is masked only when a strong PII marker
+    /// or a confident neighboring entity is present. Otherwise it is a biographical reference
+    /// (e.g. "Александр Сергеевич Пушкин", "Лев Николаевич Толстой родился в 1828 году").
+    fn drop_bare_public_persons(&self, text: &str, candidates: &mut Vec<Entity>) {
+        let confident: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| e.type_id != "fio" && e.confidence >= 0.9)
+            .map(|e| (e.start, e.end))
+            .collect();
+        candidates.retain(|e| {
+            if e.type_id != "fio" {
+                return true;
+            }
+            let span_words = normalize_name_words(&text[e.start..e.end]);
+            if !self.allowlist.matches_person_subset(&span_words) {
+                return true;
+            }
+            if self.strong_pii_marker(text, e.start, e.end) {
+                return true;
+            }
+            // A confident neighboring entity (passport, phone, card, ...) in the same sentence
+            // marks the person as a client. Entities overlapping the FIO span itself (e.g. a
+            // city homonym "Пушкин") are not neighbors. Without such a neighbor the FIO is a
+            // bare biographical reference and is dropped.
+            confident
+                .iter()
+                .any(|(cs, ce)| (*ce <= e.start || *cs >= e.end) && same_sentence(text, e.start, *cs))
+        });
+    }
+
+    /// A FIO preceded by a strong biographical marker (поэт, писатель, композитор,
+    /// "в биографии", памятник, музей, император) is a biographical reference, not a
+    /// client, and is not masked. The FIO stays in `all_fios` so a historical date bound to
+    /// it is also dropped.
+    fn drop_biography_fios(&self, text: &str, result: &mut Vec<Entity>) {
+        result.retain(|e| {
+            if e.type_id != "fio" {
+                return true;
+            }
+            !self.strong_biography_marker_before(text, e.start)
+        });
+    }
+
+    /// A historical birth date (year older than `historical_date_years`) whose nearest FIO to
+    /// the left (within 80 chars) is a biographical reference (not masked) is not masked: it
+    /// belongs to a public person, not a client.
+    fn drop_historical_dates_bound_to_biography(
+        &self,
+        text: &str,
+        result: &mut Vec<Entity>,
+        all_fios: &[(usize, usize)],
+    ) {
+        let masked_fios: Vec<(usize, usize)> = result
+            .iter()
+            .filter(|e| e.type_id == "fio")
+            .map(|e| (e.start, e.end))
+            .collect();
+        result.retain(|e| {
+            if e.type_id != "birth_date" {
+                return true;
+            }
+            let span = &text[e.start..e.end];
+            if !age_exceeds(span, self.historical_date_years) {
+                return true;
+            }
+            let nearest = all_fios
+                .iter()
+                .filter(|(s, _)| *s < e.start && e.start - *s <= 80)
+                .max_by_key(|(s, _)| *s);
+            match nearest {
+                // A FIO exists to the left; keep the date only when that FIO is masked (a
+                // client). A biographical reference (not masked) means the date belongs to a
+                // public person and is dropped.
+                Some((fs, _)) => masked_fios.iter().any(|(s, _)| *s == *fs),
+                None => true,
+            }
+        });
     }
 
     /// Boosts FIO confidence by +0.2 when another confident entity (passport, INN, phone, card)
@@ -356,6 +444,10 @@ impl Detector {
             .iter()
             .enumerate()
             .filter(|(i, t)| {
+                // A context marker word (e.g. "Клиент", "Поэт") never belongs to a FIO span.
+                if self.is_marker_word(&t.lower) {
+                    return false;
+                }
                 if !self.is_city(&t.lower) {
                     return true;
                 }
@@ -393,6 +485,11 @@ impl Detector {
                 }
                 // Skip tokens that are part of an address (after street markers).
                 if window.iter().any(|t| self.preceded_by_street_marker(text, t.start)) {
+                    continue;
+                }
+                // A word after a military/academic rank (e.g. "Маршала Жукова, д. 15") is a
+                // street name, not a FIO.
+                if is_rank_word(&window[0].lower) {
                     continue;
                 }
                 let (qualifies, comps) = self.fio_qualifies(window);
@@ -436,6 +533,15 @@ impl Detector {
                     2 => 0.5,
                     _ => 0.5,
                 };
+                // Two words, one a first name and one a surname in oblique case (e.g. "Ивану
+                // Петрову") are a confident FIO.
+                if comps == 2 {
+                    let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
+                    let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
+                    if any_first_case && any_surname_case {
+                        conf = 0.7;
+                    }
+                }
                 // Marker conflict is resolved by the trap policy.
                 if has_pii && has_non_pii {
                     match opts.trap_policy {
@@ -476,6 +582,15 @@ impl Detector {
         if any_surname_suffix && (any_first_name || any_initial) {
             return (true, comps);
         }
+        // Two adjacent capitalized words, one a first name and one a surname in any case
+        // (oblique forms like "Ивану Петрову") qualify as a FIO.
+        if comps == 2 {
+            let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
+            let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
+            if any_first_case && any_surname_case {
+                return (true, comps);
+            }
+        }
         // 3 capitalized words with no dictionary hit: only with PII context (handled by caller).
         if comps == 3 && !any_initial {
             return (true, comps);
@@ -491,6 +606,51 @@ impl Detector {
         self.dicts.contains("surnames", lower)
             || self.dicts.contains("first_names", lower)
             || self.dicts.contains("patronymics", lower)
+    }
+
+    /// True if the word is a first name in any grammatical case (nominative or oblique).
+    fn first_name_in_any_case(&self, lower: &str) -> bool {
+        if self.dicts.contains("first_names", lower) {
+            return true;
+        }
+        let spec = self.registry.get("fio");
+        let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
+        endings.iter().any(|e| {
+            if let Some(stripped) = lower.strip_suffix(e.as_str()) {
+                if !stripped.is_empty() && self.dicts.contains("first_names", stripped) {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// True if the word is a surname in any grammatical case (nominative or oblique).
+    fn surname_in_any_case(&self, lower: &str) -> bool {
+        if self.dicts.contains("surnames", lower) {
+            return true;
+        }
+        let spec = self.registry.get("fio");
+        let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
+        if endings.iter().any(|e| {
+            if let Some(stripped) = lower.strip_suffix(e.as_str()) {
+                if !stripped.is_empty() && self.dicts.contains("surnames", stripped) {
+                    return true;
+                }
+            }
+            false
+        }) {
+            return true;
+        }
+        let suffixes = spec.map(|s| s.surname_case_suffixes.as_slice()).unwrap_or(&[]);
+        suffixes.iter().any(|s| {
+            if let Some(stripped) = lower.strip_suffix(s.as_str()) {
+                if !stripped.is_empty() && self.dicts.contains("surnames", stripped) {
+                    return true;
+                }
+            }
+            false
+        })
     }
 
     fn is_patronymic(&self, lower: &str) -> bool {
@@ -938,6 +1098,59 @@ impl Detector {
         markers.iter().any(|m| before.contains(m.as_str()) || after.contains(m.as_str()))
     }
 
+    /// True if a strong PII marker (client, passport, phone, etc.) is near the span. Birth
+    /// markers ("родился") are excluded: they also appear in biographical references.
+    fn strong_pii_marker(&self, text: &str, start: usize, end: usize) -> bool {
+        let ctx = self.registry.context();
+        let before = context_window_before(text, start, 60).to_lowercase();
+        let after = context_window_after(text, end, 60).to_lowercase();
+        ctx.pii_markers.iter().any(|m| {
+            if matches!(m.as_str(), "родился" | "родилась") {
+                return false;
+            }
+            before.contains(m.as_str()) || after.contains(m.as_str())
+        })
+    }
+
+    /// True if a strong biographical marker (поэт, писатель, композитор, "в биографии",
+    /// памятник, музей, император) appears within a few words directly before `start`.
+    fn strong_biography_marker_before(&self, text: &str, start: usize) -> bool {
+        const MARKERS: &[&str] = &[
+            "поэт",
+            "писатель",
+            "композитор",
+            "биографи",
+            "памятник",
+            "музей",
+            "император",
+        ];
+        let prefix = &text[..start];
+        let trimmed = prefix.trim_end();
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        let tail: Vec<&str> = words.iter().rev().take(4).rev().copied().collect();
+        let tail_lower = tail.join(" ").to_lowercase();
+        MARKERS.iter().any(|m| tail_lower.contains(m))
+    }
+
+    /// True if the word is a context marker of any type (pii, non-pii, or a type's
+    /// context_words). Marker words never belong to a FIO span.
+    fn is_marker_word(&self, lower: &str) -> bool {
+        let ctx = self.registry.context();
+        if ctx.pii_markers.iter().any(|m| m == lower) {
+            return true;
+        }
+        if ctx.non_pii_markers.iter().any(|m| m == lower) {
+            return true;
+        }
+        self.registry.types().iter().any(|s| {
+            s.context_words.iter().any(|w| w == lower)
+                || s.pii_context.iter().any(|w| w == lower)
+                || s.non_pii_context.iter().any(|w| w == lower)
+                || s.pii_markers.iter().any(|w| w == lower)
+                || s.non_pii_markers.iter().any(|w| w == lower)
+        })
+    }
+
     /// True if the token at `start` is preceded by a street marker ("ул.", "улица").
     fn preceded_by_street_marker(&self, text: &str, start: usize) -> bool {
         let prefix = &text[..start];
@@ -1000,6 +1213,14 @@ struct NameToken {
     is_initial: bool,
 }
 
+/// True if the word is a military/academic rank in genitive case (e.g. "маршала", "генерала").
+fn is_rank_word(lower: &str) -> bool {
+    matches!(
+        lower,
+        "маршала" | "генерала" | "адмирала" | "академика"
+    )
+}
+
 fn name_tokens(text: &str) -> Vec<NameToken> {
     let mut out = Vec::new();
     for m in NAME_TOKEN_RE.find_iter(text) {
@@ -1018,10 +1239,24 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
     out
 }
 
-/// True if two name tokens are separated only by spaces or periods (initials).
+/// True if two name tokens are separated only by spaces, or by a period that follows a
+/// single-letter initial (e.g. "И. И. Иванов"). A period after a full word is a sentence
+/// boundary and breaks the span.
 fn tokens_adjacent(text: &str, a: &NameToken, b: &NameToken) -> bool {
     let between = &text[a.end..b.start];
-    between.chars().all(|c| c.is_whitespace() || c == '.')
+    if between.chars().all(|c| c.is_whitespace()) {
+        return true;
+    }
+    // A period is allowed only when the preceding token is a single-letter initial.
+    if a.is_initial {
+        let trimmed = between.trim_start_matches(|c: char| c.is_whitespace());
+        if let Some(rest) = trimmed.strip_prefix('.') {
+            if rest.chars().all(|c| c.is_whitespace()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn is_sentence_start(text: &str, start: usize) -> bool {
@@ -1200,22 +1435,40 @@ fn is_abbreviation_period(rest: &str, period_idx: usize, abbrev: &[String]) -> b
     abbrev.iter().any(|a| word == a.as_str())
 }
 
-/// Finds a country word after a marker.
+/// Finds a country word or multi-word country phrase after a marker (longest match wins).
 fn find_country_after(text: &str, from: usize, dicts: &Dictionaries, suffixes: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
     let end_rel = rest.find([',', '.', ';', '\n']).unwrap_or(rest.len());
     let sentence = &rest[..end_rel];
-    for (start, end, lower, _) in cyrillic_words(sentence) {
-        if is_country(&lower, dicts, suffixes) {
-            return Some((from + start, from + end));
+    let words = cyrillic_words(sentence);
+    let mut best: Option<(usize, usize, usize)> = None;
+    for i in 0..words.len() {
+        let mut phrase = String::new();
+        for j in i..(i + 4).min(words.len()) {
+            if j > i {
+                phrase.push(' ');
+            }
+            phrase.push_str(&words[j].2);
+            if is_country(&phrase, dicts, suffixes) {
+                let start = words[i].0;
+                let end = words[j].1;
+                let len = end - start;
+                if best.is_none_or(|(_, _, bl)| len > bl) {
+                    best = Some((start, end, len));
+                }
+            }
         }
     }
-    None
+    best.map(|(s, e, _)| (from + s, from + e))
 }
 
 fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
     if dicts.contains("countries", lower) {
         return true;
+    }
+    // Multi-word phrases are stored verbatim; no suffix stripping for them.
+    if lower.contains(' ') {
+        return false;
     }
     // Handle common genitive forms by stripping a trailing suffix.
     for suffix in suffixes {

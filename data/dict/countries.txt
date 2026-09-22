@@ -1,4 +1,10 @@
 # Countries and nationalities, one per line, lowercase.
+# Multi-word country names are stored as full phrases (longest match wins).
+российская федерация
+республика беларусь
+республика казахстан
+соединённые штаты америки
+кыргызская республика
 австралия
 австрия
 азербайджан

@@ -86,6 +86,12 @@ pub struct TypeSpec {
     /// Surname suffixes (e.g. "-ов", "-ский"); a word ending with one is a surname.
     #[serde(default)]
     pub surname_suffixes: Vec<String>,
+    /// Case endings stripped from a first name before dictionary lookup (oblique cases).
+    #[serde(default)]
+    pub first_name_case_endings: Vec<String>,
+    /// Suffixes stripped from a surname in oblique cases before dictionary lookup.
+    #[serde(default)]
+    pub surname_case_suffixes: Vec<String>,
     /// PII markers that raise confidence when found near a candidate (e.g. "клиент", "паспорт").
     #[serde(default)]
     pub pii_context: Vec<String>,

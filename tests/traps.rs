@@ -85,11 +85,20 @@ fn full_namesake_with_pii_context_masked() {
 
 #[test]
 fn bare_public_person_depends_on_policy() {
+    // A bare full match with a public person (no PII marker) is not a client.
     let mask = detect("Александр Сергеевич Пушкин", TrapPolicy::PreferMask);
-    assert!(has_type(&mask, "fio"), "prefer_mask should find fio: {:?}", mask);
+    assert!(!has_type(&mask, "fio"), "bare public person should not be found: {:?}", mask);
 
     let skip = detect("Александр Сергеевич Пушкин", TrapPolicy::PreferSkip);
-    assert!(!has_type(&skip, "fio"), "prefer_skip should not find fio: {:?}", skip);
+    assert!(!has_type(&skip, "fio"), "bare public person should not be found: {:?}", skip);
+
+    // A full namesake with a strong PII marker is a client and is masked under both policies.
+    let text = "Клиент Александр Сергеевич Пушкин, тел. +7 912 345-67-89";
+    let mask = detect(text, TrapPolicy::PreferMask);
+    assert!(has_type(&mask, "fio"), "client namesake should be found: {:?}", mask);
+
+    let skip = detect(text, TrapPolicy::PreferSkip);
+    assert!(has_type(&skip, "fio"), "client namesake should be found: {:?}", skip);
 }
 
 #[test]
