@@ -12,7 +12,7 @@ paths=(
   tools/check_process.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py
   docs/LICENSES.md docs/brief/manual-test-cases.md tests/manual_expect.json
 )
-for extra in docs/ARCHITECTURE.md docs/JURY.md docs/MASKS.md docs/QUALITY.md docs/LOAD.md docs/LIMITATIONS.md; do
+for extra in docs/ARCHITECTURE.md docs/JURY.md docs/MASKS.md docs/QUALITY.md docs/LOAD.md docs/LIMITATIONS.md docs/DEMO.md; do
   git cat-file -e "HEAD:$extra" 2>/dev/null && paths+=("$extra")
 done
 
