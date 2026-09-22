@@ -40,9 +40,13 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `POST /v1/unmask` | `{"text", "session_id"}` → `{"text"}` |
 | `POST /v1/detect` | `{"text"}` → `{"entities": [{"type","start","end","confidence"}]}`, смещения в байтах UTF-8 |
 | `GET /healthz`, `/readyz` | живость и готовность |
+| `POST /v1/chat/completions` | OpenAI-совместимый прокси к LLM: маскирует `messages`, отправляет в upstream, восстанавливает ответ (обычный и `stream: true`); без upstream — демо-режим |
+| `POST /admin/reload` | перечитать конфиг, типы ПД, allowlist и словари без рестарта (заголовок `X-Admin-Token` = переменная `DETOX_ADMIN_TOKEN`; без переменной эндпоинт выключен). То же по `SIGHUP` |
 | `GET /metrics` | Prometheus |
 
-Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная система → 403, битый JSON или нет `payload_id` → 400, перегрузка → 429 с `Retry-After`.
+Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная система → 403, битый JSON или нет `payload_id` → 400, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms` → 503 с `Retry-After`.
+
+Соответствия хранятся отдельно для каждой системы: маска системы A, присланная системой B с тем же `payload_id`, не раскрывается.
 
 ### Как `/process` понимает, маскировать или восстанавливать
 
@@ -99,9 +103,20 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 
 В поставке три системы: `autotest` (по умолчанию), `chatbot` (хеш-токены, без восстановления), `strict` (правило комбинаций, `prefer_skip`).
 
+### Прокси к LLM
+
+```yaml
+llm:
+  upstream_url: "https://llm.example/v1/chat/completions"   # не задан — демо-режим
+  api_key_env: "DETOX_LLM_API_KEY"                          # имя переменной окружения с ключом
+  timeout_ms: 60000
+```
+
+Все сообщения одного запроса маскируются одной таблицей: одно значение — один токен во всех сообщениях. В upstream уходит только текст с токенами; ключ берётся из окружения и нигде не логируется; ошибка upstream отдаётся клиенту как 502 без подробностей. Заголовок ответа `X-Detox-Masked-Entities` — сколько значений было скрыто.
+
 ## Логи и метрики
 
-Логи — JSON в stdout, одна строка на запрос без значений ПД: `request_id`, система, направление (mask/unmask), `payload_id` (длинный — хешем), число сущностей по типам, задержка, статус. Метрики Prometheus: `pii_requests_total` и `pii_latency_seconds` (по системе, направлению, статусу), `pii_entities_total` (по типам), `pii_rejected_total` (429), `pii_inflight`, `pii_mappings_stored`. Значения ПД не попадают ни в логи, ни в метрики, ни в тексты ошибок — это проверяется тестами.
+Логи — JSON в stdout, одна строка на запрос без значений ПД: `request_id`, система, направление (mask/unmask), `payload_id` (длинный — хешем), число сущностей по типам, задержка, статус. Метрики Prometheus: `pii_requests_total` и `pii_latency_seconds` (по системе, направлению, статусу), `pii_entities_total` (по типам), `pii_rejected_total` (429 и 503), `pii_inflight`, `pii_mappings_stored`; для разбора прогонов — `pii_payload_bytes` (размер текстов), `pii_entities_per_request`, `pii_requests_without_entities_total`, `pii_process_retry_total` (повторы с тем же `payload_id`), `pii_unmask_unresolved_tokens_total` (токены без соответствия), `pii_config_reloads_total`. Значения ПД не попадают ни в логи, ни в метрики, ни в тексты ошибок — это проверяется тестами.
 
 ## Проверка
 
@@ -112,4 +127,4 @@ bash tools/manual_accept.sh                            # 25 ручных кей�
 python tools/eval_dataset.py --url http://127.0.0.1:8080   # точность на размеченных наборах (tests/data)
 ```
 
-Сторонние данные и лицензии — `docs/LICENSES.md`.
+Архитектура — `docs/ARCHITECTURE.md`. Сторонние данные и лицензии — `docs/LICENSES.md`.
