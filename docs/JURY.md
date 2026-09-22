@@ -59,6 +59,8 @@ curl -s localhost:8080/process -H 'Content-Type: application/json' -d '{
   "payload_id": "demo-2"}'
 ```
 
+Вариации написания, которые тоже маскируются: строчными с телефона («иванов иван иванович, тел 89123456789»), с латинской «o» внутри фамилии («Иванoв»), латиницей с отчеством («Ivanov Ivan Ivanovich»), «Королев» при словаре с «Королёв», дата прописью («двенадцатого марта 1985 г.»), «серия 4509, номер 123456».
+
 ## 4. Настройка под систему-потребителя
 
 Заголовок `X-System-Id` выбирает политику из `config.yaml`. В поставке три системы:
@@ -73,6 +75,16 @@ curl -s localhost:8080/process -H 'X-System-Id: chatbot' -H 'Content-Type: appli
 curl -s localhost:8080/process -H 'X-System-Id: strict' -H 'Content-Type: application/json' \
   -d '{"payload":"пин-код 4821","payload_id":"demo-4"}'
 ```
+
+Системе можно назначить ключ доступа: в `config.yaml` у `strict` указано `api_key_env: DETOX_KEY_STRICT`. Если переменная задана, запрос к `strict` без заголовка `X-Api-Key` или с неверным ключом получает 401, ключ сравнивается за постоянное время и не попадает ни в журнал, ни в метрики:
+
+```bash
+DETOX_KEY_STRICT=s3cret ./target/release/detox-proxy --config config.yaml &
+curl -s localhost:8080/process -H 'X-System-Id: strict' -H 'Content-Type: application/json'   -d '{"payload":"ИНН 500100732259","payload_id":"demo-5"}'                      # 401
+curl -s localhost:8080/process -H 'X-System-Id: strict' -H 'X-Api-Key: s3cret' -H 'Content-Type: application/json'   -d '{"payload":"ИНН 500100732259","payload_id":"demo-5"}'                      # 200
+```
+
+Неизвестная система — 403, отключённая (`enabled: false`) — тоже 403, запрет восстановления для системы — `unmask_enabled: false`. Значения в хранилище соответствий зашифрованы ключом процесса (`server.encrypt_mappings`).
 
 Режим замены задаётся на систему и на тип: `token`, `pseudonym` (правдоподобная подстановка: «Сидорову Петру Ивановичу» → «Чернякову Ираклию Ильичу», ИНН и карта с верной контрольной суммой), `stars` (`4276 **** **** 3347`, ФИО → `С. П. И.`), `synthetic`, `remove`, `off`. Все режимы на одном тексте — `docs/MASKS.md`, проверка — `python3 tools/check_modes.py --bin target/release/detox-proxy`.
 

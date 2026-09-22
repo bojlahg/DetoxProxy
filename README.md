@@ -44,7 +44,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `POST /admin/reload` | перечитать конфиг, типы ПД, allowlist и словари без рестарта (заголовок `X-Admin-Token` = переменная `DETOX_ADMIN_TOKEN`; без переменной эндпоинт выключен). То же по `SIGHUP` |
 | `GET /metrics` | Prometheus |
 
-Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная система → 403, битый JSON или нет `payload_id` → 400, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms` → 503 с `Retry-After`.
+Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная система → 403, битый JSON или нет `payload_id` → 400, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms`, `encrypt_mappings` (шифрование значений в хранилище соответствий, по умолчанию включено) → 503 с `Retry-After`.
 
 Соответствия хранятся отдельно для каждой системы: маска системы A, присланная системой B с тем же `payload_id`, не раскрывается.
 
@@ -97,6 +97,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `allow_substrings` | список строк | никогда не маскировать |
 | `token_numbering` | `sequential` / `hash` | `<<INN_1>>` или `<<INN_f5c0b7>>` (стабильно между запросами — не ломает кеш промптов LLM) |
 | `hash_salt` | строка | соль для `hash` |
+| `api_key_env` | имя переменной окружения | если задана и непуста — запросы к системе требуют заголовок `X-Api-Key` с этим ключом, иначе 401 |
 | `session_mode` | `stateless` / `stateful` | время жизни соответствий |
 
 Сервер: `mapping_ttl_sec` (TTL соответствий, по умолчанию 900 с), `mapping_max_entries`, `max_inflight` (дальше — 429), `max_body_bytes`, `request_deadline_ms`, `historical_date_years` (старше — «историческая» дата).
