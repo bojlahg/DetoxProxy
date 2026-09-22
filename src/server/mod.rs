@@ -29,7 +29,7 @@ pub struct AppState {
     pub config: ConfigStore,
     pub registry: ArcSwap<Registry>,
     pub detector: ArcSwap<Detector>,
-    pub store: MappingStore,
+    pub store: Arc<MappingStore>,
     pub metrics: PrometheusHandle,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub heavy: Arc<tokio::sync::Semaphore>,
@@ -1037,22 +1037,23 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let metrics = crate::obs::install_metrics()?;
 
     let cfg = load_config(&config_path)?;
-    let store = crate::store::MappingStore::new(
+    let store = Arc::new(crate::store::MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
 
     let state = Arc::new(AppState {
         config: crate::config::ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(load_registry(&cfg)?),
         detector: ArcSwap::from_pointee(load_detector(&cfg)?),
-        store,
+        store: store.clone(),
         metrics,
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: config_path.clone(),
     });
 
+    store.spawn_sweeper(Duration::from_secs(5));
     spawn_background_tasks(&state);
 
     let app = build_router(state.clone());
@@ -1095,7 +1096,7 @@ fn load_detector(cfg: &crate::config::Config) -> anyhow::Result<crate::detect::D
         .with_historical_date_years(cfg.server.historical_date_years))
 }
 
-/// Spawns the SIGHUP reload loop and the periodic store sweep.
+/// Spawns the SIGHUP reload loop.
 fn spawn_background_tasks(state: &Arc<AppState>) {
     #[cfg(unix)]
     {
@@ -1123,19 +1124,6 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
             }
         });
     }
-
-    let sweep_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            let removed = sweep_state.store.sweep();
-            metrics::gauge!("pii_mappings_stored").set(sweep_state.store.len() as f64);
-            if removed > 0 {
-                tracing::debug!(removed = removed, "store sweep");
-            }
-        }
-    });
 }
 
 async fn shutdown_signal() {

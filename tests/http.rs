@@ -31,10 +31,10 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
         _ => Arc::new(Dictionaries::empty()),
     };
     let detector = Detector::new(registry.clone(), dicts);
-    let store = MappingStore::new(
+    let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(registry),
