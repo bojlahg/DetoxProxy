@@ -229,3 +229,51 @@ impl MappingStore {
   <acceptance>cargo clippy --all-targets -- -D warnings && cargo build</acceptance>
   <out_of_scope>Реализация любой логики. Изменение сигнатур. Новые крейты сверх перечисленных.</out_of_scope>
 </task>
+<task id="T02">
+  <goal>Реестр типов ПДн из YAML и детекторы структурированных типов с валидацией: карта, ИНН, СНИЛС, телефон, email, паспорт, код подразделения, водительское удостоверение, CVV, ПИН. Детектор возвращает корректные байтовые спаны, не учитывает регистр, разрешает пересечения.</goal>
+  <context>docs/agent-kit/SPEC.md §4, §5 (пункт про confidence), §10. Сигнатуры в src/registry/mod.rs и src/detect/mod.rs уже заданы — реализуй тела, не меняя их. AGENTS.md, блок pii_rules.</context>
+  <files_allowed>src/registry/mod.rs, src/detect/mod.rs, data/pii_types.yaml, tests/registry.rs, tests/detect_structured.rs</files_allowed>
+  <requirements>
+    1. Registry::from_yaml разбирает YAML вида `types: [TypeSpec, ...]`, проверяет уникальность id, компилирует каждый pattern через `regex::RegexBuilder::new(p).case_insensitive(true).unicode(true).build()`; ошибка компиляции — RegistryError::Regex с id типа. Registry::patterns возвращает пустой срез для неизвестного id.
+    2. data/pii_types.yaml — реестр со всеми 17 типами из SPEC §4 плюс snils. Рабочие patterns в этой задаче нужны для: card_number, inn, snils, phone, email, passport, subdivision_code, driver_license, cvv, card_pin. Для fio, birth_date, birth_place, citizenship, passport_issuer, passport_issue_date, address, card_holder — запись с id, name, token_label, context_words и пустым patterns (детекция — T05). Комментарии в YAML на английском.
+    3. Шаблоны (регистронезависимые, unicode) и обязательные вариации:
+       - card_number: 13–19 цифр группами по 4 через пробел, дефис или слитно; validator luhn; stars_keep_prefix 4, stars_keep_suffix 4; token_label CARD.
+       - inn: 10 или 12 цифр как отдельное слово (с обеих сторон не цифра); validator inn (контрольные разряды ФНС для 10 и 12 знаков); context_words [инн]; token_label INN.
+       - snils: `NNN-NNN-NNN NN` и 11 цифр слитно; validator snils; token_label SNILS.
+       - phone: `+7`, `8` или `7` и 10 цифр с любыми разделителями (пробел, дефис, скобки, точка), а также 10 цифр с кодом в скобках без префикса; validator phone (после удаления нецифр: 11 цифр с первой 7 или 8, либо 10 цифр с первой 9, 4 или 8); token_label PHONE; stars_keep_prefix 2, stars_keep_suffix 2.
+       - email: локальная часть из букв, цифр, точек, плюсов, дефисов, подчёркиваний; `@`; домен с хотя бы одной точкой; validator email; token_label EMAIL.
+       - passport: `NNNN NNNNNN`, `NN NN NNNNNN`, `NNNNNNNNNN`, а также с разделяющими словами: «серия NNNN номер NNNNNN», «серия: NNNN, номер: NNNNNN», «паспорт NNNN NNNNNN». Спан начинается на первой цифре серии и заканчивается на последней цифре номера; слово «номер» между ними входит в спан, слова «серия» и «паспорт» перед серией — нет. context_words [паспорт, серия, номер, паспортные данные]; token_label PASSPORT; stars_keep_prefix 2, stars_keep_suffix 2.
+       - subdivision_code: `NNN-NNN`; context_required true; context_words [код подразделения, к/п, подразделения]; token_label SUBDIV.
+       - driver_license: `NN NN NNNNNN`, `NNNN NNNNNN`, `NN AA NNNNNN` (AA — две кириллические буквы) с разделителями; context_required true; context_words [в/у, ву, водительское, удостоверение, права]; token_label DRIVER_LICENSE.
+       - cvv: 3–4 цифры как отдельное слово; context_required true; context_words [cvv, cvc, cvv2, cvc2, код безопасности, защитный код]; requires_companion true; token_label CVV.
+       - card_pin: 4 цифры как отдельное слово; context_required true; context_words [пин, pin, пин-код, pin-код]; requires_companion true; token_label PIN.
+    4. Detector::detect:
+       - для каждого включённого типа прогоняет все patterns; кандидат получает confidence 0.6; если validator не None и прошёл — плюс 0.3, если validator задан и не прошёл — кандидат отбрасывается; если в окне context_window символов (считать по char, не по байтам) перед началом спана есть context_word (в нижнем регистре) — плюс 0.1; если context_required и контекстного слова нет — отбрасывается; итог не больше 1.0;
+       - отбрасывает кандидатов с confidence меньше opts.min_confidence и кандидатов, чей текст спана входит как подстрока в любую строку из opts.allow_substrings (без учёта регистра);
+       - убирает пересечения: сортировка по start, при пересечении побеждает более длинный, при равной длине — более уверенный;
+       - start и end — байтовые смещения в исходной строке; гарантируется, что оба — границы символов;
+       - регистр не влияет: «ИНН 7707083893» и «инн 7707083893» дают одинаковый спан.
+    5. validators: luhn (стандарт, вход — только цифры); inn (10 знаков: коэффициенты 2,4,10,3,5,9,4,6,8; 12 знаков: первый контрольный с 7,2,4,10,3,5,9,4,6,8 и второй с 3,7,2,4,10,3,5,9,4,6,8; сумма mod 11 mod 10); snils (сумма первых 9 цифр с весами 9..1; если сумма меньше 100 — контроль равен сумме; 100 или 101 — контроль 00; больше 101 — сумма mod 101, и 100 даёт 00); phone; email. date в этой задаче остаётся todo!() и не вызывается.
+    6. Dictionaries::empty, load_dir (каждый файл `*.txt` в каталоге — список слов по строкам, имя списка равно имени файла без расширения, слова в нижний регистр, пустые строки и строки с # пропускаются), contains. В этой задаче детектор словари не использует.
+    7. Производительность: регулярки компилируются в Registry один раз; detect не создаёт Regex. Тест: 1000 вызовов detect на предложении из 200 символов со всеми типами укладываются в 2 с в debug-сборке.
+  </requirements>
+  <tests>
+    tests/registry.rs: from_yaml на data/pii_types.yaml даёт не меньше 18 типов; дубль id даёт Duplicate; битая регулярка даёт Regex с нужным id; patterns("unknown") пуст.
+    tests/detect_structured.rs — табличные; каждый случай задаёт текст, ожидаемый type_id и ожидаемый точный текст спана, извлечённый по байтовым смещениям:
+      - карта: валидный по Luhn номер в трёх написаниях (с пробелами, с дефисами, слитно), например 4276 3800 1234 5674 если проходит Luhn — иначе подобрать; невалидный по Luhn номер не находится;
+      - ИНН: валидные 10- и 12-значные (например 7707083893 — проверить), невалидный не находится; «ИНН 7707083893» и «инн 7707083893» дают одинаковый спан;
+      - СНИЛС: с разделителями и слитно, контрольная сумма проверена;
+      - телефон: «+7 (912) 345-67-89», «8-912-345-67-89», «89123456789», «+7 912 345 67 89», «(912) 345-67-89»; «12345» не находится;
+      - email: «ivan.petrov@mail.ru», «IVAN@EXAMPLE.COM», «a+b@sub.domain.org»;
+      - паспорт: «паспорт 4509 123456» даёт спан «4509 123456»; «серия 4509 номер 123456» даёт спан «4509 номер 123456»; «серия: 45 09, номер: 123456»; «4509123456» с контекстом «паспорт»;
+      - код подразделения: «код подразделения 770-001» даёт «770-001»; «770-001» без контекста не находится;
+      - ВУ: «в/у 77 12 345678», «водительское удостоверение 7712 345678»; без контекста не находится;
+      - CVV и PIN: «CVV 123» даёт cvv; «пин-код 1234» даёт card_pin; «123» без контекста не находится;
+      - пересечение: «карта 4276380012345678» не даёт inn или phone на подстроках номера;
+      - UTF-8: «Клиент Иванов, тел. +7 912 345-67-89, email ivan@mail.ru» — все спаны на границах символов, извлечённые подстроки точны;
+      - allow_substrings: при «8 800 555-35-35» в allow-списке этот телефон не находится;
+      - min_confidence 0.95 отсекает кандидатов без валидатора.
+  </tests>
+  <acceptance>cargo clippy --all-targets -- -D warnings && cargo test --test registry --test detect_structured</acceptance>
+  <out_of_scope>ФИО, даты, адреса, гражданство, орган выдачи (T05). Маскирование (T03). HTTP (T04).</out_of_scope>
+</task>

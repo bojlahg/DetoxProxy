@@ -4,7 +4,7 @@ import json, os, sys
 from collections import OrderedDict
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "runs.jsonl")
+path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs", "runs.jsonl")
 rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
 tasks = OrderedDict()
 for r in rows:
