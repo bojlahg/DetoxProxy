@@ -55,6 +55,12 @@ pub struct ServerConfig {
     /// Birth dates older than this many years are treated as historical (confidence penalty).
     #[serde(default = "default_historical_date_years")]
     pub historical_date_years: u32,
+    /// Texts longer than this many bytes run detection+masking on a blocking thread pool.
+    #[serde(default = "default_inline_max_bytes")]
+    pub inline_max_bytes: usize,
+    /// Max concurrent heavy (blocking) detection tasks; extra requests wait for a permit.
+    #[serde(default = "default_heavy_max_concurrency")]
+    pub heavy_max_concurrency: usize,
 }
 fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
@@ -62,6 +68,10 @@ fn default_mapping_ttl_sec() -> u64 { 900 }
 fn default_mapping_max_entries() -> usize { 200_000 }
 fn default_request_deadline_ms() -> u64 { 5000 }
 fn default_historical_date_years() -> u32 { 120 }
+fn default_inline_max_bytes() -> usize { 16384 }
+fn default_heavy_max_concurrency() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
