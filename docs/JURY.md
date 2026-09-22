@@ -67,7 +67,7 @@ curl -s localhost:8080/process -H 'Content-Type: application/json' -d '{
 # chatbot: хеш-токены (стабильны между запросами — не ломают кеш промптов LLM), без восстановления
 curl -s localhost:8080/process -H 'X-System-Id: chatbot' -H 'Content-Type: application/json' \
   -d '{"payload":"ИНН 500100732259","payload_id":"demo-3"}'
-# -> {"result":"ИНН <<INN_3fa91c>>"}
+# -> {"result":"ИНН <<INN_f5c0b7>>"}
 
 # strict: PIN и CVV маскируются только рядом с картой, спорные случаи не маскируются
 curl -s localhost:8080/process -H 'X-System-Id: strict' -H 'Content-Type: application/json' \

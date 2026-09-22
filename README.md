@@ -95,7 +95,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `trap_policy` | `prefer_mask` / `prefer_skip` | что делать в спорных случаях |
 | `combination_rule` | bool | PIN/CVV маскировать только рядом с картой |
 | `allow_substrings` | список строк | никогда не маскировать |
-| `token_numbering` | `sequential` / `hash` | `<<INN_1>>` или `<<INN_3fa91c>>` (стабильно между запросами — не ломает кеш промптов LLM) |
+| `token_numbering` | `sequential` / `hash` | `<<INN_1>>` или `<<INN_f5c0b7>>` (стабильно между запросами — не ломает кеш промптов LLM) |
 | `hash_salt` | строка | соль для `hash` |
 | `session_mode` | `stateless` / `stateful` | время жизни соответствий |
 
