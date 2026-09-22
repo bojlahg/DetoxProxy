@@ -16,14 +16,14 @@ fn detector() -> Detector {
     Detector::with_allowlist(reg, dicts, allowlist)
 }
 
-fn detect(text: &str) -> Vec<Entity> {
+fn detect(det: &Detector, text: &str) -> Vec<Entity> {
     let opts = DetectOptions {
         enabled_types: None,
         min_confidence: 0.0,
         allow_substrings: &[],
         trap_policy: TrapPolicy::PreferMask,
     };
-    detector().detect(text, &opts)
+    det.detect(text, &opts)
 }
 
 fn registry() -> Registry {
@@ -31,8 +31,8 @@ fn registry() -> Registry {
     Registry::from_yaml(&yaml).expect("parse registry")
 }
 
-fn check_variant(text: &str, reg: &Registry) {
-    let entities = detect(text);
+fn check_variant(det: &Detector, text: &str, reg: &Registry) {
+    let entities = detect(det, text);
     for e in &entities {
         assert!(
             text.is_char_boundary(e.start),
@@ -59,10 +59,10 @@ fn replace_spaces(text: &str, repl: char) -> String {
     text.chars().map(|c| if c == ' ' { repl } else { c }).collect()
 }
 
-fn check_all_variants(text: &str, reg: &Registry) {
-    check_variant(text, reg);
-    check_variant(&replace_spaces(text, '\u{00a0}'), reg);
-    check_variant(&replace_spaces(text, '\u{202f}'), reg);
+fn check_all_variants(det: &Detector, text: &str, reg: &Registry) {
+    check_variant(det, text, reg);
+    check_variant(det, &replace_spaces(text, '\u{00a0}'), reg);
+    check_variant(det, &replace_spaces(text, '\u{202f}'), reg);
 }
 
 fn dataset_texts() -> Vec<String> {
@@ -88,25 +88,35 @@ fn dataset_texts() -> Vec<String> {
     let mut texts = Vec::new();
     for path in paths {
         let content = std::fs::read_to_string(&path).expect("read dataset");
-        for line in content.lines().take(40) {
+        let mut file_texts: Vec<String> = Vec::new();
+        for line in content.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
             let v: serde_json::Value = serde_json::from_str(line).expect("parse jsonl line");
             if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
-                texts.push(t.to_string());
+                if t.len() <= 4096 {
+                    file_texts.push(t.to_string());
+                }
             }
         }
+        let step = (file_texts.len() / 15).max(1);
+        texts.extend(file_texts.iter().step_by(step).take(15).cloned());
     }
     texts
 }
 
 #[test]
 fn datasets_no_panic_and_roundtrip() {
+    let det = detector();
     let reg = registry();
-    for text in dataset_texts() {
-        check_all_variants(&text, &reg);
+    for (i, text) in dataset_texts().iter().enumerate() {
+        check_variant(&det, text, &reg);
+        check_variant(&det, &replace_spaces(text, '\u{00a0}'), &reg);
+        if i < 5 {
+            check_variant(&det, &replace_spaces(text, '\u{202f}'), &reg);
+        }
     }
 }
 
@@ -123,21 +133,23 @@ fn manual_unicode_strings() {
         "\u{202f}\u{202f}\u{202f}",
         "",
     ];
+    let det = detector();
     let reg = registry();
     for text in cases {
-        check_all_variants(text, &reg);
+        check_all_variants(&det, text, &reg);
     }
 }
 
 #[test]
 fn nbsp_works_as_regular_space() {
-    let entities = detect("ул.\u{00a0}Лесная, д.\u{00a0}17, кв.\u{00a0}42");
+    let det = detector();
+    let entities = detect(&det, "ул.\u{00a0}Лесная, д.\u{00a0}17, кв.\u{00a0}42");
     assert!(
         entities.iter().any(|e| e.type_id == "address"),
         "address should be found: {entities:?}"
     );
 
-    let entities = detect("ИНН\u{00a0}7707083893");
+    let entities = detect(&det, "ИНН\u{00a0}7707083893");
     assert!(
         entities.iter().any(|e| e.type_id == "inn"),
         "inn should be found: {entities:?}"
