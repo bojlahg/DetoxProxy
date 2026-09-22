@@ -173,6 +173,12 @@ context:
     - я
     - ов
     - ев
+pseudonym:
+  email_domains:
+    - example.com
+    - mail.ru
+    - yandex.ru
+    - gmail.com
 types:
   - id: fio
     name: Full name

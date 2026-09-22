@@ -1131,6 +1131,325 @@ fn inflect_street(value: &str, case: Case) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Pseudonym helpers (added for the pseudonym masking mode)
+// ---------------------------------------------------------------------------
+
+/// Grammatical group of a surname, used to pick a plausible replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurnameGroup {
+    Ov,
+    In,
+    Sky,
+    Oy,
+    Enko,
+    Ko,
+    Uk,
+    Yan,
+    Shvili,
+    Ikh,
+    Consonant,
+    Indeclinable,
+}
+
+/// Classify a nominative surname into a morphological group.
+///
+/// Handles both male and female forms: a female surname ending in -ова/-ева/-ёва
+/// is classified into the same group as its male -ов/-ев/-ёв counterpart, so a
+/// female replacement stays in the same group.
+pub fn surname_group(surname: &str) -> SurnameGroup {
+    let s = surname.to_lowercase();
+    if s.ends_with("ова")
+        || s.ends_with("ева")
+        || s.ends_with("ёва")
+        || s.ends_with("ов")
+        || s.ends_with("ев")
+        || s.ends_with("ёв")
+    {
+        return SurnameGroup::Ov;
+    }
+    if s.ends_with("ина") || s.ends_with("ына") || s.ends_with("ин") || s.ends_with("ын") {
+        return SurnameGroup::In;
+    }
+    if s.ends_with("ская") || s.ends_with("цкая") || s.ends_with("ский") || s.ends_with("цкий") {
+        return SurnameGroup::Sky;
+    }
+    if s.ends_with("ая") || s.ends_with("яя") || s.ends_with("ой") || s.ends_with("ый") {
+        return SurnameGroup::Oy;
+    }
+    if s.ends_with("енко") {
+        return SurnameGroup::Enko;
+    }
+    if s.ends_with("ко") {
+        return SurnameGroup::Ko;
+    }
+    if s.ends_with("ук") || s.ends_with("юк") {
+        return SurnameGroup::Uk;
+    }
+    if s.ends_with("ян") {
+        return SurnameGroup::Yan;
+    }
+    if s.ends_with("швили") || s.ends_with("дзе") {
+        return SurnameGroup::Shvili;
+    }
+    if s.ends_with("их") || s.ends_with("ых") {
+        return SurnameGroup::Ikh;
+    }
+    if s.ends_with(is_consonant) {
+        return SurnameGroup::Consonant;
+    }
+    SurnameGroup::Indeclinable
+}
+
+/// Build the female form of a nominative male surname.
+pub fn female_surname(male: &str) -> String {
+    let s = male.to_lowercase();
+    if s.ends_with("ов") || s.ends_with("ёв") || s.ends_with("ев") {
+        return format!("{male}а");
+    }
+    if s.ends_with("ин") || s.ends_with("ын") {
+        return format!("{male}а");
+    }
+    if s.ends_with("ский") || s.ends_with("цкий") {
+        let stem = male.strip_suffix("ий").unwrap_or(male);
+        return format!("{stem}ая");
+    }
+    if s.ends_with("ой") || s.ends_with("ый") {
+        let stem = male.strip_suffix("ой").or_else(|| male.strip_suffix("ый")).unwrap_or(male);
+        return format!("{stem}ая");
+    }
+    male.to_string()
+}
+
+/// Build a patronymic from a nominative male given name.
+pub fn patronymic_from_name(name: &str, gender: Gender) -> String {
+    let n = name.to_lowercase();
+    let (stem, male_suf, female_suf) = if n.ends_with('й') {
+        (n.strip_suffix('й').unwrap_or(&n), "евич", "евна")
+    } else if n.ends_with('ь') {
+        (n.strip_suffix('ь').unwrap_or(&n), "евич", "евна")
+    } else if n.ends_with('а') {
+        (n.strip_suffix('а').unwrap_or(&n), "ич", "ична")
+    } else if n.ends_with('я') {
+        (n.strip_suffix('я').unwrap_or(&n), "ич", "ична")
+    } else {
+        (n.as_str(), "ович", "овна")
+    };
+    let suffix = match gender {
+        Gender::Male => male_suf,
+        Gender::Female => female_suf,
+        Gender::Unknown => male_suf,
+    };
+    format!("{stem}{suffix}")
+}
+
+/// True if a given name is masculine (names ending in -а/-я are female unless listed).
+pub fn is_male_name(n: &str) -> bool {
+    if n.ends_with('а') || n.ends_with('я') {
+        MALE_A_NAMES.contains(&n.to_lowercase().as_str())
+    } else {
+        true
+    }
+}
+
+/// Determine the gender of a person from a full name (patronymic first, then name).
+pub fn gender_of_person(value: &str) -> Gender {
+    let ws = words(value);
+    if ws.is_empty() || ws.len() > 3 {
+        return Gender::Unknown;
+    }
+    let lower: Vec<String> = ws.iter().map(|w| w.to_lowercase()).collect();
+    let lower_refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
+    let (normalized, is_patr, is_name) = normalize_person_words(&lower_refs);
+    let gender = gender_of_normalized(&normalized, &is_patr, &is_name);
+    if gender != Gender::Unknown {
+        return gender;
+    }
+    for (i, w) in normalized.iter().enumerate() {
+        if !is_patr[i] && !is_name[i] {
+            if let Some(g) = gender_from_surname(w) {
+                return g;
+            }
+        }
+    }
+    Gender::Unknown
+}
+
+/// Gender inferred from a surname ending (female forms are -ова/-ева/-ина/-ская/-ая...).
+fn gender_from_surname(s: &str) -> Option<Gender> {
+    let s = s.to_lowercase();
+    if s.ends_with("ова")
+        || s.ends_with("ева")
+        || s.ends_with("ёва")
+        || s.ends_with("ина")
+        || s.ends_with("ына")
+        || s.ends_with("ская")
+        || s.ends_with("цкая")
+        || s.ends_with("ая")
+        || s.ends_with("яя")
+    {
+        Some(Gender::Female)
+    } else {
+        None
+    }
+}
+
+/// Parsed components of a full name in nominative, plus gender and case.
+pub struct PersonParts {
+    pub surname: String,
+    pub name: String,
+    pub patronymic: String,
+    pub gender: Gender,
+    pub case: Case,
+}
+
+/// Parse a full name (any case) into nominative components, gender and case.
+pub fn parse_person(value: &str) -> Option<PersonParts> {
+    let ws = words(value);
+    if ws.is_empty() || ws.len() > 3 {
+        return None;
+    }
+    let lower: Vec<String> = ws.iter().map(|w| w.to_lowercase()).collect();
+    let lower_refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
+    let (normalized, is_patr, is_name) = normalize_person_words(&lower_refs);
+    let mut gender = gender_of_normalized(&normalized, &is_patr, &is_name);
+    if gender == Gender::Unknown {
+        for (i, w) in normalized.iter().enumerate() {
+            if !is_patr[i] && !is_name[i] {
+                if let Some(g) = gender_from_surname(w) {
+                    gender = g;
+                    break;
+                }
+            }
+        }
+    }
+    let final_nom = resolve_surnames(&normalized, &is_patr, &is_name, gender);
+
+    let mut surname = String::new();
+    let mut name = String::new();
+    let mut patronymic = String::new();
+    for (i, w) in final_nom.iter().enumerate() {
+        let w_clean = w.trim_end_matches('.');
+        if is_patr[i] {
+            patronymic = w_clean.to_string();
+        } else if is_name[i] {
+            name = w_clean.to_string();
+        } else {
+            surname = w_clean.to_string();
+        }
+    }
+    let case = detect_person_case(value);
+    Some(PersonParts { surname, name, patronymic, gender, case })
+}
+
+/// Inflect a single nominative person word to a case, choosing the right table.
+fn inflect_person_word(nom: &str, gender: Gender, is_patr: bool, is_name: bool, case: Case) -> Option<String> {
+    if is_patr {
+        inflect_patronymic(nom, case)
+    } else if is_name {
+        inflect_name(nom, gender, case)
+    } else {
+        inflect_surname(nom, gender, case)
+    }
+}
+
+/// Detect the grammatical case of a full name phrase.
+pub fn detect_person_case(value: &str) -> Case {
+    let ws = words(value);
+    if ws.is_empty() || ws.len() > 3 {
+        return Case::Nom;
+    }
+    let lower: Vec<String> = ws.iter().map(|w| w.to_lowercase()).collect();
+    let lower_refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
+    let (normalized, is_patr, is_name) = normalize_person_words(&lower_refs);
+    let gender = gender_of_normalized(&normalized, &is_patr, &is_name);
+    let final_nom = resolve_surnames(&normalized, &is_patr, &is_name, gender);
+
+    let mut votes = [0usize; 6];
+    for (i, w) in ws.iter().enumerate() {
+        let w_clean = w.trim_end_matches('.').to_lowercase();
+        let nom = final_nom[i].to_lowercase();
+        if nom == w_clean {
+            votes[0] += 1;
+            continue;
+        }
+        for case in [Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+            let inflected = inflect_person_word(&final_nom[i], gender, is_patr[i], is_name[i], case);
+            if let Some(inf) = inflected {
+                if inf.to_lowercase() == w_clean {
+                    votes[case_index(case)] += 1;
+                    break;
+                }
+            }
+        }
+    }
+    let mut best = 0;
+    for (i, v) in votes.iter().enumerate() {
+        if *v > votes[best] {
+            best = i;
+        }
+    }
+    match best {
+        0 => Case::Nom,
+        1 => Case::Gen,
+        2 => Case::Dat,
+        3 => Case::Acc,
+        4 => Case::Ins,
+        _ => Case::Prep,
+    }
+}
+
+/// Detect the grammatical case of a place/country value (single-word noun).
+pub fn detect_place_case(value: &str) -> Case {
+    let ws = words(value);
+    if ws.is_empty() {
+        return Case::Nom;
+    }
+    let last = ws.last().unwrap().to_lowercase();
+    let nom = normalize_place_word(&last).unwrap_or_else(|| last.clone());
+    let mut votes = [0usize; 6];
+    if nom == last {
+        votes[0] += 1;
+    }
+    for case in [Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+        if let Some(inf) = inflect_place_word(&nom, case) {
+            if inf.to_lowercase() == last {
+                votes[case_index(case)] += 1;
+            }
+        }
+    }
+    let mut best = 0;
+    for (i, v) in votes.iter().enumerate() {
+        if *v > votes[best] {
+            best = i;
+        }
+    }
+    match best {
+        0 => Case::Nom,
+        1 => Case::Gen,
+        2 => Case::Dat,
+        3 => Case::Acc,
+        4 => Case::Ins,
+        _ => Case::Prep,
+    }
+}
+
+/// Apply the case style (upper/title/lower) of `original` to `phrase`.
+pub fn apply_original_style(original: &str, phrase: &str) -> String {
+    let style = style_of(original);
+    apply_style_phrase(phrase, style)
+}
+
+/// Apply the per-word case style of `original` to each word of `phrase`.
+///
+/// Each word of `phrase` inherits the style (upper/title/lower) of the
+/// corresponding word of `original`. If the word counts differ, the styles are
+/// applied positionally up to the shorter list.
+pub fn apply_original_styles(original: &str, phrase: &str) -> String {
+    let styles = word_styles(original);
+    apply_styles(phrase, &styles)
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

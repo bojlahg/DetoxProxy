@@ -15,7 +15,7 @@ pub struct Entity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MaskMode { Token, Stars, Synthetic, Remove, Off }
+pub enum MaskMode { Token, Stars, Synthetic, Pseudonym, Remove, Off }
 
 /// One replacement performed during masking; kept in the store for unmasking.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

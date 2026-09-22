@@ -1,5 +1,6 @@
 use crate::{
     morph,
+    morph::{Gender, Kind},
     registry::Registry,
     types::{Entity, Mapping, MaskMode, MaskResult},
 };
@@ -106,7 +107,7 @@ pub fn mask_with_seed(
     let mut active = collect_active(entities, registry, opts);
     active.sort_by_key(|(_, e, _)| e.start);
 
-    let mut token_state = build_token_state(seed);
+    let mut token_state = build_token_state(seed, text);
     let plan = build_plan(&active, text, registry, opts, numbering, &mut token_state);
 
     let result = apply_plan(text, &plan);
@@ -156,15 +157,20 @@ fn collect_active<'a>(
 }
 
 /// Mutable token bookkeeping shared across the replacement plan.
-struct TokenState {
+struct TokenState<'a> {
     map: HashMap<(String, String), String>,
     counters: HashMap<String, usize>,
+    /// Pseudonym values already emitted in this request, to avoid collisions.
+    used_pseudonyms: HashSet<String>,
+    /// The full source text, used to avoid pseudonyms that appear verbatim.
+    text: &'a str,
 }
 
 /// Seeds the token map and per-type counters from existing mappings.
-fn build_token_state(seed: &[Mapping]) -> TokenState {
+fn build_token_state<'a>(seed: &[Mapping], text: &'a str) -> TokenState<'a> {
     let mut map: HashMap<(String, String), String> = HashMap::new();
     let mut counters: HashMap<String, usize> = HashMap::new();
+    let mut used_pseudonyms: HashSet<String> = HashSet::new();
     for m in seed {
         let key = (m.type_id.clone(), normalize(&m.original));
         map.insert(key, m.masked.clone());
@@ -174,8 +180,9 @@ fn build_token_state(seed: &[Mapping]) -> TokenState {
                 *entry = num;
             }
         }
+        used_pseudonyms.insert(m.masked.clone());
     }
-    TokenState { map, counters }
+    TokenState { map, counters, used_pseudonyms, text }
 }
 
 /// Computes the replacement for a single entity, reusing or minting a token.
@@ -186,7 +193,7 @@ fn replacement_for(
     registry: &Registry,
     opts: &MaskOptions<'_>,
     numbering: &Numbering,
-    token_state: &mut TokenState,
+    token_state: &mut TokenState<'_>,
 ) -> String {
     let mode = opts
         .overrides
@@ -226,6 +233,14 @@ fn replacement_for(
                 )
             }
             MaskMode::Synthetic => synthetic(original, &e.type_id),
+            MaskMode::Pseudonym => pseudonym(
+                original,
+                &e.type_id,
+                token_state.text,
+                registry,
+                numbering,
+                &mut token_state.used_pseudonyms,
+            ),
             MaskMode::Remove => "[removed]".to_string(),
             MaskMode::Off => unreachable!(),
         })
@@ -476,6 +491,413 @@ fn synthetic_digits(value: &str, rng: &mut impl rand::Rng) -> String {
         }
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Pseudonym masking
+// ---------------------------------------------------------------------------
+
+/// Male surnames grouped by morphological group, loaded once from the dictionary.
+static MALE_SURNAMES_BY_GROUP: Lazy<HashMap<morph::SurnameGroup, Vec<String>>> = Lazy::new(|| {
+    let mut map: HashMap<morph::SurnameGroup, Vec<String>> = HashMap::new();
+    for line in include_str!("../../data/dict/surnames.txt").lines() {
+        let s = line.trim().to_lowercase();
+        if s.is_empty() || s.starts_with('#') || is_female_surname(&s) {
+            continue;
+        }
+        map.entry(morph::surname_group(&s)).or_default().push(s);
+    }
+    map
+});
+
+/// Male given names, loaded once from the dictionary.
+static MALE_NAMES: Lazy<Vec<String>> = Lazy::new(|| {
+    include_str!("../../data/dict/first_names.txt")
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && morph::is_male_name(l))
+        .collect()
+});
+
+/// Female given names, loaded once from the dictionary.
+static FEMALE_NAMES: Lazy<Vec<String>> = Lazy::new(|| {
+    include_str!("../../data/dict/first_names.txt")
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !morph::is_male_name(l))
+        .collect()
+});
+
+/// Cities, loaded once from the dictionary.
+static CITIES: Lazy<Vec<String>> = Lazy::new(|| {
+    include_str!("../../data/dict/cities.txt")
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+});
+
+/// Countries, loaded once from the dictionary.
+static COUNTRIES: Lazy<Vec<String>> = Lazy::new(|| {
+    include_str!("../../data/dict/countries.txt")
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+});
+
+/// True if a surname is a feminine form (ends in a feminine ending).
+fn is_female_surname(s: &str) -> bool {
+    s.ends_with("ова")
+        || s.ends_with("ева")
+        || s.ends_with("ёва")
+        || s.ends_with("ина")
+        || s.ends_with("ына")
+        || s.ends_with("ская")
+        || s.ends_with("цкая")
+        || s.ends_with("ая")
+        || s.ends_with("яя")
+}
+
+/// Deterministic 64-bit hash of a string (SHA-256 prefix).
+fn hash_index(s: &str) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes)
+}
+
+/// Salt used to seed deterministic pseudonym picks; `None` for sequential numbering.
+fn salt_of(numbering: &Numbering) -> Option<&str> {
+    match numbering {
+        Numbering::Hash(ref salt) => Some(salt.as_str()),
+        Numbering::Sequential => None,
+    }
+}
+
+/// Deterministically pick a male surname of the given group, differing from `original`.
+fn pick_surname(group: &morph::SurnameGroup, original: &str, salt: Option<&str>, attempt: usize) -> String {
+    let list = MALE_SURNAMES_BY_GROUP.get(group).cloned().unwrap_or_default();
+    if list.is_empty() {
+        return "Иванов".to_string();
+    }
+    let idx = hash_index(&format!("surname\0{original}\0{}\0{attempt}", salt.unwrap_or(""))) as usize % list.len();
+    list[idx].clone()
+}
+
+/// Deterministically pick a given name of the given gender.
+fn pick_name(gender: Gender, original: &str, salt: Option<&str>, attempt: usize) -> String {
+    let list = match gender {
+        Gender::Female => &*FEMALE_NAMES,
+        _ => &*MALE_NAMES,
+    };
+    if list.is_empty() {
+        return "Иван".to_string();
+    }
+    let idx = hash_index(&format!("name\0{original}\0{}\0{attempt}", salt.unwrap_or(""))) as usize % list.len();
+    list[idx].clone()
+}
+
+/// Deterministically pick a value from a list, differing from `original`.
+fn pick_from(list: &[String], original: &str, salt: Option<&str>, attempt: usize) -> String {
+    if list.is_empty() {
+        return original.to_string();
+    }
+    let idx = hash_index(&format!("pick\0{original}\0{}\0{attempt}", salt.unwrap_or(""))) as usize % list.len();
+    list[idx].clone()
+}
+
+/// Build a plausible pseudonym for a full name, preserving gender, surname group, case and style.
+fn pseudonym_fio(original: &str, salt: Option<&str>, attempt: usize) -> String {
+    let parts = match morph::parse_person(original) {
+        Some(p) => p,
+        None => return original.to_string(),
+    };
+    let group = morph::surname_group(&parts.surname);
+    let male_surname = pick_surname(&group, &parts.surname, salt, attempt);
+    let surname = if parts.gender == Gender::Female {
+        morph::female_surname(&male_surname)
+    } else {
+        male_surname
+    };
+    let name = if parts.name.is_empty() {
+        String::new()
+    } else {
+        pick_name(parts.gender, &parts.name, salt, attempt)
+    };
+    let patronymic = if parts.patronymic.is_empty() {
+        String::new()
+    } else {
+        let male_name = pick_name(Gender::Male, &parts.patronymic, salt, attempt);
+        morph::patronymic_from_name(&male_name, parts.gender)
+    };
+    let nom = [surname, name, patronymic]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let inflected = if parts.case == morph::Case::Nom {
+        nom
+    } else {
+        morph::inflect(&nom, Kind::Person, parts.case).unwrap_or(nom)
+    };
+    morph::apply_original_styles(original, &inflected)
+}
+
+/// Build a plausible pseudonym for a place/country value from a dictionary.
+fn pseudonym_place(original: &str, list: &[String], salt: Option<&str>, attempt: usize) -> String {
+    let (prefix, name) = split_place_prefix(original);
+    let picked = pick_from(list, &name, salt, attempt);
+    let case = morph::detect_place_case(&name);
+    let inflected = if case == morph::Case::Nom {
+        picked
+    } else {
+        morph::inflect(&picked, Kind::Place, case).unwrap_or(picked)
+    };
+    let styled = morph::apply_original_styles(&name, &inflected);
+    if prefix.is_empty() {
+        styled
+    } else {
+        format!("{prefix} {styled}")
+    }
+}
+
+/// Place prefixes preserved verbatim before a toponym (г., город, с., пос., д.).
+const PLACE_PREFIXES: [&str; 5] = ["г.", "город", "с.", "пос.", "д."];
+
+/// Split a place value into a preserved prefix and the toponym name.
+fn split_place_prefix(value: &str) -> (String, String) {
+    let ws: Vec<&str> = value.split_whitespace().collect();
+    if ws.is_empty() {
+        return (String::new(), value.to_string());
+    }
+    let lower_first = ws[0].to_lowercase();
+    if PLACE_PREFIXES.contains(&lower_first.as_str()) {
+        (ws[0].to_string(), ws[1..].join(" "))
+    } else {
+        (String::new(), value.to_string())
+    }
+}
+
+/// Rebuild a digit string preserving the non-digit separators of the original.
+fn rebuild_digits(original: &str, digits: &[u32]) -> String {
+    let mut it = digits.iter();
+    let mut out = String::new();
+    for c in original.chars() {
+        if c.is_ascii_digit() {
+            out.push(char::from_digit(*it.next().unwrap_or(&0), 10).unwrap());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Generate a valid INN (10 or 12 digits) preserving the original length and separators.
+fn pseudonym_inn(original: &str, rng: &mut impl rand::Rng) -> String {
+    let count = original.chars().filter(|c| c.is_ascii_digit()).count();
+    let mut out: Vec<u32> = Vec::with_capacity(count);
+    if count == 10 {
+        for _ in 0..9 {
+            out.push(rng.gen_range(0..10));
+        }
+        let coeffs = [2, 4, 10, 3, 5, 9, 4, 6, 8];
+        let sum: u32 = coeffs.iter().zip(&out).map(|(&c, &d)| c * d).sum();
+        out.push((sum % 11) % 10);
+    } else if count == 12 {
+        for _ in 0..10 {
+            out.push(rng.gen_range(0..10));
+        }
+        let c1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8];
+        let s1: u32 = c1.iter().zip(&out).map(|(&c, &d)| c * d).sum();
+        out.push((s1 % 11) % 10);
+        let c2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8];
+        let s2: u32 = c2.iter().zip(&out).map(|(&c, &d)| c * d).sum();
+        out.push((s2 % 11) % 10);
+    } else {
+        return original.to_string();
+    }
+    rebuild_digits(original, &out)
+}
+
+/// Generate a valid SNILS (11 digits) preserving the original separators.
+fn pseudonym_snils(original: &str, rng: &mut impl rand::Rng) -> String {
+    let mut out: Vec<u32> = Vec::with_capacity(11);
+    for _ in 0..9 {
+        out.push(rng.gen_range(0..10));
+    }
+    let sum: u32 = out.iter().zip((1..=9).rev()).map(|(&d, w)| d * w).sum();
+    let control = if sum < 100 {
+        sum
+    } else if sum == 100 || sum == 101 {
+        0
+    } else {
+        let m = sum % 101;
+        if m == 100 { 0 } else { m }
+    };
+    out.push(control / 10);
+    out.push(control % 10);
+    rebuild_digits(original, &out)
+}
+
+/// Generate a valid Luhn card number preserving the original length and separators.
+fn pseudonym_card(original: &str, rng: &mut impl rand::Rng) -> String {
+    let count = original.chars().filter(|c| c.is_ascii_digit()).count();
+    if count < 2 {
+        return original.to_string();
+    }
+    let mut out: Vec<u32> = Vec::with_capacity(count);
+    for _ in 0..count - 1 {
+        out.push(rng.gen_range(0..10));
+    }
+    out.push(luhn_check(&out) as u32);
+    rebuild_digits(original, &out)
+}
+
+/// Generate a plausible phone number preserving the leading +7/8 and separators.
+fn pseudonym_phone(original: &str, rng: &mut impl rand::Rng) -> String {
+    let count = original.chars().filter(|c| c.is_ascii_digit()).count();
+    if count < 11 {
+        return original.to_string();
+    }
+    let first = original
+        .chars()
+        .find(|c| c.is_ascii_digit())
+        .and_then(|c| c.to_digit(10))
+        .unwrap_or(7);
+    let mut out: Vec<u32> = Vec::with_capacity(count);
+    out.push(first);
+    let mut code = rng.gen_range(900..1000);
+    if code == 900 {
+        code = 901;
+    }
+    out.push(code / 100);
+    out.push((code / 10) % 10);
+    out.push(code % 10);
+    for _ in 3..count {
+        out.push(rng.gen_range(0..10));
+    }
+    rebuild_digits(original, &out)
+}
+
+/// Transliterate a Cyrillic string to Latin (lowercase).
+fn transliterate(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        let l = c.to_lowercase().next().unwrap_or(c);
+        let mapped = match l {
+            'а' => "a", 'б' => "b", 'в' => "v", 'г' => "g", 'д' => "d",
+            'е' => "e", 'ё' => "e", 'ж' => "zh", 'з' => "z", 'и' => "i",
+            'й' => "y", 'к' => "k", 'л' => "l", 'м' => "m", 'н' => "n",
+            'о' => "o", 'п' => "p", 'р' => "r", 'с' => "s", 'т' => "t",
+            'у' => "u", 'ф' => "f", 'х' => "kh", 'ц' => "ts", 'ч' => "ch",
+            'ш' => "sh", 'щ' => "shch", 'ъ' => "", 'ы' => "y", 'ь' => "",
+            'э' => "e", 'ю' => "yu", 'я' => "ya",
+            _ => "",
+        };
+        out.push_str(mapped);
+    }
+    out
+}
+
+/// Build a plausible email: login from a pseudonym name+surname, domain from the YAML list.
+fn pseudonym_email(original: &str, registry: &Registry, salt: Option<&str>, attempt: usize) -> String {
+    let domains = registry.pseudonym_email_domains();
+    let domain = if domains.is_empty() {
+        "example.com".to_string()
+    } else {
+        let idx = hash_index(&format!("domain\0{original}\0{}\0{attempt}", salt.unwrap_or(""))) as usize % domains.len();
+        domains[idx].clone()
+    };
+    let name = pick_name(Gender::Male, original, salt, attempt);
+    let surname = pick_surname(&morph::SurnameGroup::Ov, original, salt, attempt);
+    let login = transliterate(&format!("{name}.{surname}"));
+    format!("{login}@{domain}")
+}
+
+/// Generate a plausible date preserving the format and decade/year of the original.
+fn pseudonym_date(original: &str, birth: bool, rng: &mut impl rand::Rng) -> String {
+    let digits: Vec<u32> = original
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .map(|c| c.to_digit(10).unwrap())
+        .collect();
+    if digits.len() < 4 {
+        return original.to_string();
+    }
+    let year = if digits.len() >= 4 {
+        let y = digits[digits.len() - 4..].iter().fold(0u32, |acc, &d| acc * 10 + d);
+        y
+    } else {
+        2000
+    };
+    let new_year = if birth {
+        let decade = (year / 10) * 10;
+        decade + rng.gen_range(0..10)
+    } else {
+        year
+    };
+    let month = rng.gen_range(1..=12);
+    let day = rng.gen_range(1..=28);
+    let mut new_digits: Vec<u32> = Vec::new();
+    if digits.len() >= 8 {
+        new_digits.push(day / 10);
+        new_digits.push(day % 10);
+        new_digits.push(month / 10);
+        new_digits.push(month % 10);
+        let y = new_year;
+        new_digits.push((y / 1000) % 10);
+        new_digits.push((y / 100) % 10);
+        new_digits.push((y / 10) % 10);
+        new_digits.push(y % 10);
+    } else {
+        let y = new_year;
+        new_digits.push((y / 1000) % 10);
+        new_digits.push((y / 100) % 10);
+        new_digits.push((y / 10) % 10);
+        new_digits.push(y % 10);
+    }
+    rebuild_digits(original, &new_digits)
+}
+
+/// Generate a plausible pseudonym for a value of the given PII type.
+fn pseudonym(
+    original: &str,
+    type_id: &str,
+    text: &str,
+    registry: &Registry,
+    numbering: &Numbering,
+    used: &mut HashSet<String>,
+) -> String {
+    let salt = salt_of(numbering);
+    let mut rng = rand::thread_rng();
+    for attempt in 0..20 {
+        let candidate = match type_id {
+            "fio" | "card_holder" => pseudonym_fio(original, salt, attempt),
+            "birth_place" => pseudonym_place(original, &CITIES, salt, attempt),
+            "citizenship" => pseudonym_place(original, &COUNTRIES, salt, attempt),
+            "address" => pseudonym_place(original, &CITIES, salt, attempt),
+            "birth_date" => pseudonym_date(original, true, &mut rng),
+            "passport_issue_date" => pseudonym_date(original, false, &mut rng),
+            "inn" => pseudonym_inn(original, &mut rng),
+            "snils" => pseudonym_snils(original, &mut rng),
+            "card_number" => pseudonym_card(original, &mut rng),
+            "phone" => pseudonym_phone(original, &mut rng),
+            "email" => pseudonym_email(original, registry, salt, attempt),
+            _ => synthetic_digits(original, &mut rng),
+        };
+        if candidate != original && !text.contains(&candidate) && !used.contains(&candidate) {
+            used.insert(candidate.clone());
+            return candidate;
+        }
+    }
+    // Fallback: force a difference by appending a digit to a digit value.
+    let fallback = format!("{original}0");
+    used.insert(fallback.clone());
+    fallback
 }
 
 fn luhn_check(digits: &[u32]) -> u8 {

@@ -125,11 +125,21 @@ pub enum RegistryError {
     Duplicate(TypeId),
 }
 
+/// Configuration for the `pseudonym` masking mode.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PseudonymSpec {
+    /// Email domains used to build a plausible pseudonym email (original domain is never kept).
+    #[serde(default)]
+    pub email_domains: Vec<String>,
+}
+
 /// Compiled registry: specs plus compiled regexes. Immutable after build; shared via Arc.
 pub struct Registry {
     specs: Vec<TypeSpec>,
     compiled: Vec<Vec<regex::Regex>>,
     context: ContextSpec,
+    pseudonym: PseudonymSpec,
 }
 
 impl Registry {
@@ -139,12 +149,18 @@ impl Registry {
             types: Vec<TypeSpec>,
             #[serde(default)]
             context: ContextSpec,
+            #[serde(default)]
+            pseudonym: PseudonymSpec,
         }
         let root: Root = serde_yaml_ng::from_str(text)?;
-        Self::from_specs(root.types, root.context)
+        Self::from_specs(root.types, root.context, root.pseudonym)
     }
 
-    pub fn from_specs(specs: Vec<TypeSpec>, context: ContextSpec) -> Result<Self, RegistryError> {
+    pub fn from_specs(
+        specs: Vec<TypeSpec>,
+        context: ContextSpec,
+        pseudonym: PseudonymSpec,
+    ) -> Result<Self, RegistryError> {
         let mut seen = HashSet::new();
         for spec in &specs {
             if !seen.insert(spec.id.clone()) {
@@ -164,7 +180,7 @@ impl Registry {
             }
             compiled.push(pats);
         }
-        Ok(Self { specs, compiled, context })
+        Ok(Self { specs, compiled, context, pseudonym })
     }
 
     pub fn types(&self) -> &[TypeSpec] {
@@ -173,6 +189,11 @@ impl Registry {
 
     pub fn context(&self) -> &ContextSpec {
         &self.context
+    }
+
+    /// Email domains used by the `pseudonym` masking mode.
+    pub fn pseudonym_email_domains(&self) -> &[String] {
+        &self.pseudonym.email_domains
     }
 
     pub fn get(&self, id: &str) -> Option<&TypeSpec> {
