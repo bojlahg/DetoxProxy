@@ -110,6 +110,22 @@ fn default_min_confidence() -> f32 { 0.3 }
 fn default_session_mode() -> SessionMode { SessionMode::Stateless }
 fn default_token_numbering() -> TokenNumbering { TokenNumbering::Sequential }
 
+/// Optional LLM proxy configuration. When `upstream_url` is absent the proxy runs in demo mode.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LlmConfig {
+    /// Upstream OpenAI-compatible endpoint. Absent => demo mode.
+    #[serde(default)]
+    pub upstream_url: Option<String>,
+    /// Name of the environment variable holding the upstream API key.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Upstream request timeout in milliseconds.
+    #[serde(default = "default_llm_timeout_ms")]
+    pub timeout_ms: u64,
+}
+fn default_llm_timeout_ms() -> u64 { 60_000 }
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -122,6 +138,8 @@ pub struct Config {
     pub allowlist_file: String,
     #[serde(default)]
     pub dictionaries_dir: Option<String>,
+    #[serde(default)]
+    pub llm: Option<LlmConfig>,
 }
 
 impl Config {

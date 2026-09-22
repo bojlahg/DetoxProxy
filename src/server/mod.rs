@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use axum::{
+    body::Body,
     extract::{Request, State},
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
@@ -15,6 +16,7 @@ use axum::{
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::config::{ConfigStore, SystemConfig, TokenNumbering};
 use crate::detect::{DetectOptions, Detector};
@@ -713,6 +715,132 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+/// OpenAI-compatible chat completions proxy: masks request messages, forwards to the upstream LLM
+/// (or demo mode), unmasks the model reply and returns it as JSON or SSE.
+async fn chat_completions_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let started = Instant::now();
+    let rid = request_id(&headers);
+    let cfg = state.config.load();
+    let sys = match system_for(&headers, &cfg) {
+        Ok(s) => s,
+        Err(resp) => return *resp,
+    };
+    let llm_cfg = cfg.llm.clone().unwrap_or_default();
+
+    let req: crate::llm::ChatRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"),
+    };
+    let want_stream = req.stream.unwrap_or(false);
+
+    let registry = state.registry.load();
+    let detector = state.detector.load();
+    let masked = crate::llm::mask_messages(
+        &req.messages,
+        &detector,
+        &registry,
+        &detect_options(&sys),
+        &mask_options(&sys),
+        &numbering(&sys),
+    );
+
+    let store_key = store_key(&sys.id, &format!("chat:{}", rid));
+    state.store.insert(&store_key, String::new(), masked.mappings.clone());
+
+    let mut upstream_body = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
+    if let Value::Object(map) = &mut upstream_body {
+        let msgs: Vec<Value> = masked
+            .texts
+            .iter()
+            .zip(req.messages.iter())
+            .map(|(t, m)| serde_json::json!({ "role": m.role, "content": t }))
+            .collect();
+        map.insert("messages".to_string(), Value::Array(msgs));
+        map.insert("stream".to_string(), Value::Bool(true));
+    }
+
+    let api_key = llm_cfg
+        .api_key_env
+        .as_ref()
+        .and_then(|env| std::env::var(env).ok())
+        .filter(|k| !k.is_empty());
+
+    let upstream_result = match &llm_cfg.upstream_url {
+        Some(url) => {
+            crate::llm::call_upstream(
+                url,
+                api_key.as_deref(),
+                upstream_body,
+                Duration::from_millis(llm_cfg.timeout_ms),
+            )
+            .await
+        }
+        None => Ok(crate::llm::demo_response(&masked.mappings)),
+    };
+
+    let (status, model_text) = match upstream_result {
+        Ok(text) => (200, text),
+        Err(_) => {
+            let latency = started.elapsed().as_millis() as u64;
+            log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, 502);
+            let mut resp = error_response(StatusCode::BAD_GATEWAY, "upstream error", "upstream");
+            resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
+            resp.headers_mut()
+                .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
+            return resp;
+        }
+    };
+
+    let restored = unmask(&model_text, &masked.mappings);
+    let model = req.model.clone().unwrap_or_default();
+
+    let mut resp = if want_stream {
+        let chunk = serde_json::json!({
+            "id": rid,
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": { "role": "assistant", "content": restored },
+                "finish_reason": null
+            }]
+        });
+        let sse = format!("data: {}\n\ndata: [DONE]\n\n", chunk);
+        let mut r = Response::new(Body::from(sse));
+        r.headers_mut().insert(header::CONTENT_TYPE, "text/event-stream".parse().unwrap());
+        r.headers_mut().insert("cache-control", "no-cache".parse().unwrap());
+        r.headers_mut().insert("x-accel-buffering", "no".parse().unwrap());
+        r
+    } else {
+        let json = crate::llm::ChatCompletionResponse {
+            id: rid.clone(),
+            object: "chat.completion",
+            model,
+            choices: vec![crate::llm::Choice {
+                index: 0,
+                message: crate::llm::Message {
+                    role: "assistant",
+                    content: restored,
+                },
+                finish_reason: "stop",
+            }],
+        };
+        Json(json).into_response()
+    };
+
+    resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
+    resp.headers_mut()
+        .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
+
+    let latency = started.elapsed().as_millis() as u64;
+    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, status);
+    resp
+}
+
 async fn readyz(State(state): State<Arc<AppState>>) -> StatusCode {
     let cfg = state.config.load();
     if cfg.systems.is_empty() || state.registry.load().types().is_empty() {
@@ -826,6 +954,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/mask", post(mask_handler))
         .route("/v1/unmask", post(unmask_handler))
         .route("/v1/detect", post(detect_handler))
+        .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/admin/reload", post(reload_handler))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
