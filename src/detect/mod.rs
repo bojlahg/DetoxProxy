@@ -1793,11 +1793,14 @@ impl Detector {
     }
 
     /// True if a card marker ("карта", "card", "номер карты", "№ карты") is near the span.
+    /// A marker negated by "не является" (e.g. "не является картой") is not a card marker.
     fn has_card_marker(&self, text: &str, start: usize, end: usize) -> bool {
         let markers = &self.registry.context().card_markers;
         let before = context_window_before(text, start, 40).to_lowercase();
         let after = context_window_after(text, end, 40).to_lowercase();
-        markers.iter().any(|m| before.contains(m.as_str()) || after.contains(m.as_str()))
+        markers.iter().any(|m| {
+            marker_present_not_negated(&before, m) || marker_present_not_negated(&after, m)
+        })
     }
 
     /// True if a birth marker ("родился", "родилась", "дата рождения", "д.р", "г.р") is near.
@@ -2234,6 +2237,21 @@ fn context_window_after(text: &str, end: usize, window: usize) -> &str {
     } else {
         &rest[..idx]
     }
+}
+
+/// True if `marker` appears in `window` and is not negated by a preceding
+/// "не является" (e.g. "не является картой" is not a card marker).
+fn marker_present_not_negated(window: &str, marker: &str) -> bool {
+    let mut search_from = 0usize;
+    while let Some(rel) = window[search_from..].find(marker) {
+        let abs = search_from + rel;
+        let before = &window[..abs];
+        if !before.ends_with("не является ") {
+            return true;
+        }
+        search_from = abs + marker.len();
+    }
+    false
 }
 
 /// True when the trimmed text between a pin/cvv marker and the value is a valid

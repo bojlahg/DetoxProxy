@@ -488,6 +488,21 @@ fn imei_not_card_number() {
 }
 
 #[test]
+fn card_case_forms_masked() {
+    let cases = [
+        "Оплата картой 427640003331517, полис приложен.",
+        "Полис ОМС 220015550000436 — проверьте оплату картой.",
+    ];
+    for text in cases {
+        let entities = detect(text, TrapPolicy::PreferMask);
+        assert!(has_type(&entities, "card_number"), "card_number should be found in {:?}: {:?}", text, entities);
+    }
+    // Control: IMEI without a card marker is still not a card.
+    let entities = detect("IMEI 356938035643809 выбит под крышкой", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "card_number"), "IMEI must not be a card: {:?}", entities);
+}
+
+#[test]
 fn toll_free_800_not_phone() {
     let entities = detect("Горячая линия 8 800 200-00-00 работает круглосуточно", TrapPolicy::PreferMask);
     assert!(!has_type(&entities, "phone"), "8-800 must not be a phone: {:?}", entities);
