@@ -80,6 +80,29 @@ pub fn mask_with_seed(
     numbering: Numbering,
     seed: &[Mapping],
 ) -> MaskResult {
+    let mut active = collect_active(entities, registry, opts);
+    active.sort_by_key(|(_, e, _)| e.start);
+
+    let mut token_state = build_token_state(seed);
+    let plan = build_plan(&active, text, registry, opts, numbering, &mut token_state);
+
+    let result = apply_plan(text, &plan);
+    let mappings = build_mappings(&plan);
+    let out_entities = filter_entities(entities, &active);
+
+    MaskResult {
+        text: result,
+        entities: out_entities,
+        mappings,
+    }
+}
+
+/// Selects entities that are not masked with `Off` and applies the combination rule.
+fn collect_active<'a>(
+    entities: &'a [Entity],
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+) -> Vec<(usize, &'a Entity, MaskMode)> {
     let mut active: Vec<(usize, &Entity, MaskMode)> = Vec::new();
     for (i, e) in entities.iter().enumerate() {
         let spec = registry.get(&e.type_id);
@@ -106,72 +129,121 @@ pub fn mask_with_seed(
             });
         }
     }
+    active
+}
 
-    active.sort_by_key(|(_, e, _)| e.start);
+/// Mutable token bookkeeping shared across the replacement plan.
+struct TokenState {
+    map: HashMap<(String, String), String>,
+    counters: HashMap<String, usize>,
+}
 
-    let mut token_map: HashMap<(String, String), String> = HashMap::new();
-    let mut token_counters: HashMap<String, usize> = HashMap::new();
+/// Seeds the token map and per-type counters from existing mappings.
+fn build_token_state(seed: &[Mapping]) -> TokenState {
+    let mut map: HashMap<(String, String), String> = HashMap::new();
+    let mut counters: HashMap<String, usize> = HashMap::new();
     for m in seed {
         let key = (m.type_id.clone(), normalize(&m.original));
-        token_map.insert(key, m.masked.clone());
+        map.insert(key, m.masked.clone());
         if let Some((_, num)) = parse_token_number(&m.masked) {
-            let entry = token_counters.entry(m.type_id.clone()).or_insert(0);
+            let entry = counters.entry(m.type_id.clone()).or_insert(0);
             if num > *entry {
                 *entry = num;
             }
         }
     }
-    let mut plan: Vec<(usize, usize, String, String, String)> = Vec::new();
-    for (_, e, mode) in &active {
-        let original = text[e.start..e.end].to_string();
-        let norm = normalize(&original);
-        let key = (e.type_id.clone(), norm.clone());
-        let replacement = token_map
-            .entry(key)
-            .or_insert_with(|| match mode {
-                MaskMode::Token => {
-                    let label = registry
-                        .get(&e.type_id)
-                        .map(|s| s.token_label.clone())
-                        .unwrap_or_else(|| e.type_id.to_uppercase());
-                    match numbering {
-                        Numbering::Sequential => {
-                            let n = token_counters.entry(e.type_id.clone()).or_insert(0);
-                            *n += 1;
-                            format!("<<{}_{}>>", label, *n)
-                        }
-                        Numbering::Hash(ref salt) => {
-                            let digest = hash_token(salt, &norm);
-                            format!("<<{}_{}>>", label, digest)
-                        }
+    TokenState { map, counters }
+}
+
+/// Computes the replacement for a single entity, reusing or minting a token.
+fn replacement_for(
+    e: &Entity,
+    original: &str,
+    norm: &str,
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+    numbering: &Numbering,
+    token_state: &mut TokenState,
+) -> String {
+    let mode = opts
+        .overrides
+        .get(&e.type_id)
+        .copied()
+        .or_else(|| registry.get(&e.type_id).and_then(|s| if s.mask != MaskMode::Token { Some(s.mask) } else { None }))
+        .unwrap_or(opts.default_mode);
+    let key = (e.type_id.clone(), norm.to_string());
+    token_state
+        .map
+        .entry(key)
+        .or_insert_with(|| match mode {
+            MaskMode::Token => {
+                let label = registry
+                    .get(&e.type_id)
+                    .map(|s| s.token_label.clone())
+                    .unwrap_or_else(|| e.type_id.to_uppercase());
+                match numbering {
+                    Numbering::Sequential => {
+                        let n = token_state.counters.entry(e.type_id.clone()).or_insert(0);
+                        *n += 1;
+                        format!("<<{}_{}>>", label, *n)
+                    }
+                    Numbering::Hash(ref salt) => {
+                        let digest = hash_token(salt, norm);
+                        format!("<<{}_{}>>", label, digest)
                     }
                 }
-                MaskMode::Stars => {
-                    let spec = registry.get(&e.type_id);
-                    stars(
-                        &original,
-                        &e.type_id,
-                        spec.map(|s| s.stars_keep_prefix).unwrap_or(0),
-                        spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
-                    )
-                }
-                MaskMode::Synthetic => synthetic(&original, &e.type_id),
-                MaskMode::Remove => "[removed]".to_string(),
-                MaskMode::Off => unreachable!(),
-            })
-            .clone();
+            }
+            MaskMode::Stars => {
+                let spec = registry.get(&e.type_id);
+                stars(
+                    original,
+                    &e.type_id,
+                    spec.map(|s| s.stars_keep_prefix).unwrap_or(0),
+                    spec.map(|s| s.stars_keep_suffix).unwrap_or(0),
+                )
+            }
+            MaskMode::Synthetic => synthetic(original, &e.type_id),
+            MaskMode::Remove => "[removed]".to_string(),
+            MaskMode::Off => unreachable!(),
+        })
+        .clone()
+}
+
+/// Builds the ordered replacement plan for all active entities.
+fn build_plan(
+    active: &[(usize, &Entity, MaskMode)],
+    text: &str,
+    registry: &Registry,
+    opts: &MaskOptions<'_>,
+    numbering: Numbering,
+    token_state: &mut TokenState,
+) -> Vec<(usize, usize, String, String, String)> {
+    let mut plan: Vec<(usize, usize, String, String, String)> = Vec::new();
+    for (_, e, _) in active {
+        let original = text[e.start..e.end].to_string();
+        let norm = normalize(&original);
+        let replacement = replacement_for(e, &original, &norm, registry, opts, &numbering, token_state);
         plan.push((e.start, e.end, replacement, e.type_id.clone(), original));
     }
+    plan
+}
 
+/// Applies the plan right-to-left so earlier byte offsets stay valid.
+fn apply_plan(text: &str, plan: &[(usize, usize, String, String, String)]) -> String {
     let mut result = text.to_string();
-    plan.sort_by_key(|(start, _, _, _, _)| *start);
-    for (start, end, replacement, _, _) in plan.iter().rev() {
+    let mut sorted = plan.to_vec();
+    sorted.sort_by_key(|(start, _, _, _, _)| *start);
+    for (start, end, replacement, _, _) in sorted.iter().rev() {
         result.replace_range(*start..*end, replacement);
     }
+    result
+}
 
+/// Builds deduplicated mappings from the plan.
+fn build_mappings(plan: &[(usize, usize, String, String, String)]) -> Vec<Mapping> {
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut mappings = Vec::new();
-    for (_, _, replacement, type_id, original) in &plan {
+    for (_, _, replacement, type_id, original) in plan {
         let norm = normalize(original);
         if seen.insert((type_id.clone(), norm)) {
             mappings.push(Mapping {
@@ -181,20 +253,18 @@ pub fn mask_with_seed(
             });
         }
     }
+    mappings
+}
 
+/// Filters the original entities down to those that were actually masked.
+fn filter_entities(entities: &[Entity], active: &[(usize, &Entity, MaskMode)]) -> Vec<Entity> {
     let active_indices: HashSet<usize> = active.iter().map(|(i, _, _)| *i).collect();
-    let out_entities: Vec<Entity> = entities
+    entities
         .iter()
         .enumerate()
         .filter(|(i, _)| active_indices.contains(i))
         .map(|(_, e)| e.clone())
-        .collect();
-
-    MaskResult {
-        text: result,
-        entities: out_entities,
-        mappings,
-    }
+        .collect()
 }
 
 /// First 6 hex chars of SHA-256(salt + "\0" + normalized value).
