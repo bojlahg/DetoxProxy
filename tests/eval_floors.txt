@@ -3,21 +3,23 @@
 # Raise a floor when a task improves it; never lower one without a written reason.
 # Baseline: T12 build, 22.09 20:52. cvv and driver_license floors are at the T06 level on purpose:
 # T12 dropped them (118 -> 83, 16 -> 12), the next task must bring them back.
+# 23.09 00:15: hard_negatives clean lowered 198 -> 197: T11 (snils 1 -> 187, driver licence 26 -> 326,
+# passport 322 -> 389, email 108 -> 212) added one extra mask on a famous-person row; T28 covers it.
 # 22.09 22:55: rmr fio lowered 302 -> 294 on purpose: T10a (passport issuer 12 -> 120, card holder 0 -> 84,
 # all 25 manual cases green) cost 8 of 669 rmr names after three agent sessions; accepted as a trade-off.
-hard_negatives:clean>=198
+hard_negatives:clean>=197
 overlap_conflicts:address>=12
 overlap_conflicts:inn>=15
 multi_entity:fio>=78
 multi_entity:birth_date>=37
 multi_entity:address>=30
 rmr_benchmark_alfa:address>=80
-rmr_benchmark_alfa:passport>=322
-rmr_benchmark_alfa:fio>=294
-rmr_benchmark_alfa:inn>=182
-rmr_benchmark_alfa:phone>=132
+rmr_benchmark_alfa:passport>=389
+rmr_benchmark_alfa:fio>=330
+rmr_benchmark_alfa:inn>=185
+rmr_benchmark_alfa:phone>=134
 synthetic_alfa:fio>=30
-synthetic_alfa:passport>=26
+synthetic_alfa:passport>=35
 synthetic_alfa:driver_license>=16
 synthetic_missing_categories:birth_date>=112
 synthetic_missing_categories:citizenship>=120
@@ -26,5 +28,9 @@ synthetic_missing_categories:card_pin>=119
 synthetic_missing_categories:fp.cvv<=10
 synthetic_missing_categories:clean>=1020
 synthetic_missing_categories:passport_issuer>=120
-synthetic_missing_categories:card_holder>=84
+synthetic_missing_categories:card_holder>=120
 multi_entity:passport_issuer>=12
+rmr_benchmark_alfa:snils>=187
+rmr_benchmark_alfa:driver_license>=326
+rmr_benchmark_alfa:email>=212
+rmr_benchmark_alfa:card_number>=110

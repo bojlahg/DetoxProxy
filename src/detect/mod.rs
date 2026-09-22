@@ -181,7 +181,7 @@ fn build_marker_map(registry: &Registry) -> (Option<Regex>, HashMap<String, Stri
         return (None, marker_type_of);
     }
     let alt = words.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|");
-    let re = RegexBuilder::new(&format!(r"\b(?:{})\b", alt))
+    let re = RegexBuilder::new(&format!(r"(?:{})", alt))
         .case_insensitive(true)
         .unicode(true)
         .build()
@@ -240,6 +240,7 @@ impl Detector {
                     continue;
                 }
             }
+            let t0 = std::time::Instant::now();
             match spec.id.as_str() {
                 "fio" => candidates.extend(self.detect_fio(text, opts, spec)),
                 "birth_date" | "passport_issue_date" => {
@@ -252,6 +253,7 @@ impl Detector {
                 "card_holder" => candidates.extend(self.detect_card_holder(text, opts, spec)),
                 _ => self.detect_regex_type(text, opts, spec, &mut candidates),
             }
+            eprintln!("DBGTIME {} {:?}", spec.id, t0.elapsed());
         }
 
         self.apply_neighbor_boost(text, &mut candidates);
@@ -407,7 +409,30 @@ impl Detector {
                     spec.context_words.iter().any(|w| window_lower.contains(w))
                 };
 
-                if spec.validator != Validator::None {
+                // A value whose nearest document-type marker (паспорт vs права/водительское)
+                // is a different type than this spec belongs to that other type, not this one.
+                // E.g. a passport-shaped span near a driver-license marker is a driver license.
+                if matches!(spec.id.as_str(), "passport" | "driver_license") {
+                    if let Some(is_dl) = self.nearest_document_type(text, start) {
+                        let is_dl_spec = spec.id == "driver_license";
+                        if is_dl != is_dl_spec {
+                            continue;
+                        }
+                    }
+                }
+
+                if spec.id == "snils" {
+                    // SNILS: a valid control sum is confident (0.9) even without a marker;
+                    // an invalid sum is accepted only when a marker is present (0.7).
+                    if validator_passes(Validator::Snils, span) {
+                        conf = 0.9;
+                    } else if has_context {
+                        conf = 0.7;
+                    } else {
+                        continue;
+                    }
+                    skip_context_boost = true;
+                } else if spec.validator != Validator::None {
                     if validator_passes(spec.validator, span) {
                         conf += 0.4;
                     } else if spec.id == "card_number" && self.has_card_marker(text, start, end) {
@@ -490,6 +515,7 @@ impl Detector {
                 lower: t.lower.clone(),
                 capitalized: t.capitalized,
                 is_initial: t.is_initial,
+                is_latin: t.is_latin,
             })
             .collect();
         let n = tokens.len();
@@ -522,6 +548,14 @@ impl Detector {
                 }
                 // Single word requires PII context.
                 if comps == 1 && !self.has_pii_context(text, window[0].start, window[0].end, spec) {
+                    continue;
+                }
+                // A Latin name (e.g. "Theodore Weaver") requires PII context: Latin without a
+                // PII marker is not a FIO (e.g. "Yves talks", "CREATE TABLE IF", "Russian State
+                // University").
+                if window.iter().all(|t| t.is_latin)
+                    && !self.has_pii_context(text, window[0].start, window[0].end, spec)
+                {
                     continue;
                 }
                 // First word of sentence, single candidate, not in any dict -> skip.
@@ -565,6 +599,18 @@ impl Detector {
                     if any_first_case && any_surname_case {
                         conf = 0.7;
                     }
+                }
+                // Surname + initials (e.g. "Лукин П. П.", "П.П. Лукин") is a confident FIO.
+                let has_initial = window.iter().any(|t| t.is_initial);
+                let has_surname = window
+                    .iter()
+                    .any(|t| self.in_any_name_dict(&t.lower) || self.is_surname_suffix(&t.lower));
+                if has_initial && has_surname {
+                    conf = 0.8;
+                }
+                // A Latin name near a PII marker (e.g. "клиент Theodore Weaver") is a confident FIO.
+                if comps == 2 && window.iter().all(|t| t.is_latin) {
+                    conf = 0.7;
                 }
                 // Marker conflict is resolved by the trap policy.
                 if has_pii && has_non_pii {
@@ -624,6 +670,11 @@ impl Detector {
             if any_first_case && any_surname_case {
                 return (true, comps);
             }
+        }
+        // Two adjacent Latin capitalized words (e.g. "Theodore Weaver") qualify as a FIO
+        // when near a PII marker (handled by the caller).
+        if comps == 2 && window.iter().all(|t| t.is_latin) {
+            return (true, comps);
         }
         // 3 capitalized words with no dictionary hit: only with PII context (handled by caller).
         if comps == 3 && !any_initial {
@@ -712,7 +763,7 @@ impl Detector {
         if markers.is_empty() {
             return false;
         }
-        has_context_word_around(text, start, end, spec.context_window, &markers)
+        has_context_word_around_wb(text, start, end, spec.context_window, &markers)
     }
 
     /// True if a global non-pii marker (юридический адрес, пункт выдачи, отделение,
@@ -837,30 +888,90 @@ impl Detector {
         let field_end = self.nearest_field_label_end(text, start);
         let marker = self.nearest_marker_type(text, start);
         match (field_end, marker) {
-            (Some(fe), Some((ty, me))) => {
+            (Some(fe), Some((ty, me, word))) => {
                 if fe > me {
-                    self.field_label_has_marker(text, fe, markers)
+                    self.field_label_matches(text, fe, spec)
                 } else {
-                    ty == spec.id
+                    self.marker_type_matches(text, start, &ty, &word, spec)
                 }
             }
-            (Some(fe), None) => self.field_label_has_marker(text, fe, markers),
-            (None, Some((ty, _))) => ty == spec.id,
+            (Some(fe), None) => self.field_label_matches(text, fe, spec),
+            (None, Some((ty, _, word))) => self.marker_type_matches(text, start, &ty, &word, spec),
             (None, None) => false,
         }
     }
 
-    /// Returns the type id and end offset of the nearest marker-type context word to the left
-    /// of `start` (within a bounded window), if any.
-    fn nearest_marker_type(&self, text: &str, start: usize) -> Option<(String, usize)> {
+    /// True if the nearest marker type `ty` (matched word `word`) makes the value belong to
+    /// `spec`. A passport series label ("серия") is ambiguous: the nearest document-type
+    /// marker (паспорт vs права/водительское/удостоверение) decides passport vs driver license.
+    fn marker_type_matches(&self, text: &str, start: usize, ty: &str, word: &str, spec: &TypeSpec) -> bool {
+        if is_series_label(word) {
+            let is_dl = self.nearest_document_type(text, start) == Some(true);
+            return if spec.id == "driver_license" { is_dl } else { !is_dl };
+        }
+        ty == spec.id
+    }
+
+    /// True if the phrase before a field label's colon (since the last sentence boundary)
+    /// contains any of the given markers. A passport series label ("серия") is ambiguous and
+    /// decided by the nearest document-type marker.
+    fn field_label_matches(&self, text: &str, colon_end: usize, spec: &TypeSpec) -> bool {
+        let prefix = &text[..colon_end];
+        let boundary = prefix
+            .rfind(['.', ';', '\n', '!', '?'])
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let phrase = &text[boundary..colon_end];
+        let lower = phrase.to_lowercase();
+        if is_series_label_phrase(&lower) {
+            let is_dl = self.nearest_document_type(text, colon_end) == Some(true);
+            return if spec.id == "driver_license" { is_dl } else { !is_dl };
+        }
+        spec.context_words.iter().any(|m| lower.contains(m))
+    }
+
+    /// Nearest document-type marker to the left of `start`: Some(true) if a driver license
+    /// marker (права, водительское, удостоверение, ву) is closer than a passport marker
+    /// (паспорт, паспортные), Some(false) if a passport marker is closer, None if neither.
+    /// Series labels ("серия") are not document-type markers.
+    fn nearest_document_type(&self, text: &str, start: usize) -> Option<bool> {
+        let prefix = context_window_before(text, start, 200);
+        let lower = prefix.to_lowercase();
+        let mut best_dl: Option<usize> = None;
+        let mut best_pp: Option<usize> = None;
+        for m in DRIVER_LICENSE_DOC_MARKERS {
+            if let Some(pos) = lower.rfind(m) {
+                let end = pos + m.len();
+                best_dl = Some(best_dl.map_or(end, |b| b.max(end)));
+            }
+        }
+        for m in PASSPORT_DOC_MARKERS {
+            if let Some(pos) = lower.rfind(m) {
+                let end = pos + m.len();
+                best_pp = Some(best_pp.map_or(end, |b| b.max(end)));
+            }
+        }
+        match (best_dl, best_pp) {
+            (Some(d), Some(p)) => Some(d > p),
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (None, None) => None,
+        }
+    }
+
+    /// Returns the type id, end offset and matched word of the nearest marker-type context word
+    /// to the left of `start` (within a bounded window), if any.
+    fn nearest_marker_type(&self, text: &str, start: usize) -> Option<(String, usize, String)> {
         let re = self.marker_re.as_ref()?;
         let prefix = context_window_before(text, start, 200);
         let window_start = start - prefix.len();
-        let mut best: Option<(String, usize)> = None;
+        let mut best: Option<(String, usize, String)> = None;
         for m in re.find_iter(prefix) {
             let word = prefix[m.start()..m.end()].to_lowercase();
             if let Some(ty) = self.marker_type_of.get(&word) {
-                best = Some((ty.clone(), window_start + m.end()));
+                if is_standalone_word(prefix, m.start(), m.end()) {
+                    best = Some((ty.clone(), window_start + m.end(), word));
+                }
             }
         }
         best
@@ -872,19 +983,6 @@ impl Detector {
         let prefix = context_window_before(text, start, 200);
         let window_start = start - prefix.len();
         FIELD_LABEL_RE.find_iter(prefix).map(|m| window_start + m.end()).max()
-    }
-
-    /// True if the phrase before a field label's colon (since the last sentence boundary)
-    /// contains any of the given markers.
-    fn field_label_has_marker(&self, text: &str, colon_end: usize, markers: &[String]) -> bool {
-        let prefix = &text[..colon_end];
-        let boundary = prefix
-            .rfind(['.', ';', '\n', '!', '?'])
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let phrase = &text[boundary..colon_end];
-        let lower = phrase.to_lowercase();
-        markers.iter().any(|m| lower.contains(m))
     }
 
     /// Nearest address marker to the left of `start`: Some(true) if pii, Some(false) if
@@ -1387,9 +1485,14 @@ impl Detector {
             while let Some(pos) = lower[search_from..].find(marker) {
                 let marker_end = search_from + pos + marker.len();
                 if let Some((start, end)) = extract_card_holder_after(text, marker_end) {
-                    let conf = 0.8f32;
-                    if conf >= opts.min_confidence {
-                        candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+                    // A card holder name is embossed in all caps (e.g. "IVAN PETROV") or is a
+                    // Cyrillic name (e.g. "Наталья Чернецкий"). A Latin title-case name after
+                    // "держатель" (e.g. "Theodore Weaver") is a generic FIO, not a card holder.
+                    if is_card_holder_name(&text[start..end]) {
+                        let conf = 0.8f32;
+                        if conf >= opts.min_confidence {
+                            candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
+                        }
                     }
                 }
                 search_from = marker_end;
@@ -1399,7 +1502,7 @@ impl Detector {
         for m in CARD_HOLDER_NAME_RE.find_iter(text) {
             let start = m.start();
             let end = m.end();
-            if self.card_number_before_within(text, start, 60) {
+            if self.card_number_before_within(text, start, 60) && is_card_holder_name(&text[start..end]) {
                 let conf = 0.8f32;
                 if conf >= opts.min_confidence {
                     candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -1554,13 +1657,14 @@ impl Detector {
     }
 }
 
-/// A capitalized Cyrillic word or an initial (single uppercase letter, optional period).
+/// A capitalized word (Cyrillic or Latin) or an initial (single uppercase letter, optional period).
 struct NameToken {
     start: usize,
     end: usize,
     lower: String,
     capitalized: bool,
     is_initial: bool,
+    is_latin: bool,
 }
 
 /// True if the word is a military/academic rank in genitive case (e.g. "маршала", "генерала").
@@ -1569,6 +1673,28 @@ fn is_rank_word(lower: &str) -> bool {
         lower,
         "маршала" | "генерала" | "адмирала" | "академика"
     )
+}
+
+/// Document-type markers that disambiguate a passport series label ("серия") between a
+/// passport and a driver license. Series labels themselves are not document-type markers.
+const PASSPORT_DOC_MARKERS: &[&str] = &[
+    "паспорт", "паспорта", "паспорте", "паспорту", "паспортом", "паспортные",
+];
+const DRIVER_LICENSE_DOC_MARKERS: &[&str] = &[
+    "права", "прав", "водительское", "водительского", "водительские", "водительских",
+    "удостоверение", "удостоверения", "удостоверению", "удостоверением", "ву", "в/у",
+];
+
+/// True if the word is a passport series label ("серия" in any case).
+fn is_series_label(word: &str) -> bool {
+    matches!(word, "серия" | "серии" | "серию" | "серий")
+}
+
+/// True if a phrase (lowercased) contains a passport series label as a standalone word.
+fn is_series_label_phrase(lower: &str) -> bool {
+    ["серия", "серии", "серию", "серий"]
+        .iter()
+        .any(|w| contains_word_boundary(lower, w))
 }
 
 /// Short street-marker abbreviations that are ambiguous prefixes of common words
@@ -1604,12 +1730,14 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
         let letters: String = w.chars().filter(|c| c.is_alphabetic()).collect();
         let is_initial = letters.chars().count() == 1;
         let capitalized = w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+        let is_latin = letters.chars().all(|c| c.is_ascii_alphabetic());
         out.push(NameToken {
             start: m.start(),
             end: m.end(),
             lower: letters.to_lowercase(),
             capitalized,
             is_initial,
+            is_latin,
         });
     }
     out
@@ -1648,6 +1776,64 @@ fn has_context_word_around(text: &str, start: usize, end: usize, window: usize, 
     let before = context_window_before(text, start, window).to_lowercase();
     let after = context_window_after(text, end, window).to_lowercase();
     words.iter().any(|w| before.contains(w) || after.contains(w))
+}
+
+/// Like `has_context_word_around` but a single-word marker must appear as a standalone word
+/// (word boundaries), so "например" does not match the marker "пример". Multi-word markers
+/// (containing a space) still match as substrings.
+fn has_context_word_around_wb(text: &str, start: usize, end: usize, window: usize, words: &[String]) -> bool {
+    let before = context_window_before(text, start, window).to_lowercase();
+    let after = context_window_after(text, end, window).to_lowercase();
+    words.iter().any(|w| contains_word_boundary(&before, w) || contains_word_boundary(&after, w))
+}
+
+/// True if `needle` appears in `haystack` as a standalone word (not inside a longer word).
+/// Multi-word needles (containing a space) match as plain substrings.
+fn contains_word_boundary(haystack: &str, needle: &str) -> bool {
+    if needle.contains(' ') {
+        return haystack.contains(needle);
+    }
+    let mut search_from = 0;
+    while let Some(pos) = haystack[search_from..].find(needle) {
+        let abs = search_from + pos;
+        let before_ok = abs == 0
+            || !haystack[..abs]
+                .chars()
+                .next_back()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        let after = abs + needle.len();
+        let after_ok = after >= haystack.len()
+            || !haystack[after..]
+                .chars()
+                .next()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false);
+        if before_ok && after_ok {
+            return true;
+        }
+        search_from = abs + needle.len();
+    }
+    false
+}
+
+/// True if the slice `haystack[start..end]` is a standalone word (not adjacent to an
+/// alphanumeric character on either side). Multi-word markers (containing a space) are
+/// checked at their outer boundaries.
+fn is_standalone_word(haystack: &str, start: usize, end: usize) -> bool {
+    let before_ok = start == 0
+        || !haystack[..start]
+            .chars()
+            .next_back()
+            .map(|c| c.is_alphanumeric())
+            .unwrap_or(false);
+    let after_ok = end >= haystack.len()
+        || !haystack[end..]
+            .chars()
+            .next()
+            .map(|c| c.is_alphanumeric())
+            .unwrap_or(false);
+    before_ok && after_ok
 }
 
 /// Threshold check honoring the trap policy: prefer_mask uses >=, prefer_skip uses >.
@@ -1721,7 +1907,15 @@ fn resolve_overlaps(mut candidates: Vec<Entity>) -> Vec<Entity> {
                 let replace = if c_len > l_len {
                     true
                 } else if c_len == l_len {
-                    c.confidence > last.confidence
+                    // A card holder beats a generic FIO on the same span: the name is anchored
+                    // to a card-holder marker or a card number, so it is a card holder, not a FIO.
+                    if (c.type_id == "card_holder" && last.type_id == "fio")
+                        || (last.type_id == "card_holder" && c.type_id == "fio")
+                    {
+                        c.type_id == "card_holder"
+                    } else {
+                        c.confidence > last.confidence
+                    }
                 } else {
                     false
                 };
@@ -1898,6 +2092,27 @@ fn extract_card_holder_after(text: &str, from: usize) -> Option<(usize, usize)> 
     let start = from + lead + m.start();
     let end = from + lead + m.end();
     Some((start, end))
+}
+
+/// True if a name is a card holder name: all-caps (card-embossed, e.g. "IVAN PETROV") or
+/// Cyrillic (e.g. "Наталья Чернецкий"). A Latin title-case name (e.g. "Theodore Weaver") is
+/// a generic FIO, not a card holder.
+fn is_card_holder_name(s: &str) -> bool {
+    let mut has_alpha = false;
+    let mut has_cyrillic = false;
+    let mut has_latin_lower = false;
+    for c in s.chars() {
+if c.is_alphabetic() {
+                has_alpha = true;
+                if ('\u{0400}'..='\u{04FF}').contains(&c) {
+                    has_cyrillic = true;
+                }
+            if c.is_ascii_alphabetic() && c.is_lowercase() {
+                has_latin_lower = true;
+            }
+        }
+    }
+    has_alpha && (has_cyrillic || !has_latin_lower)
 }
 
 /// End offset of an issuer phrase: stops at a comma, semicolon, newline, a sentence-ending
@@ -2169,10 +2384,12 @@ pub mod validators {
         }
     }
 
-    /// Email: local part, '@', domain with at least one dot.
+    /// Email: local part, '@', domain with at least one dot. Whitespace around '@' and dots
+    /// (tokenized emails like "ugray@gmail . com") is ignored.
     pub fn email(s: &str) -> bool {
+        let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
         let s = s.trim();
-        if s.is_empty() || s.contains(char::is_whitespace) {
+        if s.is_empty() {
             return false;
         }
         let at = match s.rfind('@') {
@@ -2221,7 +2438,10 @@ fn age_exceeds(s: &str, years: u32) -> bool {
 }
 
 static NAME_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b[А-ЯЁ][а-яё]+\b|\b[А-ЯЁ]{2,}\b|\b[А-ЯЁ]\.").unwrap()
+    Regex::new(
+        r"\b[А-ЯЁ][а-яё]+\b|\b[А-ЯЁ]{2,}\b|\b[А-ЯЁ]\.|\b[A-Z][a-z]+\b|\b[A-Z]{2,}\b|\b[A-Z][A-Za-z]+\b|\b[A-Z]\.",
+    )
+    .unwrap()
 });
 static CYRILLIC_WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[А-ЯЁа-яё]+").unwrap());
