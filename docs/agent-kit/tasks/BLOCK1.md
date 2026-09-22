@@ -310,3 +310,50 @@ impl MappingStore {
   <acceptance>cargo clippy --all-targets -- -D warnings && cargo test --test mask --test store --test detect_structured --test registry</acceptance>
   <out_of_scope>HTTP и /process (T04). Детекция ФИО/дат/адресов (T05). Изменение сигнатур.</out_of_scope>
 </task>
+<task id="T04">
+  <goal>HTTP-сервис pii-guard: конфигурация систем-потребителей, эндпоинт POST /process строго по контракту автопрогона (идемпотентный, маскирование по первому запросу с payload_id и демаскирование по второму), /v1/mask, /v1/unmask, /v1/detect, /healthz, /readyz, /metrics; 429 при перегрузке; ничего из ПДн в логах.</goal>
+  <context>docs/agent-kit/SPEC.md §2, §3, §8, §9, §10; docs/brief/BRIEF.md раздел «Приложение A» и «Приложение B» (контракт и правила прогона). Сигнатуры config/server/obs из T01 — реализовать; AppState можно дополнить полями. docs/agent-kit/rust-api-cheatsheet.rs — образцы axum 0.8. AGENTS.md, блоки pii_rules и ownership_rules.</context>
+  <files_allowed>src/config/mod.rs, src/server/mod.rs, src/obs/mod.rs, src/main.rs, src/lib.rs, src/mask/mod.rs (только замена списка синтетических ФИО), config.yaml, data/allowlist.yaml, tests/http.rs</files_allowed>
+  <requirements>
+    1. Конфигурация (src/config/mod.rs), YAML, `deny_unknown_fields`, длительности целыми в `_ms`/`_sec`:
+```rust
+pub struct Config { pub version: u64, pub server: ServerConfig, pub default_system: String, pub systems: Vec<SystemConfig>, pub pii_types_file: String, pub allowlist_file: String, pub dictionaries_dir: Option<String> }
+pub struct ServerConfig { pub listen: String, pub max_body_bytes: usize /*4 MiB*/, pub max_inflight: usize /*2048*/, pub mapping_ttl_sec: u64 /*900*/, pub mapping_max_entries: usize /*200000*/, pub request_deadline_ms: u64 /*5000*/ }
+pub struct SystemConfig { pub id: String, pub enabled: bool, pub mask_mode: MaskMode, pub unmask_enabled: bool, pub types: TypeSelection /* enum: All | List(Vec<String>) через untagged serde: "all" или список */, pub overrides: HashMap<String, MaskMode>, pub combination_rule: bool, pub min_confidence: f32, pub allow_substrings: Vec<String>, pub session_mode: SessionMode /* Stateless | Stateful */, pub token_numbering: TokenNumbering /* Sequential | Hash */, pub hash_salt: Option<String> }
+```
+       Config::from_yaml + validate: listen непустой; default_system существует в systems и enabled; id систем уникальны; min_confidence в 0..=1; при token_numbering hash — hash_salt задан; файлы pii_types_file и allowlist_file существуют (проверка при загрузке в main, не в validate). ConfigStore на ArcSwap: load(), replace() с валидацией и сохранением прежнего снимка при ошибке. Config::system(id).
+    2. config.yaml в корне — рабочий пример: системы `autotest` (default, token, sequential, все типы, combination_rule false, min_confidence 0.3) и `chatbot` (token, hash, соль, unmask_enabled false, types список из 6 типов, allow_substrings с адресом отделения). data/allowlist.yaml: `public_persons: [...]` (не меньше 30 известных имён: писатели, композиторы, учёные, исторические деятели), `organizations: [...]` (10 примеров вроде «Альфа-Банк», «Сбербанк», «отделение банка»). В этой задаче allowlist только загружается и валидируется, применение — T06.
+    3. Сервер (axum 0.8). AppState: config ConfigStore, registry Arc<Registry>, detector Detector, store MappingStore, metrics PrometheusHandle, inflight Arc<tokio::sync::Semaphore>. run(): читает конфиг, реестр из pii_types_file, словари из dictionaries_dir (если задан и существует; иначе Dictionaries::empty), устанавливает метрики и tracing (JSON в stdout), слушает listen с TCP_NODELAY, запускает фоновую задачу sweep хранилища раз в 30 с, graceful shutdown по Ctrl+C.
+    4. Идентификация потребителя: заголовок `X-System-Id`; если отсутствует — default_system. Неизвестный или enabled=false → 403 `{"error":{"message":"system not allowed","type":"forbidden"}}`.
+    5. POST /process — контракт: тело `{"payload": string, "payload_id": string}`; ответ 200 `{"result": string}`. Логика:
+       - если в хранилище нет записи с payload_id → маскирование: detect с опциями системы → mask (режимы/overrides/combination_rule системы) → сохранить StoredEntry { masked_text, mappings, original_hash: u64 (FxHash/DefaultHasher от payload) } → вернуть маску;
+       - если запись есть и payload равен сохранённому masked_text → демаскирование: unmask(payload, mappings) → вернуть;
+       - если запись есть и hash(payload) равен original_hash (ретрай маскирования) → вернуть сохранённый masked_text;
+       - иначе (запись есть, payload ни маска, ни исходник) → выполнить unmask по карте и вернуть результат (терпимость к искажениям);
+       - для системы с unmask_enabled false на втором шаге возвращать payload как есть.
+       Пустой payload → 200 с пустым result. Отсутствие поля или невалидный JSON → 400 с JSON-ошибкой.
+    6. POST /v1/mask `{text, session_id?}` → `{text, session_id, entities:[{type, start, end, token}]}`: session_id генерируется (uuid v4 через rand, hex 32 символа), если не передан; при session_mode stateful и переданном session_id существующая карта дополняется (одинаковые значения получают прежние токены, нумерация продолжается). POST /v1/unmask `{text, session_id}` → `{text}`; неизвестный session_id → 200 с текстом как есть и заголовком `X-Unmask: not-found`. POST /v1/detect `{text}` → `{entities:[{type, start, end, confidence}]}` — без значений.
+    7. token_numbering hash: токен `<<LABEL_xxxxxx>>`, где xxxxxx — первые 6 hex SHA-256(hash_salt + "\0" + нормализованное значение). Реализовать через отдельную функцию в src/mask/mod.rs не меняя существующих сигнатур (например `pub fn mask_with(text, entities, registry, opts, numbering: Numbering) -> MaskResult`; существующая mask() вызывает её с Sequential). SHA-256 — крейт `sha2 = "0.10"` (разрешается добавить в Cargo.toml).
+    8. Перегрузка: семафор на max_inflight; если разрешение получить сразу не удалось (try_acquire) → 429 с заголовком `Retry-After: 1` и JSON-ошибкой. Дедлайн запроса request_deadline_ms через tokio::time::timeout → 503 при превышении. Лимит тела max_body_bytes → 413.
+    9. GET /healthz → 200 "ok". GET /readyz → 200, если конфиг и реестр загружены. GET /metrics — Prometheus: pii_requests_total{system,direction,status}, pii_latency_seconds{direction} (гистограмма, бакеты 0.0005…5), pii_entities_total{type}, pii_inflight (gauge), pii_mappings_stored (gauge), pii_rejected_total{reason}.
+    10. Логи: tracing JSON, одна запись на запрос: request_id, system, direction, payload_id (хеш от него, не сам id, если длиннее 64 символов), entity types с count, latency_ms, status. **Никаких значений текста, спанов или масок в логах и в сообщениях об ошибках.**
+    11. src/mask/mod.rs: список синтетических ФИО заменить на 20 вымышленных нейтральных (например «Смирнов Алексей Петрович», «Кузнецова Мария Ивановна»), без реальных известных людей.
+    12. Заголовки ответа: `X-Request-Id` (принимается от клиента или генерируется), `Content-Type: application/json`.
+  </requirements>
+  <tests>
+    tests/http.rs — поднимает приложение в процессе (build_router + axum::serve на порту 0 или tower::ServiceExt::oneshot), использует config.yaml из корня:
+      - /process маска: «Клиент ИНН 7707083893, тел. +7 912 345-67-89, email ivan@mail.ru» с id A → result содержит <<INN_1>>, <<PHONE_1>>, <<EMAIL_1>> и не содержит исходных значений;
+      - /process демаска: тот же id A, payload = полученная маска → result равен исходной строке побайтово;
+      - ретрай маскирования: id A и исходный payload повторно → тот же masked, что в первый раз;
+      - искажённая маска: id A, payload = маска с «<< inn_1 >>» и другим порядком → исходные значения восстановлены;
+      - неизвестный id при демаске = новая маска (первый запрос);
+      - X-System-Id: unknown → 403; chatbot → токены в hash-формате `<<INN_[0-9a-f]{6}>>`, одинаковы для двух разных payload_id с одним ИНН;
+      - /v1/mask + /v1/unmask round-trip; /v1/unmask с неизвестным session_id → 200 и X-Unmask: not-found; /v1/detect не возвращает текст значений;
+      - 400 на невалидный JSON и на отсутствие payload_id; 413 на тело больше лимита (в тесте задать max_body_bytes маленьким через отдельный конфиг-строку);
+      - 429: max_inflight 1, один запрос удерживает разрешение (через тестовый маршрут или sleep в payload недоступен — допускается тест на уровне функции проверки семафора);
+      - /metrics после запросов содержит pii_requests_total и pii_latency_seconds; /healthz 200;
+      - логи: захватить вывод tracing в буфер (tracing_subscriber с writer в Arc<Mutex<Vec<u8>>>) и проверить, что после запроса с ИНН 7707083893 буфер не содержит «7707083893».
+  </tests>
+  <acceptance>cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/pii-guard.exe --config config.yaml</acceptance>
+  <out_of_scope>LLM-прокси /v1/chat/completions (T09). Hot reload по файлу и /admin (T08). Детекция ФИО/дат/адресов (T05). Применение allowlist (T06).</out_of_scope>
+</task>
