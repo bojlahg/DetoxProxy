@@ -4,7 +4,7 @@ server:
   max_body_bytes: 4194304
   max_inflight: 2048
   mapping_ttl_sec: 900
-  mapping_max_entries: 200000
+  mapping_max_entries: 2000000
   request_deadline_ms: 5000
 default_system: autotest
 systems:

@@ -66,3 +66,60 @@ fn max_entries_evicts_oldest() {
     assert!(store.get("a").is_none());
     assert!(store.get("b").is_none());
 }
+
+#[test]
+fn max_entries_evicts_oldest_large() {
+    let store = MappingStore::new(Duration::from_secs(60), 1000);
+    for i in 0..5000 {
+        store.insert(&format!("id{i}"), "m".to_string(), vec![]);
+    }
+    assert!(store.len() <= 1000);
+    for i in 0..4000 {
+        assert!(store.get(&format!("id{i}")).is_none(), "old id{i} should be evicted");
+    }
+    for i in 4000..5000 {
+        assert!(store.get(&format!("id{i}")).is_some(), "recent id{i} should be present");
+    }
+}
+
+#[test]
+fn insert_200k_within_budget() {
+    let store = MappingStore::new(Duration::from_secs(60), 10_000);
+    let start = std::time::Instant::now();
+    for i in 0..200_000 {
+        store.insert(&format!("id{i}"), "m".to_string(), vec![]);
+    }
+    let elapsed = start.elapsed();
+    assert!(store.len() <= 10_000);
+    assert!(
+        elapsed.as_secs() < 2,
+        "200k inserts took {elapsed:?}, expected under 2s"
+    );
+}
+
+#[test]
+fn sweep_removes_expired_and_get_none() {
+    let store = MappingStore::new(Duration::from_millis(50), 100);
+    store.insert("old", "m".to_string(), vec![]);
+    std::thread::sleep(Duration::from_millis(80));
+    store.insert("fresh", "m".to_string(), vec![]);
+    let removed = store.sweep();
+    assert_eq!(removed, 1);
+    assert_eq!(store.len(), 1);
+    assert!(store.get("old").is_none());
+    assert!(store.get("fresh").is_some());
+}
+
+#[test]
+fn reinserted_key_not_evicted_by_stale_queue_entry() {
+    let store = MappingStore::new(Duration::from_secs(60), 3);
+    store.insert("a", "m".to_string(), vec![]);
+    store.insert("b", "m".to_string(), vec![]);
+    store.insert("c", "m".to_string(), vec![]);
+    store.insert("a", "m".to_string(), vec![]);
+    store.insert("d", "m".to_string(), vec![]);
+    assert!(store.len() <= 3);
+    assert!(store.get("a").is_some(), "fresh a should survive");
+    assert!(store.get("d").is_some());
+    assert!(store.get("b").is_none(), "b should be evicted");
+}

@@ -349,10 +349,10 @@ fn build_state(cfg: Config) -> Arc<AppState> {
     let allowlist_text = std::fs::read_to_string(&cfg.allowlist_file).expect("read allowlist");
     let allowlist = Allowlist::from_yaml(&allowlist_text).expect("parse allowlist");
     let detector = Detector::with_allowlist(registry.clone(), dicts, allowlist);
-    let store = MappingStore::new(
+    let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(registry),

@@ -29,7 +29,7 @@ pub struct AppState {
     pub config: ConfigStore,
     pub registry: ArcSwap<Registry>,
     pub detector: ArcSwap<Detector>,
-    pub store: MappingStore,
+    pub store: Arc<MappingStore>,
     pub metrics: PrometheusHandle,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub heavy: Arc<tokio::sync::Semaphore>,
@@ -310,7 +310,6 @@ fn finish_response(
     resp: Response,
 ) -> Response {
     record_metrics(&sys.id, direction, status, latency, entity_types);
-    log_request(rid, &sys.id, direction, "", entity_types, latency, status);
     let mut resp = resp;
     resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
     resp
@@ -335,6 +334,7 @@ struct ProcessOutcome {
     unresolved_tokens: usize,
     payload_bytes: usize,
     direction: Direction,
+    payload_id: String,
 }
 
 async fn process_handler(
@@ -377,6 +377,7 @@ async fn process_handler(
             } else {
                 record_unresolved(&sys.id, outcome.unresolved_tokens);
             }
+            log_request(&rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, latency, 200);
             finish_response(
                 &rid,
                 &sys,
@@ -389,6 +390,7 @@ async fn process_handler(
         }
         Err(resp) => {
             let status = resp.status();
+            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
             finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
@@ -410,13 +412,13 @@ async fn process_inner(
     let payload_id = req.payload_id;
 
     if payload.is_empty() {
-        return Ok(empty_outcome());
+        return Ok(empty_outcome(&payload_id));
     }
 
     let key = store_key(&sys.id, &payload_id);
     let entry = match state.store.get(&key) {
         Some(e) => e,
-        None => return process_fresh_mask(state, sys, &key, &payload, deadline, inline_max).await,
+        None => return process_fresh_mask(state, sys, &key, &payload_id, &payload, deadline, inline_max).await,
     };
 
     if payload == entry.masked_text {
@@ -430,9 +432,10 @@ async fn process_inner(
                 unresolved_tokens: 0,
                 payload_bytes: payload.len(),
                 direction: Direction::Mask,
+                payload_id: payload_id.clone(),
             });
         }
-        return Ok(unmask_outcome(&payload, &entry, Direction::Unmask));
+        return Ok(unmask_outcome(&payload_id, &payload, &entry, Direction::Unmask));
     }
 
     if hash_id(&payload) == entry.original_hash {
@@ -445,14 +448,15 @@ async fn process_inner(
             unresolved_tokens: 0,
             payload_bytes: payload.len(),
             direction: Direction::Mask,
+            payload_id: payload_id.clone(),
         });
     }
 
-    Ok(unmask_outcome(&payload, &entry, Direction::Unmask))
+    Ok(unmask_outcome(&payload_id, &payload, &entry, Direction::Unmask))
 }
 
 /// Outcome for an empty payload: an empty result with no metrics side effects.
-fn empty_outcome() -> ProcessOutcome {
+fn empty_outcome(payload_id: &str) -> ProcessOutcome {
     ProcessOutcome {
         resp: ProcessResponse { result: String::new() },
         entity_types: HashMap::new(),
@@ -462,11 +466,12 @@ fn empty_outcome() -> ProcessOutcome {
         unresolved_tokens: 0,
         payload_bytes: 0,
         direction: Direction::Mask,
+        payload_id: payload_id.to_string(),
     }
 }
 
 /// Outcome for a payload that must be unmasked against an existing store entry.
-fn unmask_outcome(payload: &str, entry: &crate::store::StoredEntry, direction: Direction) -> ProcessOutcome {
+fn unmask_outcome(payload_id: &str, payload: &str, entry: &crate::store::StoredEntry, direction: Direction) -> ProcessOutcome {
     let restored = unmask(payload, &entry.mappings);
     let unresolved = count_unresolved_tokens(payload, &entry.mappings);
     ProcessOutcome {
@@ -478,6 +483,7 @@ fn unmask_outcome(payload: &str, entry: &crate::store::StoredEntry, direction: D
         unresolved_tokens: unresolved,
         payload_bytes: payload.len(),
         direction,
+        payload_id: payload_id.to_string(),
     }
 }
 
@@ -486,6 +492,7 @@ async fn process_fresh_mask(
     state: &Arc<AppState>,
     sys: &SystemConfig,
     key: &str,
+    payload_id: &str,
     payload: &str,
     deadline: Duration,
     inline_max: usize,
@@ -519,6 +526,7 @@ async fn process_fresh_mask(
         unresolved_tokens: 0,
         payload_bytes: payload.len(),
         direction: Direction::Mask,
+        payload_id: payload_id.to_string(),
     })
 }
 
@@ -540,9 +548,13 @@ async fn mask_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(resp) => finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response()),
+        Ok(resp) => {
+            log_request(&rid, &sys.id, Direction::Mask, &resp.session_id, &HashMap::new(), latency, 200);
+            finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response())
+        }
         Err(resp) => {
             let status = resp.status();
+            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
             finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
@@ -645,18 +657,18 @@ async fn unmask_handler(
             Some(entry) => {
                 let restored = unmask(&req.text, &entry.mappings);
                 let unresolved = count_unresolved_tokens(&req.text, &entry.mappings);
-                Ok((false, unresolved, text_len, UnmaskResponse { text: restored }))
+                Ok((false, unresolved, text_len, req.session_id, UnmaskResponse { text: restored }))
             }
-            None => Ok((true, 0, text_len, UnmaskResponse { text: req.text })),
+            None => Ok((true, 0, text_len, req.session_id, UnmaskResponse { text: req.text })),
         }
     })
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((not_found, unresolved, text_len, resp))) => {
+        Ok(Ok((not_found, unresolved, text_len, session_id, resp))) => {
             record_metrics(&sys.id, Direction::Unmask, 200, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), latency, 200);
+            log_request(&rid, &sys.id, Direction::Unmask, &session_id, &HashMap::new(), latency, 200);
             record_payload_bytes(&sys.id, Direction::Unmask, text_len);
             record_unresolved(&sys.id, unresolved);
             let mut resp = Json(resp).into_response();
@@ -1025,22 +1037,23 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let metrics = crate::obs::install_metrics()?;
 
     let cfg = load_config(&config_path)?;
-    let store = crate::store::MappingStore::new(
+    let store = Arc::new(crate::store::MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
 
     let state = Arc::new(AppState {
         config: crate::config::ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(load_registry(&cfg)?),
         detector: ArcSwap::from_pointee(load_detector(&cfg)?),
-        store,
+        store: store.clone(),
         metrics,
         inflight: Arc::new(tokio::sync::Semaphore::new(cfg.server.max_inflight)),
         heavy: Arc::new(tokio::sync::Semaphore::new(cfg.server.heavy_max_concurrency)),
         config_path: config_path.clone(),
     });
 
+    store.spawn_sweeper(Duration::from_secs(5));
     spawn_background_tasks(&state);
 
     let app = build_router(state.clone());
@@ -1083,7 +1096,7 @@ fn load_detector(cfg: &crate::config::Config) -> anyhow::Result<crate::detect::D
         .with_historical_date_years(cfg.server.historical_date_years))
 }
 
-/// Spawns the SIGHUP reload loop and the periodic store sweep.
+/// Spawns the SIGHUP reload loop.
 fn spawn_background_tasks(state: &Arc<AppState>) {
     #[cfg(unix)]
     {
@@ -1111,19 +1124,6 @@ fn spawn_background_tasks(state: &Arc<AppState>) {
             }
         });
     }
-
-    let sweep_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            let removed = sweep_state.store.sweep();
-            metrics::gauge!("pii_mappings_stored").set(sweep_state.store.len() as f64);
-            if removed > 0 {
-                tracing::debug!(removed = removed, "store sweep");
-            }
-        }
-    });
 }
 
 async fn shutdown_signal() {

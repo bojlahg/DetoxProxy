@@ -27,10 +27,10 @@ fn build_state(cfg: Config) -> Arc<AppState> {
         _ => Arc::new(Dictionaries::empty()),
     };
     let detector = Detector::new(registry.clone(), dicts);
-    let store = MappingStore::new(
+    let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
-    );
+    ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
         registry: ArcSwap::from(registry),
