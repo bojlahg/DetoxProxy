@@ -236,6 +236,56 @@ fn passport_series_number_separated_masked() {
     assert!(has_type(&entities, "passport"), "separated passport with № should be found: {:?}", entities);
 }
 
+#[test]
+fn street_address_without_d_masked() {
+    let entities = detect("на ул. Гагарина 28", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "street address should be found: {:?}", entities);
+    let entities = detect("ул. Строителей 17к3", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "street address with letter should be found: {:?}", entities);
+    let entities = detect("пр. Победы 45 кв 89", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "street address with apartment should be found: {:?}", entities);
+    let entities = detect("проспекте Сахарова 22", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "street address in prepositional case should be found: {:?}", entities);
+}
+
+#[test]
+fn street_address_with_city_masked() {
+    let entities = detect("г. Москва, ул. Гагарина 28", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "address with city should be found: {:?}", entities);
+    let entities = detect("Хабаровск, Маршала Жукова, 188", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "city word number address should be found: {:?}", entities);
+    let entities = detect("Вольск, Рокоссовского, 131", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "city word number address should be found: {:?}", entities);
+}
+
+#[test]
+fn cvv_code_masked() {
+    let entities = detect("CVV-код 317 введён", TrapPolicy::PreferMask);
+    assert_eq!(span_of("CVV-код 317 введён", &entities, "cvv"), Some("317"), "cvv span: {:?}", entities);
+    let entities = detect("CVC-код: 123", TrapPolicy::PreferMask);
+    assert_eq!(span_of("CVC-код: 123", &entities, "cvv"), Some("123"), "cvv span: {:?}", entities);
+    let entities = detect("код CVV 317", TrapPolicy::PreferMask);
+    assert_eq!(span_of("код CVV 317", &entities, "cvv"), Some("317"), "cvv span: {:?}", entities);
+}
+
+#[test]
+fn cvv_without_digits_not_masked() {
+    let entities = detect("CVV-код находится на обратной стороне карты", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "cvv"), "cvv without digits should not be found: {:?}", entities);
+}
+
+#[test]
+fn passport_pair_pair_masked() {
+    let entities = detect("Паспорт 48 90 234004 выдан", TrapPolicy::PreferMask);
+    assert_eq!(span_of("Паспорт 48 90 234004 выдан", &entities, "passport"), Some("48 90 234004"), "passport span: {:?}", entities);
+}
+
+#[test]
+fn driver_license_masked() {
+    let entities = detect("водительское удостоверение 77 15 123456", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "driver_license"), "driver license should be found: {:?}", entities);
+}
+
 // ---- /process and /v1/detect via HTTP ----
 
 static METRICS: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> = std::sync::OnceLock::new();

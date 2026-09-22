@@ -423,6 +423,14 @@ impl Detector {
                 if has_context && !skip_context_boost {
                     conf += 0.3;
                 }
+                // A passport in "NN NN NNNNNN" format (series as two pairs + 6-digit number)
+                // right after a passport marker is a confident passport (0.9).
+                if spec.id == "passport"
+                    && has_context
+                    && PASSPORT_PAIR_PAIR_RE.is_match(span)
+                {
+                    conf = 0.9;
+                }
                 if spec.context_required && !has_context {
                     continue;
                 }
@@ -697,6 +705,16 @@ impl Detector {
         has_context_word_around(text, start, end, spec.context_window, &markers)
     }
 
+    /// True if a global non-pii marker (юридический адрес, пункт выдачи, отделение,
+    /// офис, банк...) appears within a window around the span.
+    fn has_global_non_pii_near(&self, text: &str, start: usize, end: usize) -> bool {
+        let markers = &self.registry.context().non_pii_markers;
+        if markers.is_empty() {
+            return false;
+        }
+        has_context_word_around(text, start, end, 60, markers)
+    }
+
     /// Effective PII markers for a type: per-type `pii_markers`, else per-type `pii_context`,
     /// else the global `context.pii_markers`.
     fn effective_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
@@ -745,11 +763,17 @@ impl Detector {
                     continue;
                 }
                 let trimmed = between.trim();
+                // The text between the marker and the value may be empty, a separator
+                // (":", "-", "="), the word "код", or the glued form "-код" / "-код:"
+                // (e.g. "CVV-код 317", "CVC-код: 123").
                 let allowed = trimmed.is_empty()
                     || trimmed == ":"
                     || trimmed == "-"
                     || trimmed == "="
-                    || trimmed == "код";
+                    || trimmed == "код"
+                    || trimmed == "-код"
+                    || trimmed == "-код:"
+                    || trimmed == "код:";
                 if allowed {
                     return true;
                 }
@@ -982,13 +1006,163 @@ impl Detector {
         candidates
     }
 
+    /// Street + house number without "д." (e.g. "ул. Гагарина 28", "пр. Победы 45 кв 89",
+    /// "проспекте Сахарова 22"). A street marker plus a name (1-3 words, may start with a
+    /// digit) and a house number is a confident address (0.8) on its own. A preceding city
+    /// is included in the span. Also detects "city, capitalized word, number" (e.g.
+    /// "Хабаровск, Маршала Жукова, 188") at 0.7.
+    ///
+    /// The street marker may be abbreviated ("ул.", "пр.") or a full word in any case
+    /// ("улице", "проспекте").
+    fn detect_street_address(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+        let mut candidates = Vec::new();
+        for m in STREET_ADDR_RE.find_iter(text) {
+            let start = m.start();
+            let end = m.end();
+            // A non-pii marker (отделение, офис, банк...) suppresses the address.
+            if self.has_non_pii_context(text, start, end, spec) {
+                continue;
+            }
+            let mut conf = 0.8f32;
+            // Include a preceding city ("г. Москва, " or "Москва, ") in the span.
+            let (span_start, span_end) = self.extend_with_city(text, start, end);
+            // An organization near the address is a negative signal.
+            let non_pii = self.effective_non_pii_markers(spec);
+            if self.allowlist.org_near(text, span_start, span_end, 60, &non_pii) {
+                conf -= 0.3;
+            }
+            conf = conf.clamp(0.0, 1.0);
+            if passes_threshold(conf, opts) {
+                candidates.push(Entity { type_id: spec.id.clone(), start: span_start, end: span_end, confidence: conf });
+            }
+        }
+        // "city, capitalized word, number" (e.g. "Хабаровск, Маршала Жукова, 188").
+        candidates.extend(self.detect_city_word_number(text, opts, spec));
+        candidates
+    }
+
+    /// Extends a street-address span to include a preceding city ("г. Москва, " or
+    /// "Москва, "). Returns the widened span.
+    fn extend_with_city(&self, text: &str, start: usize, end: usize) -> (usize, usize) {
+        let prefix = &text[..start];
+        let trimmed = prefix.trim_end();
+        // "г. Москва, " — city marker + city name + comma.
+        if let Some(pos) = trimmed.rfind("г.") {
+            let after = &trimmed[pos + "г.".len()..];
+            let after = after.trim_start();
+            if let Some(comma) = after.find(',') {
+                let city = &after[..comma].trim();
+                if self.looks_like_city_name(city) {
+                    return (pos, end);
+                }
+            }
+        }
+        // "Москва, " — bare city name + comma. The city is the word before the comma.
+        if let Some(comma) = trimmed.rfind(',') {
+            let before = &trimmed[..comma];
+            let before = before.trim_end();
+            let city_start = before
+                .char_indices()
+                .rev()
+                .find(|(_, c)| c.is_whitespace())
+                .map(|(i, _)| i + 1)
+                .unwrap_or(0);
+            let city = &before[city_start..];
+            if self.looks_like_city_name(city) {
+                return (city_start, end);
+            }
+        }
+        (start, end)
+    }
+
+    /// True if a span is a city name (from the dictionary) or a city marker + name.
+    fn looks_like_city_name(&self, span: &str) -> bool {
+        let lower = span.to_lowercase();
+        if self.dicts.contains("cities", &lower) {
+            return true;
+        }
+        // "г. Москва" style: strip a leading "г." / "город".
+        let stripped = lower
+            .strip_prefix("г.")
+            .or_else(|| lower.strip_prefix("город"))
+            .map(|s| s.trim())
+            .unwrap_or(&lower);
+        self.dicts.contains("cities", stripped)
+    }
+
+    /// "city, capitalized word(s), number" (e.g. "Хабаровск, Маршала Жукова, 188",
+    /// "Вольск, Рокоссовского, 131") -> address 0.7.
+    fn detect_city_word_number(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+        let mut candidates = Vec::new();
+        for (start, end, lower, is_cap) in cyrillic_words(text) {
+            if !is_cap || !self.dicts.contains("cities", &lower) {
+                continue;
+            }
+            // After the city: ", capitalized word(s), number".
+            let after = &text[end..];
+            let after = after.trim_start();
+            let after = after.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(after);
+            let words = cyrillic_words(after);
+            if words.is_empty() {
+                continue;
+            }
+            // Take 1-2 capitalized words as the street name.
+            let (ws, we, _, wcap) = words[0];
+            if !wcap {
+                continue;
+            }
+            let mut street_end = we;
+            if let Some((_, we2, _, wcap2)) = words.get(1) {
+                if *wcap2 {
+                    street_end = *we2;
+                }
+            }
+            // Convert the street-name end to an absolute byte offset in `text`. `after` is a
+            // sub-slice of `text` (after trimming and comma stripping), so its absolute
+            // offset is `after.as_ptr() - text.as_ptr()`.
+            let street_end_abs = (after.as_ptr() as usize - text.as_ptr() as usize) + street_end;
+            // After the street name: a comma and a number.
+            let between = &text[street_end_abs..];
+            let between = between.trim_start();
+            let between = between.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(between);
+            let num = HOUSE_NUMBER_RE.find(between);
+            let num = match num {
+                Some(n) if n.start() == 0 => n,
+                _ => continue,
+            };
+            let num_end = num.end();
+            // The number must be followed by a boundary (space, period, end).
+            let after_num = &between[num_end..];
+            if !after_num.is_empty()
+                && !after_num.starts_with(char::is_whitespace)
+                && !after_num.starts_with('.')
+            {
+                continue;
+            }
+            // Compute the absolute byte offset of the number's end. `between` is a sub-slice of
+            // `text` (after trimming and comma stripping), so its absolute offset is
+            // `between.as_ptr() - text.as_ptr()`.
+            let span_end = (between.as_ptr() as usize - text.as_ptr() as usize) + num_end;
+            let span_start = start;
+            // A non-pii marker (юридический адрес, пункт выдачи, отделение, офис, банк...)
+            // suppresses the address.
+            if self.has_global_non_pii_near(text, span_start, span_end) {
+                continue;
+            }
+            if passes_threshold(0.7, opts) {
+                candidates.push(Entity { type_id: spec.id.clone(), start: span_start, end: span_end, confidence: 0.7 });
+            }
+        }
+        candidates
+    }
+
     /// Address: group of 2+ consecutive components (index, city, street, house, apartment, region).
     fn detect_address(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+        let mut candidates = self.detect_street_address(text, opts, spec);
         let comps = self.find_address_components(text);
         if comps.is_empty() {
-            return Vec::new();
+            return candidates;
         }
-        let mut candidates = Vec::new();
         let mut i = 0;
         while i < comps.len() {
             let mut j = i + 1;
@@ -1060,9 +1234,9 @@ impl Detector {
         {
             return AddrKind::House;
         }
-        if ctx.street_markers.iter().any(|m| {
-            lower.starts_with(m.as_str()) || lower.ends_with(m.as_str())
-        }) {
+        if starts_with_street_marker(&lower, &ctx.street_markers)
+            || ctx.street_markers.iter().any(|m| lower.ends_with(m.as_str()))
+        {
             return AddrKind::Street;
         }
         if lower.starts_with("обл.") || lower.starts_with("область")
@@ -1149,11 +1323,13 @@ impl Detector {
         let prev_lower = prev_span.to_lowercase();
         // A street component may carry the marker at the start ("ул. Ленина") or at the
         // end ("Невский пр-т").
-        self.registry
-            .context()
-            .street_markers
-            .iter()
-            .any(|m| prev_lower.starts_with(m.as_str()) || prev_lower.ends_with(m.as_str()))
+        starts_with_street_marker(&prev_lower, &self.registry.context().street_markers)
+            || self
+                .registry
+                .context()
+                .street_markers
+                .iter()
+                .any(|m| prev_lower.ends_with(m.as_str()))
     }
 
     /// Card holder: Latin all-caps words with a marker or near a card number.
@@ -1326,6 +1502,32 @@ fn is_rank_word(lower: &str) -> bool {
         lower,
         "маршала" | "генерала" | "адмирала" | "академика"
     )
+}
+
+/// Short street-marker abbreviations that are ambiguous prefixes of common words
+/// (e.g. "пр" matches "Права", "Приморский"; "ул" matches "Ульяновск"). Such a marker
+/// counts as a street only when followed by '.' or '-' (e.g. "ул.", "пр-т"), not when it
+/// is a bare prefix of a longer word.
+fn is_short_street_abbrev(marker: &str) -> bool {
+    matches!(marker, "ул" | "пр" | "пер" | "наб" | "ш" | "пл")
+}
+
+/// True if `lower` starts with a street marker. Abbreviated markers (ул, пр, пер, наб,
+/// ш, пл) must be followed by '.' or '-' to avoid matching words like "Права" (пр) or
+/// "Ульяновск" (ул). Full words (улица, проспект, ...) and complete forms ("пр-т",
+/// "б-р") match as-is.
+fn starts_with_street_marker(lower: &str, markers: &[String]) -> bool {
+    markers.iter().any(|m| {
+        if !lower.starts_with(m.as_str()) {
+            return false;
+        }
+        if is_short_street_abbrev(m) {
+            let rest = &lower[m.len()..];
+            rest.starts_with('.') || rest.starts_with('-')
+        } else {
+            true
+        }
+    })
 }
 
 fn name_tokens(text: &str) -> Vec<NameToken> {
@@ -1930,6 +2132,28 @@ static BARE_NUMBER_RE: Lazy<Regex> = Lazy::new(|| {
 });
 static HYPHENATED_WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[А-ЯЁ][а-яё]+-[А-ЯЁ][а-яё]+").unwrap());
+
+/// Street marker + street name (1-3 words, may start with a digit) + house number
+/// (`\d+[а-я]?(/\d+)?`) + optional корпус/к./стр./кв./квартира/подъезд + number.
+/// Street markers match in any grammatical case (e.g. "улице", "проспекте").
+static STREET_ADDR_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?iu)\b(?:ул\.|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|ш\.|шоссе|б-р|бульвар[а-яё]*|наб\.|набережн[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+",
+        r"(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)",
+        r"(?:\s+(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)){0,2}?",
+        r"\s+\d+[а-яА-ЯёЁ]?(?:/\d+)?",
+        r"(?:\s+(?:корпус|корп\.|к\.|стр\.|кв\.|квартира|подъезд)\s*\d+)?",
+    ))
+    .unwrap()
+});
+
+/// A house number with an optional letter or fraction (e.g. "17к3", "28/4").
+static HOUSE_NUMBER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\d+[а-яА-ЯёЁ]?(?:/\d+)?").unwrap());
+
+/// Passport series as two pairs + 6-digit number (e.g. "48 90 234004").
+static PASSPORT_PAIR_PAIR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\d{2} \d{2} \d{6}$").unwrap());
 
 /// Matches a field label: a word followed by a colon (e.g. "Код заявки:").
 static FIELD_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
