@@ -840,3 +840,20 @@ pub fn inflect(value: &str, kind: Kind, case: Case) -> Option<String>
 
 Файлы: src/store/mod.rs, src/server/mod.rs, config.yaml, tests/store.rs. Каталог logs/ не трогай.
 </task>
+
+<task id="T26">
+Привет. Корректное завершение сервиса (src/server/mod.rs). Сейчас по SIGTERM процесс умирает сразу и рвёт текущие запросы — при перезапуске во время нагрузочной проверки это ошибки у проверяющего.
+
+Сделать:
+1. `axum::serve(...).with_graceful_shutdown(signal)` — сигнал по SIGTERM (unix) и Ctrl+C (кроссплатформенно, `tokio::signal::ctrl_c`).
+2. Как только сигнал получен: `/readyz` начинает отвечать 503 (флаг `AtomicBool` в AppState), `/healthz` продолжает 200. Пауза `server.shutdown_grace_ms` (новое поле, default 500) перед тем, как перестать принимать новые соединения — чтобы балансировщик успел увести трафик.
+3. Дождаться завершения текущих запросов, но не дольше `server.shutdown_timeout_ms` (default 10000).
+4. В лог — `shutdown started` и `shutdown complete` с числом обработанных за время ожидания запросов. Значений ПД в логе нет.
+5. В systemd-юните это уже работает по умолчанию (systemd шлёт SIGTERM) — менять ничего не нужно, но проверь, что процесс завершается с кодом 0.
+
+Тесты в tests/http.rs: поднять сервис в тесте, отправить сигнал завершения через тот же механизм (вынеси shutdown-сигнал в параметр, чтобы тест мог его дёрнуть), убедиться: (а) начатый долгий запрос (большой текст) доходит до ответа 200; (б) после сигнала `/readyz` отвечает 503; (в) сервер завершается сам.
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190 && MANUAL_PORT=18197 bash tools/manual_accept.sh --only 1,5,13,20,21`.
+
+Файлы: src/server/mod.rs, src/config/mod.rs, tests/http.rs. Каталог logs/ не трогай.
+</task>
