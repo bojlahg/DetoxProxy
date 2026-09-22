@@ -144,6 +144,10 @@ pub struct Detector {
     marker_re: Option<Regex>,
     /// Maps a lowercase marker word to the type id it belongs to.
     marker_type_of: HashMap<String, String>,
+    /// Lowercased context words of every registry type except `address`, plus the document
+    /// markers. A "word number" address component whose word is in this set is not a street
+    /// (e.g. "Паспорт 4509", "Карта 4276", "Телефон 8..."). Built once at construction.
+    non_address_context_words: HashSet<String>,
 }
 
 /// Marker types that use the nearest-left-marker rule to resolve context.
@@ -189,9 +193,30 @@ fn build_marker_map(registry: &Registry) -> (Option<Regex>, HashMap<String, Stri
     (Some(re), marker_type_of)
 }
 
+/// Builds the set of lowercased context words of every registry type except `address`, plus
+/// the document markers. A "word number" address component whose leading word is in this set
+/// is a field label of another PII type (паспорт, карта, инн, снилс, телефон, серия, номер...),
+/// not a street name.
+fn build_non_address_context_words(registry: &Registry) -> HashSet<String> {
+    let mut set: HashSet<String> = HashSet::new();
+    for spec in registry.types() {
+        if spec.id == "address" {
+            continue;
+        }
+        for w in &spec.context_words {
+            set.insert(w.to_lowercase());
+        }
+    }
+    for m in DOCUMENT_MARKERS {
+        set.insert(m.to_string());
+    }
+    set
+}
+
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
         let (marker_re, marker_type_of) = build_marker_map(&registry);
+        let non_address_context_words = build_non_address_context_words(&registry);
         Self {
             registry,
             dicts,
@@ -199,6 +224,7 @@ impl Detector {
             allowlist: std::sync::Arc::new(Allowlist::empty()),
             marker_re,
             marker_type_of,
+            non_address_context_words,
         }
     }
 
@@ -209,6 +235,7 @@ impl Detector {
         allowlist: Allowlist,
     ) -> Self {
         let (marker_re, marker_type_of) = build_marker_map(&registry);
+        let non_address_context_words = build_non_address_context_words(&registry);
         Self {
             registry,
             dicts,
@@ -216,6 +243,7 @@ impl Detector {
             allowlist: std::sync::Arc::new(allowlist),
             marker_re,
             marker_type_of,
+            non_address_context_words,
         }
     }
 
@@ -1408,11 +1436,16 @@ impl Detector {
             return None;
         }
         // Take 1-2 capitalized words as the street name.
-        let (_, we, _, wcap) = words[0];
-        if !wcap {
+        let (_, we, wlower, wcap) = &words[0];
+        if !*wcap {
             return None;
         }
-        let mut street_end = we;
+        // A street name that is a context word of another PII type (e.g. "Паспорт 4509")
+        // is not a street.
+        if self.non_address_context_words.contains(wlower) {
+            return None;
+        }
+        let mut street_end = *we;
         if let Some((_, we2, _, wcap2)) = words.get(1) {
             if *wcap2 {
                 street_end = *we2;
@@ -1572,6 +1605,11 @@ impl Detector {
                 comps.push((m.start(), m.end()));
             }
         }
+        // "word number" components (e.g. "Тверская 15"). A street only when the leading word
+        // is not a context word of another PII type (rule 1) and not a sentence-start word
+        // without a preceding city or street marker in the same group (rule 2).
+        let word_number = self.word_number_components(text);
+        comps.extend(word_number.iter().copied());
         // Bare city names from the dictionary.
         for (start, end, lower, is_cap) in cyrillic_words(text) {
             if is_cap && self.dicts.contains("cities", &lower) {
@@ -1593,7 +1631,63 @@ impl Detector {
             }
         }
         comps.sort_by_key(|c| c.0);
+        // Rule 2: drop a sentence-start "word number" component whose group has no city or
+        // street marker before it.
+        let rejected: Vec<(usize, usize)> = word_number
+            .iter()
+            .copied()
+            .filter(|&(s, _)| self.sentence_start_word_number_rejected(text, s, &comps))
+            .collect();
+        comps.retain(|c| !rejected.contains(c));
         dedup_components(comps)
+    }
+
+    /// "word number" components (e.g. "Тверская 15") whose leading word is not a context word
+    /// of another PII type (rule 1).
+    fn word_number_components(&self, text: &str) -> Vec<(usize, usize)> {
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for m in WORD_NUMBER_RE.find_iter(text) {
+            let span = &text[m.start()..m.end()];
+            let word_len = span.find(char::is_whitespace).unwrap_or(span.len());
+            let word = &span[..word_len];
+            if self.non_address_context_words.contains(&word.to_lowercase()) {
+                continue;
+            }
+            out.push((m.start(), m.end()));
+        }
+        out
+    }
+
+    /// True if a "word number" component at `start` is a sentence-start word with no city or
+    /// street marker before it in the same group (so it is not a street).
+    fn sentence_start_word_number_rejected(
+        &self,
+        text: &str,
+        start: usize,
+        comps: &[(usize, usize)],
+    ) -> bool {
+        if !is_sentence_start(text, start) {
+            return false;
+        }
+        let mut cur_start = start;
+        loop {
+            let prev = comps
+                .iter()
+                .filter(|c| c.1 <= cur_start)
+                .max_by_key(|c| c.1);
+            let prev = match prev {
+                Some(p) => *p,
+                None => return true,
+            };
+            if !self.components_adjacent(text, prev.1, cur_start) {
+                return true;
+            }
+            match self.classify_address_component(text, prev.0, prev.1) {
+                AddrKind::City | AddrKind::Street => return false,
+                _ => {}
+            }
+            cur_start = prev.0;
+        }
     }
 
     /// True if a bare number at `start` is preceded by a street component.
@@ -2766,9 +2860,12 @@ static ADDRESS_COMPONENT_RES: Lazy<Vec<Regex>> = Lazy::new(|| {
         Regex::new(r"(?:д\.|дом|к\.|корп\.|стр\.)\s+\d+").unwrap(),
         Regex::new(r"(?:кв\.|квартира|оф\.|пом\.)\s+\d+").unwrap(),
         Regex::new(r"(?:обл\.|область|край|респ\.)\s+[А-ЯЁ][а-яё]+").unwrap(),
-        Regex::new(r"[А-ЯЁ][а-яё]+\s+\d+").unwrap(),
     ]
 });
+/// A bare "capitalized word + number" (e.g. "Тверская 15"). A street only when the word is
+/// not a context word of another PII type and not a sentence-start word without a preceding
+/// city or street marker in the same group.
+static WORD_NUMBER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[А-ЯЁ][а-яё]+\s+\d+").unwrap());
 static BARE_NUMBER_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b\d+(?:[А-ЯЁа-яё]|/\d+)?(?:\s*к\.?\s*\d+)?\b").unwrap()
 });

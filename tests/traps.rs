@@ -537,3 +537,46 @@ fn document_number_not_address() {
     let entities = detect("ул. Заказная, д. 5", TrapPolicy::PreferMask);
     assert!(has_type(&entities, "address"), "street with document word must be found: {:?}", entities);
 }
+
+#[test]
+fn passport_not_address() {
+    // A passport number after its own field word must keep its type, not become an address.
+    let entities = detect("Паспорт 4509 123456, выдан ОУФМС России по г. Москве 15.06.2015.", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "passport"), "passport should be found: {:?}", entities);
+    assert!(!has_type(&entities, "address"), "passport must not be an address: {:?}", entities);
+}
+
+#[test]
+fn birth_place_and_passport() {
+    let entities = detect("Место рождения г. Казань. Паспорт 4509 123456.", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "birth_place"), "birth_place should be found: {:?}", entities);
+    assert!(has_type(&entities, "passport"), "passport should be found: {:?}", entities);
+    assert!(!has_type(&entities, "address"), "no address should be found: {:?}", entities);
+}
+
+#[test]
+fn citizenship_and_passport() {
+    let entities = detect("Гражданство РФ. Паспорт 4509 123456, выдан вчера.", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "passport"), "passport should be found: {:?}", entities);
+    assert!(!has_type(&entities, "address"), "no address should be found: {:?}", entities);
+}
+
+#[test]
+fn card_number_not_address() {
+    let entities = detect("Карта 4276 5500 1122 3347, срок 12/28.", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "card_number"), "card_number should be found: {:?}", entities);
+    assert!(!has_type(&entities, "address"), "card must not be an address: {:?}", entities);
+}
+
+#[test]
+fn city_word_number_address_kept() {
+    // A city + street word + number is still an address.
+    let entities = detect("Москва, Тверская 15, кв. 3", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "address should be found: {:?}", entities);
+}
+
+#[test]
+fn resident_address_kept() {
+    let entities = detect("Проживает: г. Казань, ул. Баумана, д. 14, кв. 8", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "address should be found: {:?}", entities);
+}
