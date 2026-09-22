@@ -10,7 +10,7 @@ bin="${2:-target/release/detox-proxy.exe}"
 if [ -z "$req" ]; then
   req="$(grep -v '^\s*#' tests/eval_floors.txt | grep -v '^\s*$' | paste -sd, -)"
 fi
-port=18098
+port="${EVAL_PORT:-18098}"
 cfg="$(mktemp -t eval-cfg.XXXX.yaml)"
 sed -E "s#listen: \"[^\"]*\"#listen: \"127.0.0.1:$port\"#" config.yaml > "$cfg"
 "$bin" --config "$cfg" > eval-accept.log 2>&1 &

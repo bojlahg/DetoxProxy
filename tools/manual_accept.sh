@@ -7,7 +7,7 @@ only=""
 if [ "${1:-}" = "--only" ]; then only="$2"; shift 2; fi
 bin="${1:-target/release/detox-proxy.exe}"
 [ -x "$bin" ] || bin="target/release/detox-proxy"
-port=18097
+port="${MANUAL_PORT:-18097}"
 cfg="$(mktemp -t manual-cfg.XXXX.yaml)"
 sed -E "s#listen: \"[^\"]*\"#listen: \"127.0.0.1:$port\"#" config.yaml > "$cfg"
 "$bin" --config "$cfg" > manual-accept.log 2>&1 &
