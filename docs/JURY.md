@@ -74,7 +74,7 @@ curl -s localhost:8080/process -H 'X-System-Id: strict' -H 'Content-Type: applic
   -d '{"payload":"пин-код 4821","payload_id":"demo-4"}'
 ```
 
-Режим замены задаётся на систему и на тип: `token`, `stars` (`4276 **** **** 5679`, ФИО → `И. И. И.`), `synthetic` (правдоподобная подстановка), `remove`, `off`.
+Режим замены задаётся на систему и на тип: `token`, `pseudonym` (правдоподобная подстановка: «Сидорову Петру Ивановичу» → «Чернякову Ираклию Ильичу», ИНН и карта с верной контрольной суммой), `stars` (`4276 **** **** 3347`, ФИО → `С. П. И.`), `synthetic`, `remove`, `off`. Все режимы на одном тексте — `docs/MASKS.md`, проверка — `python3 tools/check_modes.py --bin target/release/detox-proxy`.
 
 ## 5. Добавление нового типа ПД без пересборки
 

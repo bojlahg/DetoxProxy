@@ -87,7 +87,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 
 | Поле | Значения | Смысл |
 |---|---|---|
-| `mask_mode` | `token` / `stars` / `synthetic` / `remove` / `off` | как заменять найденное |
+| `mask_mode` | `token` / `pseudonym` / `stars` / `synthetic` / `remove` / `off` | как заменять найденное; `pseudonym` — правдоподобные подстановки вместо токенов (см. `docs/MASKS.md`) |
 | `overrides` | `{тип: режим}` | режим для отдельного типа |
 | `types` | `all` или список | какие типы искать |
 | `unmask_enabled` | bool | разрешено ли восстановление |
@@ -124,7 +124,16 @@ llm:
 cargo test                                             # модульные и HTTP-тесты
 python tools/check_process.py --bin target/release/detox-proxy --config config.yaml   # контракт /process
 bash tools/manual_accept.sh                            # 25 ручных кейсов с ловушками
+python tools/check_modes.py --bin target/release/detox-proxy   # все режимы маскирования: утечки и восстановление
 python tools/eval_dataset.py --url http://127.0.0.1:8080   # точность на размеченных наборах (tests/data)
 ```
 
-Архитектура — `docs/ARCHITECTURE.md`. Сторонние данные и лицензии — `docs/LICENSES.md`.
+Что читать дальше:
+
+- `docs/JURY.md` — сценарии проверки за 10 минут, готовые команды;
+- `docs/ARCHITECTURE.md` — как устроен детектор и почему так;
+- `docs/MASKS.md` — режимы маскирования, нумерация токенов, падежи;
+- `docs/QUALITY.md` — точность на размеченных и отложенных наборах;
+- `docs/LOAD.md` — нагрузочные прогоны;
+- `docs/LIMITATIONS.md` — что не умеем и почему;
+- `docs/LICENSES.md` — сторонние данные и лицензии.
