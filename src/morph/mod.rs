@@ -1158,22 +1158,16 @@ pub enum SurnameGroup {
 /// female replacement stays in the same group.
 pub fn surname_group(surname: &str) -> SurnameGroup {
     let s = surname.to_lowercase();
-    if s.ends_with("ова")
-        || s.ends_with("ева")
-        || s.ends_with("ёва")
-        || s.ends_with("ов")
-        || s.ends_with("ев")
-        || s.ends_with("ёв")
-    {
+    if ends_with_any(&s, &["ова", "ева", "ёва", "ов", "ев", "ёв"]) {
         return SurnameGroup::Ov;
     }
-    if s.ends_with("ина") || s.ends_with("ына") || s.ends_with("ин") || s.ends_with("ын") {
+    if ends_with_any(&s, &["ина", "ына", "ин", "ын"]) {
         return SurnameGroup::In;
     }
-    if s.ends_with("ская") || s.ends_with("цкая") || s.ends_with("ский") || s.ends_with("цкий") {
+    if ends_with_any(&s, &["ская", "цкая", "ский", "цкий"]) {
         return SurnameGroup::Sky;
     }
-    if s.ends_with("ая") || s.ends_with("яя") || s.ends_with("ой") || s.ends_with("ый") {
+    if ends_with_any(&s, &["ая", "яя", "ой", "ый"]) {
         return SurnameGroup::Oy;
     }
     if s.ends_with("енко") {
@@ -1182,16 +1176,16 @@ pub fn surname_group(surname: &str) -> SurnameGroup {
     if s.ends_with("ко") {
         return SurnameGroup::Ko;
     }
-    if s.ends_with("ук") || s.ends_with("юк") {
+    if ends_with_any(&s, &["ук", "юк"]) {
         return SurnameGroup::Uk;
     }
     if s.ends_with("ян") {
         return SurnameGroup::Yan;
     }
-    if s.ends_with("швили") || s.ends_with("дзе") {
+    if ends_with_any(&s, &["швили", "дзе"]) {
         return SurnameGroup::Shvili;
     }
-    if s.ends_with("их") || s.ends_with("ых") {
+    if ends_with_any(&s, &["их", "ых"]) {
         return SurnameGroup::Ikh;
     }
     if s.ends_with(is_consonant) {
@@ -1264,6 +1258,11 @@ pub fn gender_of_person(value: &str) -> Gender {
     if gender != Gender::Unknown {
         return gender;
     }
+    gender_from_surnames(&normalized, &is_patr, &is_name)
+}
+
+/// Gender inferred from the surname of a person whose patronymic/name gave no signal.
+fn gender_from_surnames(normalized: &[String], is_patr: &[bool], is_name: &[bool]) -> Gender {
     for (i, w) in normalized.iter().enumerate() {
         if !is_patr[i] && !is_name[i] {
             if let Some(g) = gender_from_surname(w) {
@@ -1313,14 +1312,7 @@ pub fn parse_person(value: &str) -> Option<PersonParts> {
     let (normalized, is_patr, is_name) = normalize_person_words(&lower_refs);
     let mut gender = gender_of_normalized(&normalized, &is_patr, &is_name);
     if gender == Gender::Unknown {
-        for (i, w) in normalized.iter().enumerate() {
-            if !is_patr[i] && !is_name[i] {
-                if let Some(g) = gender_from_surname(w) {
-                    gender = g;
-                    break;
-                }
-            }
-        }
+        gender = gender_from_surnames(&normalized, &is_patr, &is_name);
     }
     let final_nom = resolve_surnames(&normalized, &is_patr, &is_name, gender);
 
@@ -1388,6 +1380,11 @@ pub fn detect_person_case(value: &str) -> Case {
             best = i;
         }
     }
+    best_case(best)
+}
+
+/// Map the index of the highest-voted case back to a `Case`.
+fn best_case(best: usize) -> Case {
     match best {
         0 => Case::Nom,
         1 => Case::Gen,
@@ -1423,14 +1420,7 @@ pub fn detect_place_case(value: &str) -> Case {
             best = i;
         }
     }
-    match best {
-        0 => Case::Nom,
-        1 => Case::Gen,
-        2 => Case::Dat,
-        3 => Case::Acc,
-        4 => Case::Ins,
-        _ => Case::Prep,
-    }
+    best_case(best)
 }
 
 /// Apply the case style (upper/title/lower) of `original` to `phrase`.
