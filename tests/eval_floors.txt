@@ -28,3 +28,6 @@ synthetic_missing_categories:clean>=1020
 synthetic_missing_categories:passport_issuer>=120
 synthetic_missing_categories:card_holder>=84
 multi_entity:passport_issuer>=12
+tricky_negatives:clean>=210
+tricky_negatives:snils>=1
+tricky_negatives:fio>=2

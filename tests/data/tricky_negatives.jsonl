@@ -1,0 +1,237 @@
+{"id": "trk-math-00-0", "text": "Из письма: Выражение 123 - 456 - 789 01 вычисляется слева направо. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-00-1", "text": "Из письма: Выражение 123 - 456 - 789 01 вычисляется слева направо. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-00-2", "text": "Сообщение оператора: Выражение 123 - 456 - 789 01 вычисляется слева направо. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-01-0", "text": "Комментарий: Интервал 10 - 20 включительно, шаг 5. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-01-1", "text": "Интервал 10 - 20 включительно, шаг 5.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-01-2", "text": "Запись в журнале: Интервал 10 - 20 включительно, шаг 5. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-02-0", "text": "Запись в журнале: Счёт матча 3 : 2 в пользу гостей. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-02-1", "text": "Счёт матча 3 : 2 в пользу гостей. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-02-2", "text": "Счёт матча 3 : 2 в пользу гостей.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-03-0", "text": "Из письма: Диапазон значений 100-200 мм. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-03-1", "text": "Диапазон значений 100-200 мм. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-03-2", "text": "Из письма: Диапазон значений 100-200 мм. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-04-0", "text": "Формула 2 + 2 = 4 знакома всем. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-04-1", "text": "Запись в журнале: Формула 2 + 2 = 4 знакома всем. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-04-2", "text": "Запись в журнале: Формула 2 + 2 = 4 знакома всем. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-05-0", "text": "Запись в журнале: Температура от -5 до +7 градусов. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-05-1", "text": "Запись в журнале: Температура от -5 до +7 градусов. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-05-2", "text": "Из письма: Температура от -5 до +7 градусов.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-06-0", "text": "Из письма: Пропорция 45 03 читается как сорок пять к трём. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-06-1", "text": "Запись в журнале: Пропорция 45 03 читается как сорок пять к трём. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-06-2", "text": "Пропорция 45 03 читается как сорок пять к трём. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-07-0", "text": "Сообщение оператора: Разность 770 - 001 равна 769. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-07-1", "text": "Комментарий: Разность 770 - 001 равна 769. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-07-2", "text": "Комментарий: Разность 770 - 001 равна 769. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-08-0", "text": "Вычислите 4276 - 3800 + 1234 - 5679. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-08-1", "text": "Сообщение оператора: Вычислите 4276 - 3800 + 1234 - 5679. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-08-2", "text": "Запись в журнале: Вычислите 4276 - 3800 + 1234 - 5679. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-09-0", "text": "Из письма: Результат 112-233-445 91 получен округлением. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-09-1", "text": "Запись в журнале: Результат 112-233-445 91 получен округлением. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-math-09-2", "text": "Сообщение оператора: Результат 112-233-445 91 получен округлением.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "math"]}
+{"id": "trk-ids-00-0", "text": "Сообщение оператора: Версия сборки 8.900.123.45.67 опубликована вчера.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-00-1", "text": "Запись в журнале: Версия сборки 8.900.123.45.67 опубликована вчера. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-00-2", "text": "Комментарий: Версия сборки 8.900.123.45.67 опубликована вчера. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-01-0", "text": "Из письма: Артикул 4512345678 закончился на складе.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-01-1", "text": "Запись в журнале: Артикул 4512345678 закончился на складе. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-01-2", "text": "Запись в журнале: Артикул 4512345678 закончился на складе. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-02-0", "text": "Запись в журнале: Заказ № 500100732258 передан в доставку. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-02-1", "text": "Заказ № 500100732258 передан в доставку. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-02-2", "text": "Комментарий: Заказ № 500100732258 передан в доставку.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-03-0", "text": "Из письма: Счёт-фактура 7707083892 от поставщика. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-03-1", "text": "Запись в журнале: Счёт-фактура 7707083892 от поставщика. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-03-2", "text": "Счёт-фактура 7707083892 от поставщика. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-04-0", "text": "Запись в журнале: Накладная 9876 543210 оформлена утром.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-04-1", "text": "Запись в журнале: Накладная 9876 543210 оформлена утром.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-04-2", "text": "Запись в журнале: Накладная 9876 543210 оформлена утром.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-05-0", "text": "Инвентарный номер 4276 5500 1122 3348 нанесён на корпус. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-05-1", "text": "Из письма: Инвентарный номер 4276 5500 1122 3348 нанесён на корпус.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-05-2", "text": "Комментарий: Инвентарный номер 4276 5500 1122 3348 нанесён на корпус. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-06-0", "text": "Из письма: Партия 45 03 123457 отгружена без задержек. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-06-1", "text": "Партия 45 03 123457 отгружена без задержек. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-06-2", "text": "Сообщение оператора: Партия 45 03 123457 отгружена без задержек. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-07-0", "text": "Запись в журнале: Код ошибки 317 означает потерю связи. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-07-1", "text": "Сообщение оператора: Код ошибки 317 означает потерю связи. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-07-2", "text": "Из письма: Код ошибки 317 означает потерю связи. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-08-0", "text": "Шаг 4821 в инструкции описан подробно. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-08-1", "text": "Шаг 4821 в инструкции описан подробно.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-08-2", "text": "Комментарий: Шаг 4821 в инструкции описан подробно. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-09-0", "text": "Рейс 770-001 прибывает по расписанию. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-09-1", "text": "Сообщение оператора: Рейс 770-001 прибывает по расписанию. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-09-2", "text": "Рейс 770-001 прибывает по расписанию. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-10-0", "text": "Запись в журнале: Тикет 123-456-789 10 закрыт вчера.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-10-1", "text": "Из письма: Тикет 123-456-789 10 закрыт вчера. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-10-2", "text": "Запись в журнале: Тикет 123-456-789 10 закрыт вчера.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-11-0", "text": "Запись в журнале: Сборка v2.5.19 прошла тесты. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-11-1", "text": "Запись в журнале: Сборка v2.5.19 прошла тесты. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-ids-11-2", "text": "Сборка v2.5.19 прошла тесты. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "ids"]}
+{"id": "trk-tech-00-0", "text": "Из письма: Сервер 192.168.1.103 недоступен. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-00-1", "text": "Запись в журнале: Сервер 192.168.1.103 недоступен. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-00-2", "text": "Из письма: Сервер 192.168.1.103 недоступен. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-01-0", "text": "Сообщение оператора: Адрес 10.0.0.1:8080 в конфиге. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-01-1", "text": "Адрес 10.0.0.1:8080 в конфиге. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-01-2", "text": "Запись в журнале: Адрес 10.0.0.1:8080 в конфиге. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-02-0", "text": "Комментарий: Координаты 55.7558, 37.6173 указывают на центр города. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-02-1", "text": "Сообщение оператора: Координаты 55.7558, 37.6173 указывают на центр города. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-02-2", "text": "Комментарий: Координаты 55.7558, 37.6173 указывают на центр города.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-03-0", "text": "Совещание в 12:30, длительность 45 минут. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-03-1", "text": "Сообщение оператора: Совещание в 12:30, длительность 45 минут. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-03-2", "text": "Совещание в 12:30, длительность 45 минут. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-04-0", "text": "Сообщение оператора: ISBN 978-5-17-118366-2 указан на обороте.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-04-1", "text": "Из письма: ISBN 978-5-17-118366-2 указан на обороте. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-04-2", "text": "Комментарий: ISBN 978-5-17-118366-2 указан на обороте. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-05-0", "text": "Запись в журнале: ОКВЭД 62.01 — разработка программного обеспечения. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-05-1", "text": "Из письма: ОКВЭД 62.01 — разработка программного обеспечения.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-05-2", "text": "Сообщение оператора: ОКВЭД 62.01 — разработка программного обеспечения.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-06-0", "text": "Запись в журнале: БИК 044525225 у банка получателя.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-06-1", "text": "Запись в журнале: БИК 044525225 у банка получателя. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-06-2", "text": "Запись в журнале: БИК 044525225 у банка получателя. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-07-0", "text": "Из письма: IMEI 356938035643809 выбит под крышкой.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-07-1", "text": "Сообщение оператора: IMEI 356938035643809 выбит под крышкой. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-07-2", "text": "IMEI 356938035643809 выбит под крышкой. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-08-0", "text": "Из письма: Штрихкод 4600051000057 не считывается.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-08-1", "text": "Из письма: Штрихкод 4600051000057 не считывается. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-08-2", "text": "Штрихкод 4600051000057 не считывается. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-09-0", "text": "Из письма: MAC-адрес 00:1B:44:11:3A:B7 занят. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-09-1", "text": "MAC-адрес 00:1B:44:11:3A:B7 занят. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-tech-09-2", "text": "Сообщение оператора: MAC-адрес 00:1B:44:11:3A:B7 занят. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "tech"]}
+{"id": "trk-checksum-00-0", "text": "Из письма: Внутренний идентификатор 7707083894 в реестре. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-00-1", "text": "Запись в журнале: Внутренний идентификатор 7707083894 в реестре. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-00-2", "text": "Сообщение оператора: Внутренний идентификатор 7707083894 в реестре. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-01-0", "text": "Запись в журнале: Номер записи 500100732251 в журнале. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-01-1", "text": "Из письма: Номер записи 500100732251 в журнале. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-01-2", "text": "Запись в журнале: Номер записи 500100732251 в журнале. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-02-0", "text": "Из письма: Проверочный код 112-233-445 96 не подошёл. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-02-1", "text": "Проверочный код 112-233-445 96 не подошёл. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-02-2", "text": "Из письма: Проверочный код 112-233-445 96 не подошёл. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-03-0", "text": "Сообщение оператора: Служебный номер 4276 3800 1234 5670 не является картой. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-03-1", "text": "Из письма: Служебный номер 4276 3800 1234 5670 не является картой. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-03-2", "text": "Запись в журнале: Служебный номер 4276 3800 1234 5670 не является картой. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-04-0", "text": "Ссылочный код 123-456-789 12 в акте. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-04-1", "text": "Ссылочный код 123-456-789 12 в акте.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-checksum-04-2", "text": "Ссылочный код 123-456-789 12 в акте. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "checksum"]}
+{"id": "trk-terms-00-0", "text": "Запись в журнале: Введите ИНН и номер телефона в форму. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-00-1", "text": "Из письма: Введите ИНН и номер телефона в форму. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-00-2", "text": "Комментарий: Введите ИНН и номер телефона в форму. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-01-0", "text": "Запись в журнале: CVV находится на обратной стороне карты.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-01-1", "text": "Запись в журнале: CVV находится на обратной стороне карты. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-01-2", "text": "Комментарий: CVV находится на обратной стороне карты. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-02-0", "text": "Запись в журнале: PIN-код состоит из четырёх цифр. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-02-1", "text": "Сообщение оператора: PIN-код состоит из четырёх цифр. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-02-2", "text": "Комментарий: PIN-код состоит из четырёх цифр. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-03-0", "text": "Из письма: Паспорт содержит серию и номер. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-03-1", "text": "Сообщение оператора: Паспорт содержит серию и номер. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-03-2", "text": "Комментарий: Паспорт содержит серию и номер. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-04-0", "text": "Поле «дата рождения» обязательно к заполнению. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-04-1", "text": "Сообщение оператора: Поле «дата рождения» обязательно к заполнению. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-04-2", "text": "Поле «дата рождения» обязательно к заполнению. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-05-0", "text": "Сообщение оператора: Укажите адрес регистрации и место рождения. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-05-1", "text": "Сообщение оператора: Укажите адрес регистрации и место рождения. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-05-2", "text": "Укажите адрес регистрации и место рождения.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-06-0", "text": "Комментарий: СНИЛС можно узнать в личном кабинете.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-06-1", "text": "Сообщение оператора: СНИЛС можно узнать в личном кабинете. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-06-2", "text": "Сообщение оператора: СНИЛС можно узнать в личном кабинете. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-07-0", "text": "Запись в журнале: Держатель карты указан латиницей. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-07-1", "text": "Из письма: Держатель карты указан латиницей. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-terms-07-2", "text": "Держатель карты указан латиницей. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "terms"]}
+{"id": "trk-places-00-0", "text": "Из письма: Электричка прибывает в город Пушкин в 14:20. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-00-1", "text": "Запись в журнале: Электричка прибывает в город Пушкин в 14:20. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-00-2", "text": "Электричка прибывает в город Пушкин в 14:20. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-01-0", "text": "Сообщение оператора: Памятник Королёву установлен на площади. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-01-1", "text": "Из письма: Памятник Королёву установлен на площади. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-01-2", "text": "Памятник Королёву установлен на площади. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-02-0", "text": "Улица Кирова закрыта на ремонт. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-02-1", "text": "Комментарий: Улица Кирова закрыта на ремонт. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-02-2", "text": "Запись в журнале: Улица Кирова закрыта на ремонт.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-03-0", "text": "Из письма: Станция метро Толстовская переименована. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-03-1", "text": "Из письма: Станция метро Толстовская переименована.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-03-2", "text": "Комментарий: Станция метро Толстовская переименована. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-04-0", "text": "Сообщение оператора: Магазин «Мария Ра» открылся в микрорайоне. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-04-1", "text": "Магазин «Мария Ра» открылся в микрорайоне.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-04-2", "text": "Запись в журнале: Магазин «Мария Ра» открылся в микрорайоне. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-05-0", "text": "Поезд «Лев Толстой» следует до Хельсинки. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-05-1", "text": "Сообщение оператора: Поезд «Лев Толстой» следует до Хельсинки. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-05-2", "text": "Из письма: Поезд «Лев Толстой» следует до Хельсинки. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-06-0", "text": "Из письма: Аэропорт Пулково принимает рейсы. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-06-1", "text": "Аэропорт Пулково принимает рейсы. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-06-2", "text": "Комментарий: Аэропорт Пулково принимает рейсы. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-07-0", "text": "Из письма: Кот Барсик спит на подоконнике. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-07-1", "text": "Из письма: Кот Барсик спит на подоконнике.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-07-2", "text": "Из письма: Кот Барсик спит на подоконнике.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-08-0", "text": "Запись в журнале: Проспект Гагарина расширят к осени. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-08-1", "text": "Сообщение оператора: Проспект Гагарина расширят к осени. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-08-2", "text": "Проспект Гагарина расширят к осени. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-09-0", "text": "Сообщение оператора: Библиотека имени Некрасова работает до восьми. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-09-1", "text": "Сообщение оператора: Библиотека имени Некрасова работает до восьми. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-places-09-2", "text": "Библиотека имени Некрасова работает до восьми. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "places"]}
+{"id": "trk-public-00-0", "text": "Сообщение оператора: Фёдор Михайлович Достоевский умер в 1881 году. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-00-1", "text": "Запись в журнале: Фёдор Михайлович Достоевский умер в 1881 году. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-00-2", "text": "Сообщение оператора: Фёдор Михайлович Достоевский умер в 1881 году.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-01-0", "text": "Сообщение оператора: Лекция о Юрии Гагарине состоится в четверг. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-01-1", "text": "Лекция о Юрии Гагарине состоится в четверг. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-01-2", "text": "Запись в журнале: Лекция о Юрии Гагарине состоится в четверг.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-02-0", "text": "Комментарий: Фильм о Менделееве вышел в прокат.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-02-1", "text": "Фильм о Менделееве вышел в прокат. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-02-2", "text": "Из письма: Фильм о Менделееве вышел в прокат. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-03-0", "text": "Комментарий: В биографии Чайковского упомянут 1893 год. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-03-1", "text": "Из письма: В биографии Чайковского упомянут 1893 год. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-03-2", "text": "Сообщение оператора: В биографии Чайковского упомянут 1893 год. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-04-0", "text": "Анна Андреевна Ахматова родилась в 1889 году. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-04-1", "text": "Комментарий: Анна Андреевна Ахматова родилась в 1889 году. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-public-04-2", "text": "Анна Андреевна Ахматова родилась в 1889 году.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "public"]}
+{"id": "trk-org-00-0", "text": "Адрес отделения банка: г. Казань, ул. Баумана, д. 3. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-00-1", "text": "Запись в журнале: Адрес отделения банка: г. Казань, ул. Баумана, д. 3. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-00-2", "text": "Запись в журнале: Адрес отделения банка: г. Казань, ул. Баумана, д. 3. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-01-0", "text": "Сообщение оператора: Головной офис: Москва, ул. Каланчёвская, д. 27. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-01-1", "text": "Запись в журнале: Головной офис: Москва, ул. Каланчёвская, д. 27. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-01-2", "text": "Сообщение оператора: Головной офис: Москва, ул. Каланчёвская, д. 27. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-02-0", "text": "Комментарий: Горячая линия 8 800 200-00-00 работает круглосуточно. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-02-1", "text": "Из письма: Горячая линия 8 800 200-00-00 работает круглосуточно. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-02-2", "text": "Запись в журнале: Горячая линия 8 800 200-00-00 работает круглосуточно. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-03-0", "text": "Комментарий: Юридический адрес компании: г. Омск, пр. Мира, д. 1.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-03-1", "text": "Запись в журнале: Юридический адрес компании: г. Омск, пр. Мира, д. 1. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-03-2", "text": "Комментарий: Юридический адрес компании: г. Омск, пр. Мира, д. 1.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-04-0", "text": "Запись в журнале: Приёмная находится на ул. Ленина, д. 10. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-04-1", "text": "Приёмная находится на ул. Ленина, д. 10. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-org-04-2", "text": "Из письма: Приёмная находится на ул. Ленина, д. 10. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "org"]}
+{"id": "trk-foreign-00-0", "text": "Комментарий: Телефон офиса в Киеве +380 44 123 45 67. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-00-1", "text": "Из письма: Телефон офиса в Киеве +380 44 123 45 67.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-00-2", "text": "Запись в журнале: Телефон офиса в Киеве +380 44 123 45 67. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-01-0", "text": "Запись в журнале: SSN 123-45-6789 используется в США. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-01-1", "text": "Запись в журнале: SSN 123-45-6789 используется в США. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-01-2", "text": "Запись в журнале: SSN 123-45-6789 используется в США. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-02-0", "text": "IBAN DE89 3704 0044 0532 0130 00 указан в договоре. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-02-1", "text": "Запись в журнале: IBAN DE89 3704 0044 0532 0130 00 указан в договоре. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-02-2", "text": "Запись в журнале: IBAN DE89 3704 0044 0532 0130 00 указан в договоре. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-03-0", "text": "Комментарий: Индекс 10115 относится к Берлину.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-03-1", "text": "Из письма: Индекс 10115 относится к Берлину. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-03-2", "text": "Запись в журнале: Индекс 10115 относится к Берлину. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-04-0", "text": "VIN WVWZZZ1JZXW000001 выбит на кузове. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-04-1", "text": "Сообщение оператора: VIN WVWZZZ1JZXW000001 выбит на кузове. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-foreign-04-2", "text": "Сообщение оператора: VIN WVWZZZ1JZXW000001 выбит на кузове. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "foreign"]}
+{"id": "trk-dates-00-0", "text": "Договор подписан 10.02.2026 в двух экземплярах. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-00-1", "text": "Запись в журнале: Договор подписан 10.02.2026 в двух экземплярах.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-00-2", "text": "Договор подписан 10.02.2026 в двух экземплярах. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-01-0", "text": "Сообщение оператора: Срок действия до 31.12.2030. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-01-1", "text": "Срок действия до 31.12.2030. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-01-2", "text": "Комментарий: Срок действия до 31.12.2030. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-02-0", "text": "Заседание назначено на 05.03.2027. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-02-1", "text": "Сообщение оператора: Заседание назначено на 05.03.2027. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-02-2", "text": "Из письма: Заседание назначено на 05.03.2027. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-03-0", "text": "Отчётный период с 01.01.2026 по 31.03.2026. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-03-1", "text": "Сообщение оператора: Отчётный период с 01.01.2026 по 31.03.2026. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-03-2", "text": "Сообщение оператора: Отчётный период с 01.01.2026 по 31.03.2026. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-04-0", "text": "Сообщение оператора: Гарантия истекает 15.07.2029. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-04-1", "text": "Сообщение оператора: Гарантия истекает 15.07.2029. Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-dates-04-2", "text": "Из письма: Гарантия истекает 15.07.2029.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "dates"]}
+{"id": "trk-control-00", "text": "Страховой номер 112-233-445 95 указан в анкете.", "entities": [{"type": "SNILS", "start": 16, "end": 30, "text": "112-233-445 95"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-01", "text": "Мой СНИЛС 123 - 456 - 789 01, проверьте пожалуйста.", "entities": [{"type": "SNILS", "start": 10, "end": 28, "text": "123 - 456 - 789 01"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-02", "text": "Паспорт клиента 45 03 123456 выдан вчера.", "entities": [{"type": "PASSPORT", "start": 16, "end": 28, "text": "45 03 123456"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-03", "text": "Карта 4276 5500 1122 3347 заблокирована.", "entities": [{"type": "CARD", "start": 6, "end": 25, "text": "4276 5500 1122 3347"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-04", "text": "ИНН клиента 500100732259 проверен.", "entities": [{"type": "INN", "start": 12, "end": 24, "text": "500100732259"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-05", "text": "Телефон клиента +7 (900) 123-45-67, звоните.", "entities": [{"type": "PHONE", "start": 16, "end": 34, "text": "+7 (900) 123-45-67"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-06", "text": "Код подразделения 770-001 в паспорте.", "entities": [{"type": "DIVISION_CODE", "start": 18, "end": 25, "text": "770-001"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-07", "text": "Карта 4276 5500 1122 3347, CVV 317.", "entities": [{"type": "CVV", "start": 31, "end": 34, "text": "317"}, {"type": "CARD", "start": 6, "end": 25, "text": "4276 5500 1122 3347"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-08", "text": "Дата рождения 10.02.1982 подтверждена.", "entities": [{"type": "BIRTH_DATE", "start": 14, "end": 24, "text": "10.02.1982"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-09", "text": "Заявитель Морозов Андрей Петрович подписал заявление.", "entities": [{"type": "FIO", "start": 10, "end": 33, "text": "Морозов Андрей Петрович"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-10", "text": "Проживает: г. Казань, ул. Баумана, д. 14, кв. 8.", "entities": [{"type": "ADDRESS", "start": 11, "end": 47, "text": "г. Казань, ул. Баумана, д. 14, кв. 8"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-11", "text": "Держатель карты: ИВАНОВ ИВАН.", "entities": [{"type": "CARDHOLDER", "start": 17, "end": 28, "text": "ИВАНОВ ИВАН"}], "source": "own/tricky", "tags": ["control", "positive"]}
