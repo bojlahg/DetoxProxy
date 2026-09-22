@@ -903,6 +903,15 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+/// Serves the self-contained demo page embedded at compile time.
+async fn demo_handler() -> Response {
+    let body = Body::from(include_str!("../../static/demo.html"));
+    let mut resp = Response::new(body);
+    resp.headers_mut()
+        .insert(header::CONTENT_TYPE, "text/html; charset=utf-8".parse().unwrap());
+    resp
+}
+
 /// OpenAI-compatible chat completions proxy: masks request messages, forwards to the upstream LLM
 /// (or demo mode), unmasks the model reply and returns it as JSON or SSE.
 async fn chat_completions_handler(
@@ -1188,6 +1197,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/admin/reload", post(reload_handler))
         .route("/healthz", get(healthz))
+        .route("/demo", get(demo_handler))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_handler))
         .layer(middleware::from_fn_with_state(state.clone(), body_limit_middleware))

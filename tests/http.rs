@@ -454,6 +454,21 @@ allowlist_file: data/allowlist.yaml
 }
 
 #[tokio::test]
+async fn demo_page_served() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let client = reqwest::Client::new();
+    let resp = client.get(format!("{}/demo", base)).send().await.expect("send");
+    assert_eq!(resp.status().as_u16(), 200);
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(ct.starts_with("text/html"), "content-type: {ct}");
+    let body = resp.text().await.expect("text");
+    assert!(body.contains("/v1/detect"), "demo body missing /v1/detect");
+    assert!(body.contains("payload_id"), "demo body missing payload_id");
+}
+
+#[tokio::test]
 async fn metrics_and_health() {
     let cfg = load_root_config();
     let base = spawn_app(build_state(cfg)).await;
