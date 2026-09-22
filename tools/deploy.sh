@@ -2,14 +2,14 @@
 # Builds a committed revision for Linux in Docker and deploys it to the VPS with automatic rollback.
 #   tools/deploy.sh [rev] [ssh-host]       (defaults: HEAD, detoxproxy)
 # Service: systemd unit detox-proxy, user detox, /opt/detox-proxy, port 8080 (from config.yaml).
-# Migrates the old pii-guard unit on first run. Refuses to run in the first/last 10 minutes of an hour
-# (organizer checks start at :00); FORCE=1 overrides.
+# Migrates the old pii-guard unit on first run. Refuses to run from :35 to :10
+# (organizer checks start up to ~20 min before :00); FORCE=1 overrides.
 set -euo pipefail
 rev="$(git rev-parse --short "${1:-HEAD}")"
 host="${2:-detoxproxy}"
 min=$((10#$(date +%M)))
-if [ "${FORCE:-0}" != "1" ] && { [ "$min" -lt 10 ] || [ "$min" -ge 50 ]; }; then
-  echo "refusing to deploy at :$(date +%M) (checks run at :00); FORCE=1 to override"; exit 2
+if [ "${FORCE:-0}" != "1" ] && { [ "$min" -lt 10 ] || [ "$min" -ge 35 ]; }; then
+  echo "refusing to deploy at :$(date +%M) (checks start up to 20 min before :00); FORCE=1 to override"; exit 2
 fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
