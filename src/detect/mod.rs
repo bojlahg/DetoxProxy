@@ -1269,7 +1269,7 @@ impl Detector {
             .char_indices()
             .rev()
             .find(|(_, c)| c.is_whitespace())
-            .map(|(i, _)| i + 1)
+            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
         let last_word = last_word.trim_end_matches('.');
@@ -1288,7 +1288,7 @@ impl Detector {
             .char_indices()
             .rev()
             .find(|(_, c)| c.is_whitespace())
-            .map(|(i, _)| i + 1)
+            .map(|(i, c)| i + c.len_utf8())
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
         let last_word = last_word.trim_end_matches('.');
@@ -1536,7 +1536,7 @@ fn is_abbreviation_period(rest: &str, period_idx: usize, abbrev: &[String]) -> b
         .char_indices()
         .rev()
         .find(|(_, c)| !c.is_alphabetic())
-        .map(|(i, _)| i + 1)
+        .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
     let word = &before[word_start..];
     abbrev.iter().any(|a| word == a.as_str())
