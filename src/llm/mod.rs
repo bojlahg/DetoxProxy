@@ -116,12 +116,10 @@ pub fn collect_sse_text(body: &str) -> String {
     out
 }
 
-/// Builds the demo-mode model text: a fixed prefix followed by every token from the request.
-pub fn demo_response(mappings: &[Mapping]) -> String {
-    let mut tokens: Vec<String> = mappings.iter().map(|m| m.masked.clone()).collect();
-    tokens.sort();
-    tokens.dedup();
-    format!("Принято. Запрос по клиенту обработан: {}", tokens.join(", "))
+/// Builds the demo-mode model text: a fixed greeting that references the first FIO token with a
+/// nominative case suffix so that inflection is exercised during unmasking.
+pub fn demo_response(_mappings: &[Mapping]) -> String {
+    "Уважаемый <<FIO_1:им>>, сообщаем…".to_string()
 }
 
 /// Classification of an upstream failure. Never carries upstream body text.

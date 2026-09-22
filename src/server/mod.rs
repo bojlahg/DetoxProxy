@@ -783,7 +783,7 @@ async fn chat_completions_handler(
     let want_stream = req.stream.unwrap_or(false);
 
     let masked = mask_chat_request(&state, &sys, &req, &rid);
-    let upstream_body = build_upstream_body(&body, &masked, &req);
+    let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
 
     let api_key = llm_cfg
         .api_key_env
@@ -852,20 +852,27 @@ fn mask_chat_request(
     masked
 }
 
-/// Replaces `messages` and forces `stream: true` in the upstream body.
+/// System message prepended to the upstream request when `llm.case_hints` is enabled. Tells the
+/// model how to request a grammatical case for a placeholder token.
+const CASE_HINTS_PROMPT: &str = "Placeholders like <<FIO_1>> stand for hidden personal data. Keep them unchanged. If a Russian grammatical case is needed, append it inside the brackets: <<FIO_1:gen>>, <<FIO_1:dat>>, <<FIO_1:acc>>, <<FIO_1:ins>>, <<FIO_1:prep>>; nominative is <<FIO_1:nom>>.";
+
+/// Replaces `messages` and forces `stream: true` in the upstream body. When `case_hints` is set, a
+/// system message is prepended as the first message.
 fn build_upstream_body(
     body: &axum::body::Bytes,
     masked: &crate::llm::MaskedMessages,
     req: &crate::llm::ChatRequest,
+    case_hints: bool,
 ) -> Value {
     let mut upstream_body = serde_json::from_slice::<Value>(body).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut upstream_body {
-        let msgs: Vec<Value> = masked
-            .texts
-            .iter()
-            .zip(req.messages.iter())
-            .map(|(t, m)| serde_json::json!({ "role": m.role, "content": t }))
-            .collect();
+        let mut msgs: Vec<Value> = Vec::with_capacity(masked.texts.len() + 1);
+        if case_hints {
+            msgs.push(serde_json::json!({ "role": "system", "content": CASE_HINTS_PROMPT }));
+        }
+        for (t, m) in masked.texts.iter().zip(req.messages.iter()) {
+            msgs.push(serde_json::json!({ "role": m.role, "content": t }));
+        }
         map.insert("messages".to_string(), Value::Array(msgs));
         map.insert("stream".to_string(), Value::Bool(true));
     }

@@ -1,4 +1,5 @@
 use crate::{
+    morph,
     registry::Registry,
     types::{Entity, Mapping, MaskMode, MaskResult},
 };
@@ -25,8 +26,30 @@ pub struct MaskOptions<'a> {
 }
 
 static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)<<\s*([A-Za-z_]+)_(\d+)\s*>>").expect("valid token regex")
+    Regex::new(r"(?i)<<\s*([A-Za-z_]+)_(\d+)\s*(?::\s*([A-Za-zа-яё]+)\s*)?>>").expect("valid token regex")
 });
+
+/// Street prefixes used to decide whether an `address` value inflects as a street.
+const STREET_MARKERS: [&str; 4] = ["ул.", "улица", "проспект", "пр."];
+
+/// Maps a PII type to the morphological kind used for inflection. Returns `None` for types
+/// that are never inflected (their case suffix is ignored and the original is returned).
+fn kind_for_type(type_id: &str, original: &str) -> Option<morph::Kind> {
+    match type_id {
+        "fio" | "card_holder" => Some(morph::Kind::Person),
+        "birth_place" => Some(morph::Kind::Place),
+        "citizenship" => Some(morph::Kind::Country),
+        "address" => {
+            let lower = original.trim().to_lowercase();
+            if STREET_MARKERS.iter().any(|m| lower.starts_with(m)) {
+                Some(morph::Kind::Street)
+            } else {
+                Some(morph::Kind::Place)
+            }
+        }
+        _ => None,
+    }
+}
 
 const SEPARATORS: [char; 8] = [' ', '-', '.', '(', ')', '+', '@', '/'];
 
@@ -283,18 +306,31 @@ fn hash_token(salt: &str, normalized: &str) -> String {
 
 /// Restores originals using mappings. Tokens `{LABEL_N}` are located by regex anywhere in the text
 /// (any order, any surrounding); stars/synthetic masks are located as substrings, longest first.
-/// Unknown tokens are left untouched.
+/// A token may carry a grammatical-case suffix (`<<FIO_1:дат>>`); when the suffix is a recognized
+/// case and the type is inflectable, the original is inflected to that case. Unknown tokens are
+/// left untouched.
 pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
     let mut result = TOKEN_RE
         .replace_all(text, |caps: &regex::Captures| {
             let token = &caps[0];
-            let norm_token = norm_compare(token);
-            for m in mappings {
-                if norm_compare(&m.masked) == norm_token {
-                    return m.original.clone();
+            let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+            let matched = mappings
+                .iter()
+                .find(|m| norm_compare(&m.masked) == norm_compare(&base_token));
+            match (matched, caps.get(3)) {
+                (Some(m), Some(suffix)) => {
+                    if let Some(case) = morph::Case::parse(suffix.as_str()) {
+                        if let Some(kind) = kind_for_type(&m.type_id, &m.original) {
+                            return morph::inflect(&m.original, kind, case)
+                                .unwrap_or_else(|| m.original.clone());
+                        }
+                        return m.original.clone();
+                    }
+                    token.to_string()
                 }
+                (Some(m), None) => m.original.clone(),
+                (None, _) => token.to_string(),
             }
-            token.to_string()
         })
         .to_string();
 
@@ -310,13 +346,15 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
 }
 
 /// Counts token-format substrings (`<<LABEL_N>>`, case/whitespace tolerant as in `unmask`) in `text`
-/// that have no matching mapping. Used for the `pii_unmask_unresolved_tokens_total` metric.
+/// that have no matching mapping. A token with a case suffix (`<<FIO_1:дат>>`) is resolved when its
+/// base token is present in the mappings. Used for the `pii_unmask_unresolved_tokens_total` metric.
 pub fn count_unresolved_tokens(text: &str, mappings: &[Mapping]) -> usize {
     let mut count = 0;
     for caps in TOKEN_RE.captures_iter(text) {
-        let token = &caps[0];
-        let norm_token = norm_compare(token);
-        let matched = mappings.iter().any(|m| norm_compare(&m.masked) == norm_token);
+        let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+        let matched = mappings
+            .iter()
+            .any(|m| norm_compare(&m.masked) == norm_compare(&base_token));
         if !matched {
             count += 1;
         }

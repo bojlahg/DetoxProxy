@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -101,7 +102,6 @@ async fn demo_mode_restores_values_and_header() {
     let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
     let content = json["choices"][0]["message"]["content"].as_str().unwrap();
     assert!(content.contains("Иванов Иван Иванович"), "content: {content}");
-    assert!(content.contains("7707083893"), "content: {content}");
     let n = hdrs
         .get("x-detox-masked-entities")
         .and_then(|v| v.to_str().ok())
@@ -121,7 +121,13 @@ async fn fake_upstream_echoes_tokens_and_restores() {
             assert!(!body_str.contains("Иванов"), "upstream got PII: {body_str}");
             assert_eq!(json["stream"], true, "upstream must receive stream:true");
 
-            let content = json["messages"][0]["content"].as_str().unwrap();
+            let content = json["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["role"] == "user")
+                .and_then(|m| m["content"].as_str())
+                .unwrap();
             let tokens: Vec<String> = regex::Regex::new(r"<<[A-Za-z_]+_\d+>>")
                 .unwrap()
                 .find_iter(content)
@@ -159,6 +165,7 @@ async fn fake_upstream_echoes_tokens_and_restores() {
         upstream_url: Some(format!("http://{}/v1/chat/completions", addr)),
         api_key_env: None,
         timeout_ms: 5000,
+        case_hints: true,
     });
     let base = spawn_app(build_state(cfg)).await;
 
@@ -192,6 +199,7 @@ async fn upstream_500_returns_502_without_body() {
         upstream_url: Some(format!("http://{}/v1/chat/completions", addr)),
         api_key_env: None,
         timeout_ms: 5000,
+        case_hints: true,
     });
     let base = spawn_app(build_state(cfg)).await;
 
@@ -215,5 +223,100 @@ async fn client_stream_true_returns_sse_with_done() {
     );
     assert!(text.contains("data: [DONE]"), "body: {text}");
     assert!(text.contains("Иванов Иван Иванович"), "body: {text}");
-    assert!(text.contains("7707083893"), "body: {text}");
+}
+
+/// Spawns a fake upstream that records whether it received the case-hints system message and
+/// replies with a token carrying a nominative case suffix.
+async fn spawn_case_upstream(got_hint: Arc<AtomicBool>) -> String {
+    let upstream = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |body: axum::body::Bytes| {
+            let got_hint = got_hint.clone();
+            async move {
+                let json: serde_json::Value = serde_json::from_slice(&body).expect("upstream json");
+                let msgs = json["messages"].as_array().unwrap();
+                let has_system = msgs.iter().any(|m| {
+                    m["role"] == "system"
+                        && m["content"]
+                            .as_str()
+                            .map(|c| c.contains("Placeholders like"))
+                            .unwrap_or(false)
+                });
+                got_hint.store(has_system, Ordering::SeqCst);
+                let sse = "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Дорогой <<FIO_1:nom>>, с прискорбием сообщаем…\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n";
+                (
+                    axum::http::StatusCode::OK,
+                    [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                    sse,
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.expect("serve upstream");
+    });
+    format!("http://{}/v1/chat/completions", addr)
+}
+
+#[tokio::test]
+async fn case_hints_system_message_and_inflected_unmask() {
+    let got_hint = Arc::new(AtomicBool::new(false));
+    let url = spawn_case_upstream(got_hint.clone()).await;
+
+    let mut cfg = base_cfg();
+    cfg.llm = Some(detox_proxy::config::LlmConfig {
+        upstream_url: Some(url),
+        api_key_env: None,
+        timeout_ms: 5000,
+        case_hints: true,
+    });
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "test-model",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо с отказом Иванову Ивану Ивановичу"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[]).await;
+    assert_eq!(st, 200, "body: {text}");
+    assert!(got_hint.load(Ordering::SeqCst), "upstream must receive the case-hints system message");
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    let content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(
+        content.contains("Дорогой Иванов Иван Иванович, с прискорбием сообщаем…"),
+        "content: {content}"
+    );
+}
+
+#[tokio::test]
+async fn case_hints_disabled_no_system_message() {
+    let got_hint = Arc::new(AtomicBool::new(false));
+    let url = spawn_case_upstream(got_hint.clone()).await;
+
+    let mut cfg = base_cfg();
+    cfg.llm = Some(detox_proxy::config::LlmConfig {
+        upstream_url: Some(url),
+        api_key_env: None,
+        timeout_ms: 5000,
+        case_hints: false,
+    });
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "test-model",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо с отказом Иванову Ивану Ивановичу"}
+        ],
+        "stream": false
+    });
+    let (st, text, _) = post_chat(&base, &body, &[]).await;
+    assert_eq!(st, 200, "body: {text}");
+    assert!(
+        !got_hint.load(Ordering::SeqCst),
+        "upstream must NOT receive the case-hints system message"
+    );
 }

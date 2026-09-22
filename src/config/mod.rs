@@ -123,8 +123,12 @@ pub struct LlmConfig {
     /// Upstream request timeout in milliseconds.
     #[serde(default = "default_llm_timeout_ms")]
     pub timeout_ms: u64,
+    /// Prepend a system message telling the model how to request a grammatical case for a token.
+    #[serde(default = "default_case_hints")]
+    pub case_hints: bool,
 }
 fn default_llm_timeout_ms() -> u64 { 60_000 }
+fn default_case_hints() -> bool { true }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
