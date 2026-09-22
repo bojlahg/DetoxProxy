@@ -1091,6 +1091,7 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let store = Arc::new(crate::store::MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
+        cfg.server.encrypt_mappings,
     ));
 
     let state = Arc::new(AppState {

@@ -31,6 +31,7 @@ fn build_state(cfg: Config) -> Arc<AppState> {
     let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
+        cfg.server.encrypt_mappings,
     ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),

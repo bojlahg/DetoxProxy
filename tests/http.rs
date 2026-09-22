@@ -35,6 +35,7 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
     let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
+        cfg.server.encrypt_mappings,
     ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
