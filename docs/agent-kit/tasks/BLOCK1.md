@@ -751,3 +751,13 @@ too-many-lines-threshold = 80
 
 Файлы: src/server/mod.rs, src/mask/mod.rs, clippy.toml (новый). Тесты не трогать. Каталог logs/ не трогай. После плана сразу пиши код.
 </task>
+
+<task id="T24">
+Привет. Мелочь в src/server/mod.rs: `log_request(...)` везде вызывается с пустой строкой вместо идентификатора запроса — в логе `"payload_id":""`. Передавай настоящий: для /process — `payload_id` из тела, для /v1/mask и /v1/unmask — `session_id`, для /v1/detect и /v1/chat/completions — пустую строку (там нет идентификатора). Длинный (> 64 символов) уже хешируется внутри log_request — это оставить. Сам идентификатор ПД не является, но проверь, что в лог по-прежнему не попадает ни payload, ни result.
+
+Тест в tests/http.rs: поднять сервис с логами в буфер (или файл), сделать /process с payload_id "log-check-123" и текстом «ИНН 7707083893» → в логе есть "log-check-123", нет "7707083893".
+
+Приёмка: `cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release && python tools/check_process.py --bin target/release/detox-proxy.exe --config config.yaml --port 18190`.
+
+Файлы: src/server/mod.rs, tests/http.rs. Каталог logs/ не трогай.
+</task>
