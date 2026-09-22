@@ -216,6 +216,26 @@ fn internal_identifier_not_passport() {
     assert!(!has_type(&entities, "passport"), "internal id must not be a passport: {:?}", entities);
 }
 
+#[test]
+fn full_address_without_marker_masked() {
+    let entities = detect("Доставить: г. Белгород, ул. Садовая, д. 41", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "address"), "full address without marker should be found: {:?}", entities);
+}
+
+#[test]
+fn cvv_far_from_marker_not_masked() {
+    let entities = detect("CVV находится на обороте карты (заметка № 001/cvv)", TrapPolicy::PreferMask);
+    assert!(!has_type(&entities, "cvv"), "cvv far from marker should not be found: {:?}", entities);
+}
+
+#[test]
+fn passport_series_number_separated_masked() {
+    let entities = detect("серия 43 21, а номер паспорта 987654", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "passport"), "separated passport should be found: {:?}", entities);
+    let entities = detect("Серия: 5555, № 667788", TrapPolicy::PreferMask);
+    assert!(has_type(&entities, "passport"), "separated passport with № should be found: {:?}", entities);
+}
+
 // ---- /process and /v1/detect via HTTP ----
 
 static METRICS: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> = std::sync::OnceLock::new();

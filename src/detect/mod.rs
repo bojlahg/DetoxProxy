@@ -151,6 +151,18 @@ fn is_marker_type(id: &str) -> bool {
     matches!(id, "cvv" | "card_pin" | "passport" | "inn" | "subdivision_code" | "driver_license")
 }
 
+/// Kind of a single address component, used to detect full addresses by structure.
+#[derive(PartialEq, Clone, Copy)]
+enum AddrKind {
+    City,
+    Street,
+    House,
+    Apartment,
+    Region,
+    Index,
+    Other,
+}
+
 /// Builds the combined marker regex and word->type map from the registry.
 fn build_marker_map(registry: &Registry) -> (Option<Regex>, HashMap<String, String>) {
     let mut marker_type_of: HashMap<String, String> = HashMap::new();
@@ -382,7 +394,11 @@ impl Detector {
                 let mut skip_context_boost = false;
 
                 let has_context = if is_marker_type(&spec.id) {
-                    self.has_nearest_marker(text, start, spec)
+                    if matches!(spec.id.as_str(), "cvv" | "card_pin") {
+                        self.has_cvv_pin_marker(text, start, spec)
+                    } else {
+                        self.has_nearest_marker(text, start, spec)
+                    }
                 } else if spec.context_words.is_empty() {
                     false
                 } else {
@@ -694,12 +710,15 @@ impl Detector {
     }
 
     /// Effective non-PII markers for a type: per-type `non_pii_markers` (or `non_pii_context`)
-/// combined with the global `context.non_pii_markers`.
+/// combined with the global `context.non_pii_markers`. A type with its own `non_pii_markers`
+    /// overrides the global list (like `effective_pii_markers`).
     fn effective_non_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         if !spec.non_pii_markers.is_empty() {
             out.extend(spec.non_pii_markers.iter().cloned());
-        } else if !spec.non_pii_context.is_empty() {
+            return out;
+        }
+        if !spec.non_pii_context.is_empty() {
             out.extend(spec.non_pii_context.iter().cloned());
         }
         for m in &self.registry.context().non_pii_markers {
@@ -708,6 +727,35 @@ impl Detector {
             }
         }
         out
+    }
+
+    /// Strict cvv/pin marker check: the marker must be to the LEFT of the value, within 12
+    /// chars, with only spaces, ':', '-', '=', or the word "код" between them. This rejects
+    /// values like "001" in "CVV находится на обороте карты (заметка № 001/cvv)" while
+    /// keeping glued forms like "CVV317".
+    fn has_cvv_pin_marker(&self, text: &str, start: usize, spec: &TypeSpec) -> bool {
+        let markers = &spec.context_words;
+        let prefix = &text[..start];
+        let lower = prefix.to_lowercase();
+        for m in markers {
+            if let Some(pos) = lower.rfind(m) {
+                let marker_end = pos + m.len();
+                let between = &text[marker_end..start];
+                if between.chars().count() > 12 {
+                    continue;
+                }
+                let trimmed = between.trim();
+                let allowed = trimmed.is_empty()
+                    || trimmed == ":"
+                    || trimmed == "-"
+                    || trimmed == "="
+                    || trimmed == "код";
+                if allowed {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// True if `spec`'s marker is the effective context for a value at `start`, using the
@@ -952,13 +1000,18 @@ impl Detector {
             if count >= 2 {
                 let start = group[0].0;
                 let end = group[group.len() - 1].1;
-                let mut conf: f32 = 0.5;
+                // A full address by structure (city + street + house, or street + house +
+                // apartment) is confident on its own (0.7) without a marker. Only a non-pii
+                // marker (отделение, офис...) lowers it.
+                let is_full = self.is_full_address(text, group);
+                let mut conf: f32 = if is_full { 0.7 } else { 0.5 };
                 // The nearest marker to the left decides whether this is a personal address
-                // (pii marker) or an organization address (non-pii marker). No marker -> skip.
+                // (pii marker) or an organization address (non-pii marker). No marker -> the
+                // address keeps its structural confidence (full 0.7, other 0.5).
                 match self.nearest_address_marker(text, start, spec) {
                     Some(true) => conf += 0.3,
-                    Some(false) => conf -= 0.3,
-                    None => conf -= 0.3,
+                    Some(false) => conf -= if is_full { 0.5 } else { 0.3 },
+                    None => {}
                 }
                 // An organization near the address is a negative signal.
                 let non_pii = self.effective_non_pii_markers(spec);
@@ -973,6 +1026,60 @@ impl Detector {
             i = j;
         }
         candidates
+    }
+
+    /// True if an address group is a full address by structure: city + street + house, or
+    /// street + house + apartment.
+    fn is_full_address(&self, text: &str, group: &[(usize, usize)]) -> bool {
+        let kinds: Vec<AddrKind> = group
+            .iter()
+            .map(|&(s, e)| self.classify_address_component(text, s, e))
+            .collect();
+        let has_city = kinds.contains(&AddrKind::City);
+        let has_street = kinds.contains(&AddrKind::Street);
+        let has_house = kinds.contains(&AddrKind::House);
+        let has_apartment = kinds.contains(&AddrKind::Apartment);
+        (has_city && has_street && has_house) || (has_street && has_house && has_apartment)
+    }
+
+    /// Classifies a single address component span by its leading marker / shape.
+    fn classify_address_component(&self, text: &str, start: usize, end: usize) -> AddrKind {
+        let span = &text[start..end];
+        let lower = span.to_lowercase();
+        let ctx = self.registry.context();
+        if lower.starts_with("г.") || lower.starts_with("город") {
+            return AddrKind::City;
+        }
+        if lower.starts_with("кв.") || lower.starts_with("квартира")
+            || lower.starts_with("оф.") || lower.starts_with("пом.")
+        {
+            return AddrKind::Apartment;
+        }
+        if lower.starts_with("д.") || lower.starts_with("дом")
+            || lower.starts_with("к.") || lower.starts_with("корп.") || lower.starts_with("стр.")
+        {
+            return AddrKind::House;
+        }
+        if ctx.street_markers.iter().any(|m| {
+            lower.starts_with(m.as_str()) || lower.ends_with(m.as_str())
+        }) {
+            return AddrKind::Street;
+        }
+        if lower.starts_with("обл.") || lower.starts_with("область")
+            || lower.starts_with("край") || lower.starts_with("респ.")
+        {
+            return AddrKind::Region;
+        }
+        if span.chars().all(|c| c.is_ascii_digit()) && span.chars().count() == 6 {
+            return AddrKind::Index;
+        }
+        if self.dicts.contains("cities", &lower) {
+            return AddrKind::City;
+        }
+        if span.chars().all(|c| c.is_ascii_digit()) {
+            return AddrKind::House;
+        }
+        AddrKind::Other
     }
 
     fn find_address_components(&self, text: &str) -> Vec<(usize, usize)> {
