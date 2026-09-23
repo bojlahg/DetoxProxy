@@ -459,12 +459,12 @@
     return null;
   }
 
-  function collectTokens(mask) {
+  function collectTokens(text) {
     const re = /<<([A-Z]+)_(\d+)>>/g;
     const seen = {};
     const out = [];
     let m;
-    while ((m = re.exec(mask)) !== null) {
+    while ((m = re.exec(text)) !== null) {
       const key = m[1] + "_" + m[2];
       if (!seen[key]) {
         seen[key] = true;
@@ -805,8 +805,8 @@
     for (const b of tabButtons) {
       b.classList.toggle("active", b.dataset.tab === name);
     }
-    for (const key in tabSections) {
-      tabSections[key].hidden = key !== name;
+    for (const [key, section] of Object.entries(tabSections)) {
+      section.hidden = key !== name;
     }
     if (name === "tokens") location.hash = "#tokens";
     else if (name === "pseudo") location.hash = "#pseudo";
@@ -845,7 +845,7 @@
     fetch("/stats").then(function (resp) {
       if (!resp.ok) {
         statsLine.textContent = "Статистика недоступна (HTTP " + resp.status + ")";
-        return;
+        return null;
       }
       return resp.json();
     }).then(function (s) {
