@@ -45,6 +45,17 @@ systems:
     session_mode: stateless
     token_numbering: sequential
     api_key_env: DETOX_KEY_STRICT
+  - id: pseudo
+    enabled: true
+    mask_mode: pseudonym
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.5
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 dictionaries_dir: data/dict
