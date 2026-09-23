@@ -883,8 +883,10 @@ impl Detector {
         }
     }
 
-    /// Handles the patronymic anchor: "Ф И О" (two words to the left) or "И О Ф" (one word
-    /// to the left, one to the right). Returns the validated span, or None when rejected.
+    /// Handles the patronymic anchor: "Ф И О" (two words to the left), "И О Ф" (one word
+    /// to the left, one to the right), or "И О" (one word to the left, extended with a
+    /// neighboring surname). Words may be in any case; dictionary checks use the lowercased
+    /// form. Returns the validated span, or None when rejected.
     fn lowercase_fio_patronymic(
         &self,
         text: &str,
@@ -901,10 +903,7 @@ impl Detector {
         ) {
             let surname = &text[s_start..s_end];
             let first = &text[f_start..f_end];
-            if is_lowercase_word(surname)
-                && is_lowercase_word(first)
-                && self.fio_lowercase_valid(spec, &[surname, first, patronymic])
-            {
+            if self.fio_lowercase_valid(spec, &[surname, first, patronymic]) {
                 return Some((s_start, patr_end));
             }
         }
@@ -914,18 +913,52 @@ impl Detector {
         {
             let first = &text[f_start..f_end];
             let surname = &text[s_start..s_end];
-            if is_lowercase_word(first)
-                && is_lowercase_word(surname)
-                && self.fio_lowercase_valid(spec, &[first, patronymic, surname])
-            {
+            if self.fio_lowercase_valid(spec, &[first, patronymic, surname]) {
+                return Some((f_start, s_end));
+            }
+        }
+        // "И О": one word to the left (first name) and no surname to the right. A valid
+        // first name + patronymic is extended with a neighboring surname (left or right,
+        // only spaces between, same sentence) when present; without a surname it is not
+        // masked (a bare first name + patronymic is not a FIO).
+        if let Some((f_start, f_end)) = word_before(text, patr_start) {
+            let first = &text[f_start..f_end];
+            if self.fio_name_patronymic_valid(spec, first, patronymic) {
+                if let Some(span) = self.extend_name_patronymic(text, f_start, f_end, patr_end) {
+                    return Some(span);
+                }
+            }
+        }
+        None
+    }
+
+    /// Extends a validated first name + patronymic span with a neighboring surname (left or
+    /// right, only spaces between, same sentence). Returns the widened span, or None when no
+    /// surname neighbor is present.
+    fn extend_name_patronymic(
+        &self,
+        text: &str,
+        f_start: usize,
+        f_end: usize,
+        patr_end: usize,
+    ) -> Option<(usize, usize)> {
+        if let Some((s_start, s_end)) = word_before(text, f_start) {
+            let surname = &text[s_start..s_end];
+            if only_whitespace_between(text, s_end, f_start) && self.is_surname_word(surname) {
+                return Some((s_start, patr_end));
+            }
+        }
+        if let Some((s_start, s_end)) = word_after(text, patr_end) {
+            let surname = &text[s_start..s_end];
+            if only_whitespace_between(text, patr_end, s_start) && self.is_surname_word(surname) {
                 return Some((f_start, s_end));
             }
         }
         None
     }
 
-    /// Handles the marker anchor: two lowercase words (surname + first name) after a FIO
-    /// marker. Returns the validated span, or None when rejected.
+    /// Handles the marker anchor: two words (surname + first name) after a FIO marker, in
+    /// any case. Returns the validated span, or None when rejected.
     fn lowercase_fio_marker(
         &self,
         text: &str,
@@ -937,10 +970,7 @@ impl Detector {
             if let Some((w2s, w2e)) = word_after(text, w1e) {
                 let w1 = &text[w1s..w1e];
                 let w2 = &text[w2s..w2e];
-                if is_lowercase_word(w1)
-                    && is_lowercase_word(w2)
-                    && self.fio_lowercase_valid(spec, &[w1, w2])
-                {
+                if self.fio_lowercase_valid(spec, &[w1, w2]) {
                     return Some((w1s, w2e));
                 }
             }
@@ -958,6 +988,7 @@ impl Detector {
         start: usize,
         end: usize,
     ) -> Option<Entity> {
+        let (start, end) = trim_fio_span(text, start, end);
         let span = &text[start..end];
         let comps = span.split_whitespace().count();
         let first_word = span.split_whitespace().next().unwrap_or("");
@@ -1047,6 +1078,10 @@ impl Detector {
                 if self.is_marker_word(&t.lower) {
                     return false;
                 }
+                // A greeting word (e.g. "Уважаемая", "Дорогой") never belongs to a FIO span.
+                if GREETING_WORDS.contains(&t.lower.as_str()) {
+                    return false;
+                }
                 if !self.is_city(&t.lower) {
                     return true;
                 }
@@ -1080,6 +1115,7 @@ impl Detector {
         window: &[NameToken],
     ) -> Option<Entity> {
         let (start, end, comps) = self.fio_window_valid(text, text_lower, spec, window)?;
+        let (start, end) = trim_fio_span(text, start, end);
         let (has_pii, has_non_pii) = self.fio_context(text, text_lower, spec, window, start, end);
         // Non-PII marker without PII marker suppresses the candidate.
         if has_non_pii && !has_pii {
@@ -1131,7 +1167,12 @@ impl Detector {
             return None;
         }
         let (qualifies, comps) = self.fio_qualifies(window);
-        if !qualifies {
+        // A greeting marker ("Уважаемый Блинов Сигизмунд") makes a surname + capitalized
+        // word a FIO even when the first name is not in a dictionary.
+        let greeting_qualifies = !qualifies
+            && self.has_greeting_marker_before(text, window[0].start)
+            && self.fio_qualifies_greeting(window);
+        if !qualifies && !greeting_qualifies {
             return None;
         }
         // Single word requires PII context.
@@ -1155,25 +1196,49 @@ impl Detector {
         Some((start, end, comps))
     }
 
-    /// True if the given lowercase words form a valid lowercase FIO. Two words: a surname
-    /// and a first name in any order (the FIO marker is guaranteed by the caller's anchor).
-    /// Three words: surname + first name + patronymic in "Ф И О" or "И О Ф" order.
+    /// True if the given words form a valid lowercase FIO. Words may be in any case; they
+    /// are lowercased before the dictionary lookups. Two words: a surname and a first name
+    /// in any order (the FIO marker is guaranteed by the caller's anchor). Three words:
+    /// surname + first name + patronymic in "Ф И О" or "И О Ф" order.
     fn fio_lowercase_valid(&self, spec: &TypeSpec, words: &[&str]) -> bool {
-        match words.len() {
+        let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
+        match refs.len() {
             2 => {
-                let has_surname = words.iter().any(|w| self.dicts.contains("surnames", w));
-                let has_first = words.iter().any(|w| self.dicts.contains("first_names", w));
+                let has_surname = refs.iter().any(|w| self.dicts.contains("surnames", w));
+                let has_first = refs.iter().any(|w| self.dicts.contains("first_names", w));
                 has_surname && has_first
             }
             3 => {
                 let is_surname = |w: &str| self.dicts.contains("surnames", w);
                 let is_first = |w: &str| self.dicts.contains("first_names", w);
                 let is_patr = |w: &str| self.dicts.contains("patronymics", w);
-                (is_surname(words[0]) && is_first(words[1]) && is_patr(words[2]))
-                    || (is_first(words[0]) && is_patr(words[1]) && is_surname(words[2]))
+                (is_surname(refs[0]) && is_first(refs[1]) && is_patr(refs[2]))
+                    || (is_first(refs[0]) && is_patr(refs[1]) && is_surname(refs[2]))
             }
             _ => false,
         }
+    }
+
+    /// True if the words form a first name + patronymic (in any case).
+    fn fio_name_patronymic_valid(&self, spec: &TypeSpec, first: &str, patronymic: &str) -> bool {
+        let first = first.to_lowercase();
+        let patronymic = patronymic.to_lowercase();
+        self.dicts.contains("first_names", &first)
+            && self.dicts.contains("patronymics", &patronymic)
+    }
+
+    /// True if the word is a surname: present in the surnames dictionary or ending in a
+    /// common surname suffix (ов/ев/ин/ын/ова/ева/ина/ына/ский/ская/цкий/цкая), in any case.
+    fn is_surname_word(&self, word: &str) -> bool {
+        const SURNAME_ENDINGS: &[&str] = &[
+            "ов", "ев", "ин", "ын", "ова", "ева", "ина", "ына", "ский", "ская", "цкий", "цкая",
+        ];
+        let lower = word.to_lowercase();
+        if self.dicts.contains("surnames", &lower) {
+            return true;
+        }
+        SURNAME_ENDINGS.iter().any(|e| lower.ends_with(e))
     }
 
     /// PII / non-PII context flags for a FIO window.
@@ -1318,6 +1383,18 @@ impl Detector {
         self.fio_qualifies_single_surname_suffix(window)
     }
 
+    /// True for a two-word window preceded by a greeting marker ("Уважаемый Блинов
+    /// Сигизмунд"): one word is a surname (dictionary or suffix), the other a capitalized
+    /// word. The greeting marker is the PII signal, so the first name need not be in a dict.
+    fn fio_qualifies_greeting(&self, window: &[NameToken]) -> bool {
+        if window.len() != 2 {
+            return false;
+        }
+        window.iter().any(|t| {
+            self.dicts.contains("surnames", &t.lower) || self.is_surname_suffix(&t.lower)
+        })
+    }
+
     /// True when any word is in a name dictionary or is a patronymic.
     fn fio_qualifies_dict_or_patronymic(&self, window: &[NameToken]) -> bool {
         window.iter().any(|t| self.in_any_name_dict(&t.lower))
@@ -1437,11 +1514,24 @@ impl Detector {
     }
 
     fn has_pii_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
+        // A greeting word ("Уважаемый", "Дорогая"...) is a FIO marker: it signals a person's
+        // name follows, but the greeting itself never belongs to the span.
+        if spec.id == "fio" && self.has_greeting_marker_before(text, start) {
+            return true;
+        }
         let markers = self.effective_pii_markers(spec);
         if markers.is_empty() {
             return false;
         }
         has_context_word_around(text, text_lower, start, end, spec.context_window, markers)
+    }
+
+    /// True if a greeting word ("Уважаемый", "Дорогая"...) appears within a short window
+    /// before `start` in the same sentence. Used as a FIO marker that is not part of the span.
+    fn has_greeting_marker_before(&self, text: &str, start: usize) -> bool {
+        let window = context_window_before(text, start, 40);
+        let lower = window.to_lowercase();
+        GREETING_WORDS.iter().any(|g| contains_word_boundary(&lower, g))
     }
 
     fn has_non_pii_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
@@ -2558,6 +2648,11 @@ const BRAND_MARKERS: &[&str] = &[
     "магазин", "компания", "ооо", "кафе", "сеть", "поезд", "бренд",
 ];
 
+/// Greeting words that never belong to a FIO span (e.g. "Уважаемая Мария Петровна").
+const GREETING_WORDS: &[&str] = &[
+    "уважаемая", "уважаемый", "дорогая", "дорогой", "дорогие", "здравствуйте", "приветствую",
+];
+
 /// Service markers: a toll-free 8-800 number near one of these is a service line, not a
 /// personal phone.
 const SERVICE_MARKERS: &[&str] = &["горячая линия", "служба поддержки", "колл-центр"];
@@ -2658,16 +2753,12 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
     out
 }
 
-/// Matches a lowercase word ending in a patronymic suffix (ович, евич, ич, овна, евна,
-/// ична, инична). Used as a cheap anchor for detecting lowercase (chat-style) FIOs.
+/// Matches a word ending in a patronymic suffix (ович, евич, ич, овна, евна, ична,
+/// инична) in any case. Used as a cheap anchor for detecting chat-style FIOs regardless of
+/// the case of the surrounding words.
 static LOWERCASE_PATRONYMIC_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b[а-яё]+(?:ович|евич|ич|овна|евна|ична|инична)\b").unwrap()
+    Regex::new(r"(?iu)\b[а-яё]+(?:ович|евич|ич|овна|евна|ична|инична)\b").unwrap()
 });
-
-/// True if the word starts with a lowercase letter (so it is a lowercase word).
-fn is_lowercase_word(w: &str) -> bool {
-    w.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
-}
 
 /// Returns the byte range of the word immediately before `pos`, or None when there is none.
 fn word_before(text: &str, pos: usize) -> Option<(usize, usize)> {
@@ -2696,6 +2787,54 @@ fn word_after(text: &str, pos: usize) -> Option<(usize, usize)> {
     let word_start = pos + (rest.len() - trimmed.len());
     let word_end = word_start + trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
     Some((word_start, word_end))
+}
+
+/// Trims leading/trailing punctuation (brackets, quotes, apostrophes) from a FIO span so it
+/// starts and ends with a letter, or with the period of an initial (e.g. "Н.В."). Applied to
+/// spans built from word boundaries, which may otherwise include adjacent punctuation.
+fn trim_fio_span(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let mut s = start;
+    let mut e = end;
+    while s < e {
+        let c = text[s..].chars().next().unwrap();
+        if c.is_alphabetic() {
+            break;
+        }
+        s += c.len_utf8();
+    }
+    while e > s {
+        let c = text[..e].chars().next_back().unwrap();
+        if c.is_alphabetic() {
+            break;
+        }
+        // Keep a trailing period that belongs to an initial (e.g. "Н.В.").
+        if c == '.' && is_initial_period(text, e - 1) {
+            break;
+        }
+        e -= c.len_utf8();
+    }
+    (s, e)
+}
+
+/// True if the period at byte index `period_pos` is the period of a single-letter initial
+/// (e.g. the "В." in "Н.В."): the letter before it is preceded by a non-letter.
+fn is_initial_period(text: &str, period_pos: usize) -> bool {
+    let before = &text[..period_pos];
+    let mut chars = before.chars().rev();
+    let Some(letter) = chars.next() else { return false };
+    if !letter.is_alphabetic() {
+        return false;
+    }
+    match chars.next() {
+        None => true,
+        Some(c) => !c.is_alphabetic(),
+    }
+}
+
+/// True if the byte range [a_end, b_start) contains only whitespace (so the two words are
+/// adjacent in the same sentence).
+fn only_whitespace_between(text: &str, a_end: usize, b_start: usize) -> bool {
+    text[a_end..b_start].chars().all(|c| c.is_whitespace())
 }
 
 /// True if two name tokens are separated only by spaces, or by a period that follows a
