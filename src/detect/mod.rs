@@ -1,4 +1,5 @@
 use crate::config::TrapPolicy;
+use crate::morph::{Case, Kind};
 use crate::registry::{Registry, TypeSpec, Validator};
 use crate::types::Entity;
 use once_cell::sync::Lazy;
@@ -6,17 +7,43 @@ use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+/// A single public person with precomputed inflected forms for allow-list matching.
+#[derive(Debug, Clone)]
+struct PublicPerson {
+    /// Word multisets of each of the six grammatical case forms (normalized: lowercased,
+    /// dots removed, sorted). Used for the "span words are a subset of one case form" rule.
+    case_forms: Vec<Vec<String>>,
+    /// The surname in each case form (lowercased, dots removed). Used for the
+    /// "surname + initials" rule.
+    surname_forms: Vec<String>,
+    /// First letter of the given name (lowercased), if any.
+    name_initial: Option<char>,
+    /// First letter of the patronymic (lowercased), if any.
+    patronymic_initial: Option<char>,
+}
+
+/// Parsed components of a FIO span used for allow-list matching.
+#[derive(Debug, Clone, Default)]
+struct PersonSpan {
+    /// Non-initial words (lowercased, dots removed, sorted).
+    words: Vec<String>,
+    /// The surname word (lowercased, dots removed), if any (the last non-initial word).
+    surname: Option<String>,
+    /// Initials (single letters, lowercased) in order.
+    initials: Vec<String>,
+}
+
 /// Allow-list of public persons and organizations that must NOT be treated as personal data.
 /// A full-name match is a negative signal (−0.3); an organization near an address is −0.3.
 #[derive(Debug, Clone, Default)]
 pub struct Allowlist {
-    /// Normalized full names (lowercased, spaces collapsed, dots removed) as sorted word multisets.
-    public_persons: Vec<Vec<String>>,
+    /// Public persons with their precomputed inflected case forms.
+    public_persons: Vec<PublicPerson>,
     /// Organization names, lowercased.
     organizations: Vec<String>,
-    /// Union of every word appearing in any public person's full name. Used as a fast
-    /// rejection set: a FIO span whose words are not all in this set cannot be a subset of
-    /// any public person's name.
+    /// Union of every word appearing in any public person's full name (any case form). Used
+    /// as a fast rejection set: a FIO span whose non-initial words are not all in this set
+    /// cannot be a subset of any public person's name.
     public_person_words: HashSet<String>,
 }
 
@@ -34,42 +61,117 @@ impl Allowlist {
             organizations: Vec<String>,
         }
         let root: Root = serde_yaml_ng::from_str(text)?;
-        let public_persons: Vec<Vec<String>> = root
-            .public_persons
-            .iter()
-            .map(|p| normalize_name_words(p))
-            .collect();
+        let mut public_persons: Vec<PublicPerson> = Vec::new();
         let mut public_person_words: HashSet<String> = HashSet::new();
-        for p in &public_persons {
-            for w in p {
-                public_person_words.insert(w.clone());
+        for name in &root.public_persons {
+            let mut case_forms: Vec<Vec<String>> = Vec::new();
+            let mut surname_forms: Vec<String> = Vec::new();
+            for case in [Case::Nom, Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+                if let Some(form) = crate::morph::inflect(name, Kind::Person, case) {
+                    let words = normalize_name_words(&form);
+                    let surname = form
+                        .split_whitespace()
+                        .last()
+                        .map(|w| {
+                            w.chars()
+                                .filter(|c| !matches!(c, '.' | ','))
+                                .collect::<String>()
+                                .to_lowercase()
+                        })
+                        .filter(|s| !s.is_empty());
+                    for w in &words {
+                        public_person_words.insert(w.clone());
+                    }
+                    if let Some(s) = surname {
+                        surname_forms.push(s);
+                    }
+                    case_forms.push(words);
+                }
             }
+            let parts = crate::morph::parse_person(name);
+            let name_initial = parts.as_ref().and_then(|p| p.name.chars().next());
+            let patronymic_initial = parts.as_ref().and_then(|p| p.patronymic.chars().next());
+            public_persons.push(PublicPerson {
+                case_forms,
+                surname_forms,
+                name_initial,
+                patronymic_initial,
+            });
         }
         let organizations = root.organizations.iter().map(|o| o.to_lowercase()).collect();
         Ok(Self { public_persons, organizations, public_person_words })
     }
 
-    /// True if the normalized words of a detected FIO (2+ words) are a subset of a public person's
-    /// full name. A single surname alone is not a match.
-    fn matches_person_subset(&self, words: &[&str]) -> bool {
-        if words.len() < 2 {
+    /// True if a detected FIO span matches a public person: either (a) its non-initial words
+    /// (2+) are a subset of one of the person's case forms AND the span contains the person's
+    /// surname, or (b) its surname matches the person's surname in some case form and its
+    /// initials (1 or 2) match the first letters of the person's given name and patronymic in
+    /// order. A bare surname alone is not a match, and a name/patronymic without the surname is
+    /// not a match either.
+    fn matches_person_subset(&self, span: &PersonSpan) -> bool {
+        // Fast rejection: if any non-initial word is not in the union of all public-person
+        // words, the span cannot match any public person.
+        if span.words.iter().any(|w| !self.public_person_words.contains(w)) {
             return false;
         }
-        // Fast rejection: if any word is not in the union of all public-person words, the span
-        // cannot be a subset of any single public person's name.
-        if words.iter().any(|w| !self.public_person_words.contains(*w)) {
-            return false;
-        }
-        let set: HashSet<&str> = words.iter().copied().collect();
+        let set: HashSet<&str> = span.words.iter().map(|s| s.as_str()).collect();
         self.public_persons.iter().any(|p| {
-            let pset: HashSet<&str> = p.iter().map(|s| s.as_str()).collect();
-            set.iter().all(|w| pset.contains(w))
+            // (a) Subset of one case form; requires at least two words (a bare surname is not
+            // a full-name match) and that the span's surname is the person's surname. A name or
+            // name+patronymic without the surname (e.g. "Ивана Петровича" vs "Иван Петрович
+            // Павлов") is a regular FIO, not a known person.
+            if span.words.len() >= 2 {
+                let surname_ok = span
+                    .surname
+                    .as_ref()
+                    .map(|s| p.surname_forms.iter().any(|sf| sf == s))
+                    .unwrap_or(false);
+                if surname_ok {
+                    let subset = p.case_forms.iter().any(|form| {
+                        let fset: HashSet<&str> = form.iter().map(|s| s.as_str()).collect();
+                        set.iter().all(|w| fset.contains(w))
+                    });
+                    if subset {
+                        return true;
+                    }
+                }
+            }
+            // (b) Surname + initials.
+            self.matches_surname_initials(span, p)
         })
     }
 
-    /// True if the word appears as a surname in any public person's full name.
+    /// True if the span's surname matches the person's surname in some case form and the span's
+    /// initials (1 or 2) match the first letters of the person's given name and patronymic in
+    /// order.
+    fn matches_surname_initials(&self, span: &PersonSpan, p: &PublicPerson) -> bool {
+        let Some(surname) = &span.surname else {
+            return false;
+        };
+        if !p.surname_forms.iter().any(|s| s == surname) {
+            return false;
+        }
+        match span.initials.len() {
+            1 => {
+                let i = &span.initials[0];
+                p.name_initial.map(|c| c.to_string() == *i).unwrap_or(false)
+                    || p.patronymic_initial.map(|c| c.to_string() == *i).unwrap_or(false)
+            }
+            2 => {
+                p.name_initial.map(|c| c.to_string() == span.initials[0]).unwrap_or(false)
+                    && p.patronymic_initial
+                        .map(|c| c.to_string() == span.initials[1])
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    /// True if the word appears as a surname in any public person's full name (any case form).
     fn is_public_surname(&self, word: &str) -> bool {
-        self.public_persons.iter().any(|p| p.iter().any(|w| w == word))
+        self.public_persons
+            .iter()
+            .any(|p| p.surname_forms.iter().any(|s| s == word))
     }
 
     /// True if any organization name appears within `window` chars around byte range [start, end).
@@ -98,6 +200,51 @@ fn normalize_name_words(s: &str) -> Vec<String> {
         .collect();
     words.sort();
     words
+}
+
+/// Parses a FIO span into its components for allow-list matching. Initials ("А.С.", "А. С.",
+/// "А.С") are split into separate single-letter initials; the last non-initial word is the
+/// surname. Works for both capitalized and lowercase spans.
+fn parse_person_span(text: &str) -> PersonSpan {
+    let mut words: Vec<String> = Vec::new();
+    let mut initials: Vec<String> = Vec::new();
+    let mut surname: Option<String> = None;
+    for token in text.split_whitespace() {
+        // Split on periods to separate glued initials like "А.С." into "А" and "С".
+        for part in token.split('.') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let letters: String = part.chars().filter(|c| c.is_alphabetic()).collect();
+            if letters.chars().count() == 1 {
+                initials.push(letters.to_lowercase());
+            } else if !letters.is_empty() {
+                let lower = letters.to_lowercase();
+                words.push(lower.clone());
+                surname = Some(lower);
+            }
+        }
+    }
+    words.sort();
+    PersonSpan { words, surname, initials }
+}
+
+/// Builds a `PersonSpan` from already-tokenized name tokens (initials are single-letter tokens).
+fn person_span_from_tokens(window: &[NameToken]) -> PersonSpan {
+    let mut words: Vec<String> = Vec::new();
+    let mut initials: Vec<String> = Vec::new();
+    let mut surname: Option<String> = None;
+    for t in window {
+        if t.is_initial {
+            initials.push(t.lower.clone());
+        } else {
+            words.push(t.lower.clone());
+            surname = Some(t.lower.clone());
+        }
+    }
+    words.sort();
+    PersonSpan { words, surname, initials }
 }
 
 /// Named word lists (surnames, first names, patronymics, cities, public persons...). Lowercased.
@@ -216,6 +363,10 @@ pub struct Detector {
     /// word boundaries, multi-word markers as substrings). Used to check non-PII context in a
     /// single regex match instead of scanning every marker.
     non_pii_marker_re_by_type: HashMap<String, Option<Regex>>,
+    /// Lowercased words that can never be part of a FIO: issuer abbreviations (ГУ, МВД,
+    /// УФМС, ОУФМС, ОВД, УМВД, ОМВД, ТП...) and address abbreviations. Built once from the
+    /// registry's `issuer_prefixes` and `abbreviation_words`.
+    issuer_abbrev_words: HashSet<String>,
 }
 
 /// Marker types that use the nearest-left-marker rule to resolve context.
@@ -277,6 +428,27 @@ fn build_non_address_context_words(registry: &Registry) -> HashSet<String> {
     }
     for m in DOCUMENT_MARKERS {
         set.insert(m.to_string());
+    }
+    set
+}
+
+/// Builds the set of lowercased words that can never be part of a FIO: issuer abbreviations
+/// (ГУ, МВД, УФМС, ОУФМС, ОВД, УМВД, ОМВД, ТП...) and address abbreviations. Taken from the
+/// registry's `issuer_prefixes` (split into words) and `abbreviation_words`. Single-letter
+/// abbreviations (г, с, п, д, к) are excluded: they are also valid initials in a FIO.
+fn build_issuer_abbrev_words(registry: &Registry) -> HashSet<String> {
+    let mut set: HashSet<String> = HashSet::new();
+    for p in &registry.context().issuer_prefixes {
+        for w in p.split_whitespace() {
+            if w.chars().count() >= 2 {
+                set.insert(w.to_lowercase());
+            }
+        }
+    }
+    for w in &registry.context().abbreviation_words {
+        if w.chars().count() >= 2 {
+            set.insert(w.to_lowercase());
+        }
     }
     set
 }
@@ -406,6 +578,7 @@ fn build_fio_marker_re(registry: &Registry) -> Option<Regex> {
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
         let caches = build_caches(&registry);
+        let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
         Self {
             registry,
             dicts,
@@ -418,6 +591,7 @@ impl Detector {
             pii_markers_by_type: caches.pii_markers_by_type,
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
+            issuer_abbrev_words,
         }
     }
 
@@ -428,6 +602,7 @@ impl Detector {
         allowlist: Allowlist,
     ) -> Self {
         let caches = build_caches(&registry);
+        let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
         Self {
             registry,
             dicts,
@@ -440,6 +615,7 @@ impl Detector {
             pii_markers_by_type: caches.pii_markers_by_type,
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
+            issuer_abbrev_words,
         }
     }
 
@@ -502,7 +678,7 @@ impl Detector {
         }
 
         self.apply_neighbor_boost(text, &mut candidates);
-        self.drop_bare_public_persons(text, &mut candidates);
+        self.drop_bare_public_persons(text, opts, &mut candidates);
         let all_fios: Vec<(usize, usize)> = candidates
             .iter()
             .filter(|e| e.type_id == "fio")
@@ -517,32 +693,68 @@ impl Detector {
     /// A FIO that is a full match with a public person is masked only when a strong PII marker
     /// or a confident neighboring entity is present. Otherwise it is a biographical reference
     /// (e.g. "Александр Сергеевич Пушкин", "Лев Николаевич Толстой родился в 1828 году").
-    fn drop_bare_public_persons(&self, text: &str, candidates: &mut Vec<Entity>) {
+    fn drop_bare_public_persons(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        candidates: &mut Vec<Entity>,
+    ) {
         let confident: Vec<(usize, usize)> = candidates
             .iter()
             .filter(|e| e.type_id != "fio" && e.confidence >= 0.9)
+            .map(|e| (e.start, e.end))
+            .collect();
+        // A FIO is a bare public-person reference (and is dropped) when it matches a public
+        // person, has no strong PII marker, and has no confident neighboring entity in the
+        // same sentence. Collect the spans of such dropped FIOs so that any smaller FIO
+        // candidate fully inside them (e.g. "Лев Николаевич" inside "Лев Николаевич Толстой")
+        // is dropped too: the whole name is a biographical reference, not a client.
+        let dropped_spans: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| self.is_bare_public_person(text, e, &confident))
             .map(|e| (e.start, e.end))
             .collect();
         candidates.retain(|e| {
             if e.type_id != "fio" {
                 return true;
             }
-            let span_words = normalize_name_words(&text[e.start..e.end]);
-            let span_refs: Vec<&str> = span_words.iter().map(|s| s.as_str()).collect();
-            if !self.allowlist.matches_person_subset(&span_refs) {
-                return true;
+            // Drop any FIO candidate fully contained within a dropped public-person span.
+            if dropped_spans.iter().any(|(ds, de)| *ds <= e.start && e.end <= *de) {
+                return false;
             }
-            if self.strong_pii_marker(text, e.start, e.end) {
-                return true;
+            if self.is_bare_public_person(text, e, &confident) {
+                return false;
             }
-            // A confident neighboring entity (passport, phone, card, ...) in the same sentence
-            // marks the person as a client. Entities overlapping the FIO span itself (e.g. a
-            // city homonym "Пушкин") are not neighbors. Without such a neighbor the FIO is a
-            // bare biographical reference and is dropped.
-            confident
-                .iter()
-                .any(|(cs, ce)| (*ce <= e.start || *cs >= e.end) && same_sentence(text, e.start, *cs))
+            // A FIO kept only because it matches a public person (to enable sub-span dropping)
+            // but that is below the threshold and not a bare public person is removed.
+            passes_threshold(e.confidence, opts)
         });
+    }
+
+    /// True when a FIO candidate is a bare public-person reference: it matches a public
+    /// person, has no strong PII marker, and has no confident neighboring entity in the same
+    /// sentence. Entities overlapping the FIO span itself (e.g. a city homonym "Пушкин") are
+    /// not neighbors. Without such a neighbor the FIO is a biographical reference and is
+    /// dropped.
+    fn is_bare_public_person(
+        &self,
+        text: &str,
+        e: &Entity,
+        confident: &[(usize, usize)],
+    ) -> bool {
+        if e.type_id != "fio" {
+            return false;
+        }
+        let span = parse_person_span(&text[e.start..e.end]);
+        if !self.allowlist.matches_person_subset(&span) {
+            return false;
+        }
+        if self.strong_pii_marker(text, e.start, e.end) {
+            return false;
+        }
+        !confident
+            .iter()
+            .any(|(cs, ce)| (*ce <= e.start || *cs >= e.end) && same_sentence(text, e.start, *cs))
     }
 
     /// A FIO preceded by a strong biographical marker (поэт, писатель, композитор,
@@ -660,6 +872,12 @@ impl Detector {
         // A number right after a document marker (накладная, партия, счёт-фактура, артикул,
         // инвентарный номер, тикет, заказ) is a document number, not a passport.
         if spec.id == "passport" && self.has_document_marker_before(text, start) {
+            return None;
+        }
+        // A span that is part of a valid date (dd.mm.yyyy, dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd)
+        // is a date, not a passport or part of one (e.g. "12.01.2006" must not be split into
+        // "12.01" and "2006" passports).
+        if spec.id == "passport" && is_part_of_date(text, start, end) {
             return None;
         }
         let (conf, skip_context_boost) =
@@ -1033,9 +1251,8 @@ impl Detector {
             _ => 0.7,
         };
         conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
-        let span_words = normalize_name_words(span);
-        let span_refs: Vec<&str> = span_words.iter().map(|s| s.as_str()).collect();
-        if self.allowlist.matches_person_subset(&span_refs) {
+        let span = parse_person_span(span);
+        if self.allowlist.matches_person_subset(&span) {
             conf -= 0.3;
         }
         conf.clamp(0.0, 1.0)
@@ -1076,6 +1293,11 @@ impl Detector {
             .filter(|(i, t)| {
                 // A context marker word (e.g. "Клиент", "Поэт") never belongs to a FIO span.
                 if self.is_marker_word(&t.lower) {
+                    return false;
+                }
+                // An issuer abbreviation (ГУ, МВД, УФМС, ОУФМС, ОВД...) or an address
+                // abbreviation never belongs to a FIO span (e.g. "ГУ МВД России" is an organ).
+                if self.issuer_abbrev_words.contains(&t.lower) {
                     return false;
                 }
                 // A greeting word (e.g. "Уважаемая", "Дорогой") never belongs to a FIO span.
@@ -1135,7 +1357,12 @@ impl Detector {
             return None;
         }
         let conf = self.fio_confidence(opts, window, has_pii, has_non_pii);
-        if !passes_threshold(conf, opts) {
+        // A FIO that matches a public person is kept even below the threshold so that
+        // `drop_bare_public_persons` can drop it and any sub-spans (e.g. "Александр Сергеевич"
+        // inside "Александр Сергеевич Пушкин") even under PreferSkip, where the penalized
+        // confidence would otherwise fall below the threshold and hide the full name.
+        let matches_person = self.allowlist.matches_person_subset(&person_span_from_tokens(window));
+        if !passes_threshold(conf, opts) && !matches_person {
             return None;
         }
         Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
@@ -1276,8 +1503,8 @@ impl Detector {
         let mut conf = self.fio_base_confidence(window, comps);
         conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
         // A span whose words are a subset of a public person's name is a negative signal.
-        let span_words: Vec<&str> = window.iter().map(|t| t.lower.as_str()).collect();
-        if self.allowlist.matches_person_subset(&span_words) {
+        let span = person_span_from_tokens(window);
+        if self.allowlist.matches_person_subset(&span) {
             conf -= 0.3;
         }
         conf.clamp(0.0, 1.0)
@@ -1907,7 +2134,10 @@ impl Detector {
 
     /// Passport issuer: text after a marker up to a date / subdivision code / period.
     /// Markers: "выдан", "выдано", "кем выдан", "орган выдачи" (optionally "кем выдан (N):").
-    /// The phrase must start with an issuer prefix from the registry.
+    /// The phrase must start with an issuer prefix from the registry. A leading date right
+    /// after the marker is skipped. A date right after the organ (through space or comma) is
+    /// emitted as a `passport_issue_date` even when the "выдан" marker is beyond the date's
+    /// context window.
     fn detect_passport_issuer(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         let prefixes = &self.registry.context().issuer_prefixes;
@@ -1919,9 +2149,36 @@ impl Detector {
                 if conf >= opts.min_confidence {
                     candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
                 }
+                self.push_issue_date_after_issuer(text, opts, end, &mut candidates);
             }
         }
         candidates
+    }
+
+    /// Emits a `passport_issue_date` entity for a date right after the issuer organ (through
+    /// a space or comma), even when the "выдан" marker is beyond the date's context window.
+    fn push_issue_date_after_issuer(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        issuer_end: usize,
+        candidates: &mut Vec<Entity>,
+    ) {
+        let Some((ds, de)) = date_after_issuer(text, issuer_end) else {
+            return;
+        };
+        if date_in_future(&text[ds..de]) {
+            return;
+        }
+        let dconf = 0.6f32;
+        if dconf >= opts.min_confidence {
+            candidates.push(Entity {
+                type_id: "passport_issue_date".to_string(),
+                start: ds,
+                end: de,
+                confidence: dconf,
+            });
+        }
     }
 
     /// Street + house number without "д." (e.g. "ул. Гагарина 28", "пр. Победы 45 кв 89",
@@ -2511,7 +2768,9 @@ impl Detector {
             if matches!(m.as_str(), "родился" | "родилась") {
                 return false;
             }
-            before.contains(m.as_str()) || after.contains(m.as_str())
+            // Word-boundary matching: a single-letter marker like "я" must not match as a
+            // substring of a longer word (e.g. "время").
+            contains_word_boundary(&before, m) || contains_word_boundary(&after, m)
         })
     }
 
@@ -3237,17 +3496,33 @@ fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
     false
 }
 
-/// Extracts the passport issuer phrase after a marker.
+/// Extracts the passport issuer phrase after a marker. A leading date (numeric or textual,
+/// with an optional "г."/"года" suffix) right after the marker is skipped before the organ
+/// is searched (e.g. "выдан 12.01.2006 ГУ МВД ...").
 fn extract_issuer_after(text: &str, from: usize, prefixes: &[String], abbrev: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
-    let stop = issuer_phrase_end(rest, abbrev);
-    let phrase = &rest[..stop];
     // Skip leading whitespace, colons, commas, dashes and a parenthesized number
     // (e.g. "кем выдан (12): ОВД ...").
-    let trimmed_start = phrase
+    let trimmed_start = rest
         .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
-        .unwrap_or(phrase.len());
-    let phrase = &phrase[trimmed_start..];
+        .unwrap_or(rest.len());
+    let mut offset = trimmed_start;
+    let mut tail = &rest[offset..];
+    // Skip a leading date (numeric or textual, with optional "г."/"года") that may precede
+    // the organ (e.g. "выдан 12.01.2006 ГУ МВД ...", "выдан 05 марта 2010 г. ОУФМС ...").
+    if let Some(m) = ISSUER_LEADING_DATE_RE.find(tail) {
+        if m.start() == 0 {
+            offset += m.end();
+            tail = &tail[m.end()..];
+            let skip = tail
+                .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
+                .unwrap_or(tail.len());
+            offset += skip;
+            tail = &tail[skip..];
+        }
+    }
+    let stop = issuer_phrase_end(tail, abbrev);
+    let phrase = &tail[..stop];
     let trimmed_end = phrase
         .trim_end_matches(|c: char| c.is_whitespace() || c == ',' || c == '.')
         .len();
@@ -3259,9 +3534,54 @@ fn extract_issuer_after(text: &str, from: usize, prefixes: &[String], abbrev: &[
     if !prefixes.iter().any(|p| lower.starts_with(p.as_str())) {
         return None;
     }
-    let start = from + trimmed_start;
+    let start = from + offset;
     let end = start + phrase.len();
     Some((start, end))
+}
+
+/// Finds a date immediately after the issuer organ (through a space or a comma). Returns the
+/// date span (including a trailing "г."/"года" suffix), or None. Used to detect the issue
+/// date when the "выдан" marker is further than the date's context window.
+fn date_after_issuer(text: &str, from: usize) -> Option<(usize, usize)> {
+    let rest = &text[from..];
+    let skip = rest
+        .find(|c: char| !c.is_whitespace() && c != ',')
+        .unwrap_or(rest.len());
+    let tail = &rest[skip..];
+    let m = ISSUER_LEADING_DATE_RE.find(tail)?;
+    if m.start() != 0 {
+        return None;
+    }
+    let start = from + skip + m.start();
+    let end = from + skip + m.end();
+    Some((start, end))
+}
+
+/// True if the span [start, end) is part of a valid numeric date (dd.mm.yyyy, dd/mm/yyyy,
+/// dd-mm-yyyy, yyyy-mm-dd). The span is expanded to the maximal run of digits and date
+/// separators around it, then validated. A passport candidate that is part of a date (e.g.
+/// "12.01" or "2006" inside "12.01.2006") is rejected.
+fn is_part_of_date(text: &str, start: usize, end: usize) -> bool {
+    let mut s = start;
+    let before = &text[..start];
+    while s > 0 {
+        let prev = before[..s].chars().next_back().unwrap();
+        if prev.is_ascii_digit() || matches!(prev, '.' | '/' | '-') {
+            s -= prev.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let mut e = end;
+    let after = &text[end..];
+    for c in after.chars() {
+        if c.is_ascii_digit() || matches!(c, '.' | '/' | '-') {
+            e += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    validators::date(&text[s..e])
 }
 
 /// Extracts a card holder name (2-3 capitalized or all-caps words, Cyrillic or Latin) right
@@ -3823,6 +4143,15 @@ static ISSUER_MARKER_RE: Lazy<Regex> = Lazy::new(|| {
 /// Matches the start of a date (numeric or textual) at the current position.
 static ISSUER_DATE_START_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|^\d{1,2}\s+[а-яё]+\s+\d{2,4}\b").unwrap()
+});
+/// Matches a full date (numeric or textual) with an optional trailing "г."/"года" suffix at
+/// the start of the slice. Used to skip a date right after an issuer marker and to detect a
+/// date right after the issuer organ.
+static ISSUER_LEADING_DATE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*(?:г\.|года)?|^\d{1,2}\s+[а-яё]+\s+\d{2,4}\s*(?:г\.|года)?",
+    )
+    .unwrap()
 });
 /// 2-3 capitalized or all-caps words (Cyrillic or Latin), e.g. "Иванов Петров",
 /// "ИВАНОВ ПЕТРОВ", "IVAN PETROV".

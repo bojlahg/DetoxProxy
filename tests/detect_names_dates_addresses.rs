@@ -1,5 +1,5 @@
 use detox_proxy::config::TrapPolicy;
-use detox_proxy::detect::{DetectOptions, Detector, Dictionaries};
+use detox_proxy::detect::{Allowlist, DetectOptions, Detector, Dictionaries};
 use detox_proxy::registry::Registry;
 use detox_proxy::types::Entity;
 use std::sync::Arc;
@@ -11,6 +11,15 @@ fn detector() -> Detector {
     Detector::new(reg, dicts)
 }
 
+fn detector_with_allowlist() -> Detector {
+    let yaml = std::fs::read_to_string("data/pii_types.yaml").expect("read pii_types.yaml");
+    let reg = Arc::new(Registry::from_yaml(&yaml).expect("parse registry"));
+    let dicts = Arc::new(Dictionaries::load_dir(std::path::Path::new("data/dict")).expect("load dicts"));
+    let allowlist_text = std::fs::read_to_string("data/allowlist.yaml").expect("read allowlist");
+    let allowlist = Allowlist::from_yaml(&allowlist_text).expect("parse allowlist");
+    Detector::with_allowlist(reg, dicts, allowlist)
+}
+
 fn detect(text: &str) -> Vec<Entity> {
     let opts = DetectOptions {
         enabled_types: None,
@@ -19,6 +28,16 @@ fn detect(text: &str) -> Vec<Entity> {
         trap_policy: TrapPolicy::PreferMask,
     };
     detector().detect(text, &opts)
+}
+
+fn detect_with_allowlist(text: &str) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.0,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector_with_allowlist().detect(text, &opts)
 }
 
 fn assert_span(text: &str, type_id: &str, expected: &str) {
@@ -239,4 +258,73 @@ fn complex_sentence() {
             w[1]
         );
     }
+}
+
+#[test]
+fn public_persons_with_initials_and_cases_not_masked() {
+    // Public persons written with initials or in an oblique case are biographical references,
+    // not clients, and must not be masked.
+    assert_not_found_with_allowlist("В свое время Пушкин А.С. написал немало рассказов и сказок.", "fio");
+    assert_not_found_with_allowlist("В свое время Пушкин А. С. написал немало сказок.", "fio");
+    assert_not_found_with_allowlist("В свое время А.С. Пушкин написал немало сказок.", "fio");
+    assert_not_found_with_allowlist("Стихи А. С. Пушкина мы учили в школе.", "fio");
+    assert_not_found_with_allowlist("Толстой Л.Н. написал «Войну и мир».", "fio");
+    assert_not_found_with_allowlist("Мы читали стихи Александра Сергеевича Пушкина.", "fio");
+}
+
+#[test]
+fn public_person_full_name_parts_not_masked() {
+    // A full public-person name is a biographical reference; its parts ("Лев", "Николаевич")
+    // must not remain as separate FIO candidates.
+    assert_not_found_with_allowlist("Лев Николаевич Толстой родился в 1828 году.", "fio");
+    assert_not_found_with_allowlist("Александр Сергеевич Пушкин родился в 1934 году.", "fio");
+}
+
+#[test]
+fn public_person_without_surname_is_regular_fio() {
+    // A name or name+patronymic that coincides with a public person's given name and patronymic
+    // but lacks the surname is a regular FIO, not a known person, and must be masked.
+    let entities = detect_with_allowlist("Борис Наседкин, сын Ивана Петровича, мечтал о дальних странах.");
+    let spans: Vec<&str> = entities
+        .iter()
+        .filter(|e| e.type_id == "fio")
+        .map(|e| text_span("Борис Наседкин, сын Ивана Петровича, мечтал о дальних странах.", e))
+        .collect();
+    assert!(
+        spans.contains(&"Ивана Петровича"),
+        "fio 'Ивана Петровича' should be found, got {:?}",
+        spans
+    );
+
+    let entities = detect_with_allowlist("Уважаемый Лев Николаевич, ваша заявка принята.");
+    let ent = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio should be found: {:?}", entities));
+    assert_eq!(text_span("Уважаемый Лев Николаевич, ваша заявка принята.", ent), "Лев Николаевич");
+}
+
+fn text_span<'a>(text: &'a str, ent: &Entity) -> &'a str {
+    &text[ent.start..ent.end]
+}
+
+#[test]
+fn public_person_with_pii_context_still_masked() {
+    // A public person with a strong PII marker ("клиент") and a confident neighbor (passport)
+    // is a client and is still masked.
+    let entities = detect_with_allowlist("Клиент Пушкин А.С., паспорт 4509 123456, обратился в банк.");
+    assert!(
+        entities.iter().any(|e| e.type_id == "fio"),
+        "fio should be found: {:?}",
+        entities
+    );
+}
+
+fn assert_not_found_with_allowlist(text: &str, type_id: &str) {
+    let entities = detect_with_allowlist(text);
+    assert!(
+        !entities.iter().any(|e| e.type_id == type_id),
+        "type {type_id} should not be found in {text:?}, got {:?}",
+        entities
+    );
 }
