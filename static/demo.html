@@ -811,15 +811,15 @@
     llm: document.getElementById("tab-llm")
   };
 
-  function activateTab(name) {
+  function activateTab(tabName) {
     for (const b of tabButtons) {
-      b.classList.toggle("active", b.dataset.tab === name);
+      b.classList.toggle("active", b.dataset.tab === tabName);
     }
     for (const [key, section] of Object.entries(tabSections)) {
-      section.hidden = key !== name;
+      section.hidden = key !== tabName;
     }
-    if (name === "tokens") location.hash = "#tokens";
-    else if (name === PSEUDO) location.hash = "#pseudo";
+    if (tabName === "tokens") location.hash = "#tokens";
+    else if (tabName === PSEUDO) location.hash = "#pseudo";
     else location.hash = "#llm";
   }
 
@@ -830,11 +830,14 @@
     return "tokens";
   }
 
-  for (const b of tabButtons) {
-    b.addEventListener("click", function () {
-      activateTab(b.dataset.tab);
-    });
+  function onTabsClick(evt) {
+    const tab = evt.target.closest(".tab");
+    if (tab) {
+      activateTab(tab.dataset.tab);
+    }
   }
+
+  document.getElementById("tabs").addEventListener("click", onTabsClick);
 
   maskBtn.addEventListener("click", mask);
   detectBtn.addEventListener("click", detect);
