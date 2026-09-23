@@ -309,7 +309,7 @@ types:
     validator: email
     patterns:
       - '[A-Za-z0-9._+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+'
-      - '[A-Za-z0-9._+\-]+(?:\s+)?@(?:\s+)?[A-Za-z0-9\-]+(?:\s*\.\s*[A-Za-z0-9\-]+)+'
+      - '[A-Za-z0-9_+\-]+(?:\s*\.\s*[A-Za-z0-9_+\-]+){0,3}(?:\s+)?@(?:\s+)?[A-Za-z0-9\-]+(?:\s*\.\s*[A-Za-z0-9\-]+)+'
 
   - id: phone
     name: Phone number
