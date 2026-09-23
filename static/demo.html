@@ -65,7 +65,7 @@
     padding: 10px;
     background: #fafbfc;
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px;
     min-height: 40px;
@@ -81,7 +81,7 @@
     font-size: 13px;
     line-height: 1.9;
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
   }
   mark {
     background: #fde68a;
@@ -209,7 +209,7 @@
     const arr = new Uint8Array(16);
     crypto.getRandomValues(arr);
     let hex = "";
-    for (let j = 0; j < arr.length; j++) hex += ("0" + arr[j].toString(16)).slice(-2);
+    for (const b of arr) hex += ("0" + b.toString(16)).slice(-2);
     return hex;
   }
 
@@ -317,8 +317,7 @@
     const sorted = entities.slice().sort(function (a, b) { return a.start - b.start; });
     const root = document.createElement("div");
     let pos = 0;
-    for (let i = 0; i < sorted.length; i++) {
-      const e = sorted[i];
+    for (const e of sorted) {
       const start = Math.max(0, e.start);
       const end = Math.min(bytes.length, e.end);
       if (end <= start) continue;
@@ -388,37 +387,51 @@
         try { json = JSON.parse(text); } catch (e) { json = null; }
         return { status: resp.status, ms: ms, text: text, json: json };
       });
-    }).then(function (res) {
-      llmBtn.disabled = false;
-      setMeta(llmMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
-      if (res.status >= 200 && res.status < 300 && res.json) {
-        if (res.json.detox && res.json.detox.masked_messages && res.json.detox.masked_messages.length > 0) {
-          setText(llmSent, res.json.detox.masked_messages[0].content);
-        } else {
-          setText(llmSent, "нет данных");
-        }
-        if (res.json.detox && typeof res.json.detox.model_output === "string") {
-          setText(llmModel, res.json.detox.model_output);
-        } else {
-          setText(llmModel, "нет данных");
-        }
-        if (res.json.choices && res.json.choices[0] && res.json.choices[0].message) {
-          setText(llmUser, res.json.choices[0].message.content);
-        } else {
-          setText(llmUser, "нет данных");
-        }
-      } else {
-        setText(llmSent, errorMessage(res));
-        setText(llmModel, "");
-        setText(llmUser, "");
-      }
-    }).catch(function (err) {
+    }).then(renderChat).catch(function (err) {
       llmBtn.disabled = false;
       setMeta(llmMeta, null, 0, String(err));
       setText(llmSent, String(err));
       setText(llmModel, "");
       setText(llmUser, "");
     });
+  }
+
+  function renderChat(res) {
+    llmBtn.disabled = false;
+    setMeta(llmMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
+    if (res.status >= 200 && res.status < 300 && res.json) {
+      renderSent(res.json);
+      renderModel(res.json);
+      renderUser(res.json);
+    } else {
+      setText(llmSent, errorMessage(res));
+      setText(llmModel, "");
+      setText(llmUser, "");
+    }
+  }
+
+  function renderSent(json) {
+    if (json.detox && json.detox.masked_messages && json.detox.masked_messages.length > 0) {
+      setText(llmSent, json.detox.masked_messages[0].content);
+    } else {
+      setText(llmSent, "нет данных");
+    }
+  }
+
+  function renderModel(json) {
+    if (json.detox && typeof json.detox.model_output === "string") {
+      setText(llmModel, json.detox.model_output);
+    } else {
+      setText(llmModel, "нет данных");
+    }
+  }
+
+  function renderUser(json) {
+    if (json.choices && json.choices[0] && json.choices[0].message) {
+      setText(llmUser, json.choices[0].message.content);
+    } else {
+      setText(llmUser, "нет данных");
+    }
   }
 
   maskBtn.addEventListener("click", mask);
