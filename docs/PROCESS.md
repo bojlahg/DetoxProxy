@@ -20,7 +20,7 @@
 
 ## Якорная разметка
 
-Постоянные правила агента — `AGENTS.md`, разбитый на XML-блоки: `<role>`, `<project>`, `<stack>`, `<api_verification>`, `<commands>`, `<layout>`, `<ownership_rules>`, `<pii_rules>`, `<streaming_rules>`, `<language>`, `<git>`, `<plan_first>`, `<rules>`, `<done_definition>`. Блоки позволяют модели не путать контекст, правила и задачу, а ТЗ — ссылаться на нужный блок.
+Постоянные правила агента — `AGENTS.md` в корне репозитория (в архив не входит, как и остальные рабочие файлы процесса), разбитый на XML-блоки: `<role>`, `<project>`, `<stack>`, `<api_verification>`, `<commands>`, `<layout>`, `<ownership_rules>`, `<pii_rules>`, `<streaming_rules>`, `<language>`, `<git>`, `<plan_first>`, `<rules>`, `<done_definition>`. Блоки позволяют модели не путать контекст, правила и задачу, а ТЗ — ссылаться на нужный блок.
 
 Thinking у модели в AlfaGen выключен, поэтому блок `<plan_first>` требует сначала выписать файлы и шаги, а потом писать код: это заметно снизило число провалов на длинных задачах.
 
