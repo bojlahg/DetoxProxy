@@ -176,6 +176,7 @@
     <div class="row" style="margin-top:12px">
       <button class="btn" id="llmBtn">Отправить в LLM</button>
     </div>
+    <div class="hint">Склоняются ФИО, место рождения и гражданство; адрес возвращается как был.</div>
     <div class="meta" id="llmMeta"></div>
     <div class="field" style="margin-top:12px">
       <label for="llmSys">Системный промпт (добавляет DetoxProxy)</label>
@@ -285,6 +286,12 @@
       "Поздравь с днём рождения Петрову Анну Сергеевну и отправь письмо на anna.petrova@mail.ru"));
     llmReqExamples.appendChild(addExample(llmReq, "Проверка карты",
       "Клиент Смирнов Олег Викторович просит проверить операции по карте 4276 5500 1122 3347 за март."));
+    llmReqExamples.appendChild(addExample(llmReq, "Два человека",
+      "Передай Петровой Анне Сергеевне и Сидорову Петру Ивановичу приглашение на встречу"));
+    llmReqExamples.appendChild(addExample(llmReq, "Город и гражданство",
+      "Клиент Кузнецов Олег Викторович родился в Нижнем Новгороде, гражданство: Россия"));
+    llmReqExamples.appendChild(addExample(llmReq, "Адрес доставки",
+      "Доставьте документы Кузнецову Олегу Викторовичу: г. Казань, ул. Баумана, д. 14, кв. 8"));
   }
 
   function makeLlmButton(label, kind) {
