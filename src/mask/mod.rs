@@ -33,6 +33,20 @@ static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
 /// Street prefixes used to decide whether an `address` value inflects as a street.
 const STREET_MARKERS: [&str; 4] = ["ул.", "улица", "проспект", "пр."];
 
+/// Lowercase marker words without the trailing dot.
+const ADDRESS_MARKERS: &[&str] = &[
+    "г", "гор", "город", "городе", "города", "ул", "улица", "улице", "улицы", "улицу",
+    "пр", "пр-т", "пр-кт", "просп", "проспект", "проспекте", "проспекта", "пер", "переулок",
+    "переулке", "переулка", "б-р", "бульвар", "бульваре", "ш", "шоссе", "наб", "набережная",
+    "набережной", "пл", "площадь", "площади", "проезд", "проезде", "аллея", "тупик", "линия",
+    "мкр", "мкрн", "микрорайон", "микрорайоне", "обл", "область", "области", "р-н", "район",
+    "районе", "респ", "республика", "край", "пос", "п", "поселок", "посёлок", "поселке",
+    "посёлке", "с", "село", "селе", "дер", "деревня", "деревне", "д", "дом", "доме", "дома",
+    "кв", "квартира", "квартире", "квартиры", "корп", "корпус", "корпусе", "к", "стр",
+    "строение", "строении", "лит", "литера", "пом", "помещение", "оф", "офис", "эт", "этаж",
+    "индекс",
+];
+
 /// All six grammatical cases, used for per-part person inflection.
 const ALL_CASES: [morph::Case; 6] = [
     morph::Case::Nom,
@@ -60,11 +74,15 @@ fn kind_for_type(type_id: &str, original: &str) -> Option<morph::Kind> {
         "birth_place" => Some(morph::Kind::Place),
         "citizenship" => Some(morph::Kind::Country),
         "address" => {
-            let lower = original.trim().to_lowercase();
-            if STREET_MARKERS.iter().any(|m| lower.starts_with(m)) {
-                Some(morph::Kind::Street)
+            if original.chars().any(|c| c.is_ascii_digit()) {
+                None
             } else {
-                Some(morph::Kind::Place)
+                let lower = original.trim().to_lowercase();
+                if STREET_MARKERS.iter().any(|m| lower.starts_with(m)) {
+                    Some(morph::Kind::Street)
+                } else {
+                    Some(morph::Kind::Place)
+                }
             }
         }
         _ => None,
@@ -124,6 +142,7 @@ pub fn mask_with_seed(
     seed: &[Mapping],
 ) -> MaskResult {
     let mut active = collect_active(text, entities, registry, opts);
+    active = expand_split_components(text, active, registry);
     active.sort_by_key(|(_, e, _)| e.start);
 
     let mut token_state = build_token_state(seed, text);
@@ -141,13 +160,13 @@ pub fn mask_with_seed(
 }
 
 /// Selects entities that are not masked with `Off` and applies the combination rule.
-fn collect_active<'a>(
+fn collect_active(
     text: &str,
-    entities: &'a [Entity],
+    entities: &[Entity],
     registry: &Registry,
     opts: &MaskOptions<'_>,
-) -> Vec<(usize, &'a Entity, MaskMode)> {
-    let mut active: Vec<(usize, &Entity, MaskMode)> = Vec::new();
+) -> Vec<(usize, Entity, MaskMode)> {
+    let mut active: Vec<(usize, Entity, MaskMode)> = Vec::new();
     for (i, e) in entities.iter().enumerate() {
         let spec = registry.get(&e.type_id);
         let mode = opts
@@ -159,7 +178,7 @@ fn collect_active<'a>(
         if mode == MaskMode::Off {
             continue;
         }
-        active.push((i, e, mode));
+        active.push((i, e.clone(), mode));
     }
 
     if opts.combination_rule {
@@ -180,6 +199,158 @@ fn collect_active<'a>(
         });
     }
     active
+}
+
+/// Expands token-mode entities whose type has `split_components` into per-value sub-entities,
+/// keeping the original entity index on every part so `filter_entities` still returns the
+/// original entities. Other modes are left untouched.
+fn expand_split_components(
+    text: &str,
+    active: Vec<(usize, Entity, MaskMode)>,
+    registry: &Registry,
+) -> Vec<(usize, Entity, MaskMode)> {
+    let mut out: Vec<(usize, Entity, MaskMode)> = Vec::with_capacity(active.len());
+    for (i, e, mode) in active {
+        let split = mode == MaskMode::Token
+            && registry.get(&e.type_id).is_some_and(|s| s.split_components);
+        if split {
+            for part in split_components(text, &e) {
+                out.push((i, part, mode));
+            }
+        } else {
+            out.push((i, e, mode));
+        }
+    }
+    out
+}
+
+/// True if `word` is an address marker: its lowercase form without one trailing dot is in
+/// `ADDRESS_MARKERS` (e.g. "г.", "ул.", "дом", "проспект").
+fn is_marker_word(word: &str) -> bool {
+    let lower = word.to_lowercase();
+    let stripped = lower.strip_suffix('.').unwrap_or(&lower);
+    ADDRESS_MARKERS.contains(&stripped)
+}
+
+/// For a word of the form `<marker>.<value>` without a space (e.g. "д.10А", "кв.8", "ул.Ленина"),
+/// returns `(byte_end_of_marker_including_dot, byte_start_of_value)`. Returns `None` when the
+/// word is not such a marker+value pair.
+fn marker_dot_value(word: &str) -> Option<(usize, usize)> {
+    let dot = word.find('.')?;
+    let marker = word[..dot].to_lowercase();
+    if !ADDRESS_MARKERS.contains(&marker.as_str()) {
+        return None;
+    }
+    let value_start = dot + 1;
+    if value_start >= word.len() {
+        return None;
+    }
+    Some((dot + 1, value_start))
+}
+
+/// Token kinds produced by `tokenize_span`.
+#[derive(Clone, Copy, PartialEq)]
+enum SpanKind { Marker, Value, Space, Comma }
+
+/// Byte index of the first char at or after `i` for which `stop` is true (or `span.len()`).
+fn scan_until(span: &str, i: usize, stop: impl Fn(char) -> bool) -> usize {
+    span[i..].char_indices().find(|&(_, c)| stop(c)).map_or(span.len(), |(k, _)| i + k)
+}
+
+fn is_separator(c: char) -> bool {
+    c == ',' || c == ';'
+}
+
+/// Classifies one word and appends its token(s): marker, value, or marker+value ("д.10А").
+fn push_word(tokens: &mut Vec<(SpanKind, usize, usize)>, span: &str, start: usize, end: usize) {
+    let word = &span[start..end];
+    if is_marker_word(word) {
+        tokens.push((SpanKind::Marker, start, end));
+    } else if let Some((m_end, v_start)) = marker_dot_value(word) {
+        tokens.push((SpanKind::Marker, start, start + m_end));
+        tokens.push((SpanKind::Value, start + v_start, end));
+    } else {
+        tokens.push((SpanKind::Value, start, end));
+    }
+}
+
+/// Splits a span into tokens: marker words, value words, whitespace runs and `,`/`;` separators.
+/// A word of the form `<marker>.<value>` (e.g. "д.10А") yields a marker token followed by a value
+/// token. All offsets are relative to the start of `span`.
+fn tokenize_span(span: &str) -> Vec<(SpanKind, usize, usize)> {
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while let Some(c) = span[i..].chars().next() {
+        let start = i;
+        if c.is_whitespace() {
+            i = scan_until(span, i, |c| !c.is_whitespace());
+            tokens.push((SpanKind::Space, start, i));
+        } else if is_separator(c) {
+            i += c.len_utf8();
+            tokens.push((SpanKind::Comma, start, i));
+        } else {
+            i = scan_until(span, i, |c| c.is_whitespace() || is_separator(c));
+            push_word(&mut tokens, span, start, i);
+        }
+    }
+    tokens
+}
+
+/// Collects one value group starting at token `idx`: the byte range `[gs, ge)` of the group and
+/// the index of the first token after it. Trailing dots are trimmed from the group end.
+fn value_group(tokens: &[(SpanKind, usize, usize)], idx: usize, span: &str) -> (usize, usize, usize) {
+    let gs = tokens[idx].1;
+    let mut ge = tokens[idx].2;
+    let mut i = idx + 1;
+    while i < tokens.len() {
+        match tokens[i].0 {
+            SpanKind::Value => {
+                ge = tokens[i].2;
+                i += 1;
+            }
+            SpanKind::Space => {
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+    while ge > gs && span.as_bytes()[ge - 1] == b'.' {
+        ge -= 1;
+    }
+    (gs, ge, i)
+}
+
+/// Splits an address span into value sub-spans; marker words and separators stay outside.
+/// Returns the entity unchanged (one element) when the span has no marker words or no values.
+fn split_components(text: &str, e: &Entity) -> Vec<Entity> {
+    let span = &text[e.start..e.end];
+    let tokens = tokenize_span(span);
+    let has_marker = tokens.iter().any(|(k, _, _)| *k == SpanKind::Marker);
+    if !has_marker {
+        return vec![e.clone()];
+    }
+
+    let mut parts: Vec<Entity> = Vec::new();
+    let mut idx = 0;
+    while idx < tokens.len() {
+        if tokens[idx].0 != SpanKind::Value {
+            idx += 1;
+            continue;
+        }
+        let (gs, ge, next) = value_group(&tokens, idx, span);
+        parts.push(Entity {
+            type_id: e.type_id.clone(),
+            start: e.start + gs,
+            end: e.start + ge,
+            confidence: e.confidence,
+        });
+        idx = next;
+    }
+
+    if parts.is_empty() {
+        return vec![e.clone()];
+    }
+    parts
 }
 
 /// True if two byte offsets are in the same sentence (no '.', '!', '?' or newline between them).
@@ -288,7 +459,7 @@ fn replacement_for(
 
 /// Builds the ordered replacement plan for all active entities.
 fn build_plan(
-    active: &[(usize, &Entity, MaskMode)],
+    active: &[(usize, Entity, MaskMode)],
     text: &str,
     registry: &Registry,
     opts: &MaskOptions<'_>,
@@ -334,7 +505,7 @@ fn build_mappings(plan: &[(usize, usize, String, String, String)]) -> Vec<Mappin
 }
 
 /// Filters the original entities down to those that were actually masked.
-fn filter_entities(entities: &[Entity], active: &[(usize, &Entity, MaskMode)]) -> Vec<Entity> {
+fn filter_entities(entities: &[Entity], active: &[(usize, Entity, MaskMode)]) -> Vec<Entity> {
     let active_indices: HashSet<usize> = active.iter().map(|(i, _, _)| *i).collect();
     entities
         .iter()

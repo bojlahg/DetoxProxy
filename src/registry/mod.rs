@@ -84,6 +84,10 @@ pub struct TypeSpec {
     /// Masked only when another confidently detected type is present in the same text (cvv, pin).
     #[serde(default)]
     pub requires_companion: bool,
+    /// Token mode only: mask each value inside the span separately and keep marker words
+    /// (address: "г.", "ул.", "д.", "кв." ...) visible.
+    #[serde(default)]
+    pub split_components: bool,
     /// Type ids that allow masking this type when present in the same sentence. When empty and
     /// `requires_companion` is true, defaults to `["card_number"]`.
     #[serde(default)]

@@ -511,3 +511,50 @@ fn synthetic_address_replaces_city_and_street() {
     assert!(!res.text.contains("Казань"), "city must be replaced, got {}", res.text);
     assert!(!res.text.contains("Баумана"), "street must be replaced, got {}", res.text);
 }
+
+#[test]
+fn address_split_keeps_markers() {
+    let reg = load();
+    let cases: Vec<(&str, &str)> = vec![
+        (
+            "Проживает: г. Казань, ул. Баумана, д. 14, кв. 8.",
+            "Проживает: г. <<ADDR_1>>, ул. <<ADDR_2>>, д. <<ADDR_3>>, кв. <<ADDR_4>>.",
+        ),
+        (
+            "адрес: 443001, г. Самара, ул. Ленинградская, д. 5, кв. 12",
+            "адрес: <<ADDR_1>>, г. <<ADDR_2>>, ул. <<ADDR_3>>, д. <<ADDR_4>>, кв. <<ADDR_5>>",
+        ),
+        (
+            "Москва, ул. Лесная, дом 17, квартира 42",
+            "<<ADDR_1>>, ул. <<ADDR_2>>, дом <<ADDR_3>>, квартира <<ADDR_4>>",
+        ),
+        (
+            "Адрес доставки: Санкт-Петербург, Невский проспект, д. 28, корп. 2, стр. 1, кв. 15",
+            "Адрес доставки: <<ADDR_1>>, <<ADDR_2>> проспект, д. <<ADDR_3>>, корп. <<ADDR_4>>, стр. <<ADDR_5>>, кв. <<ADDR_6>>",
+        ),
+        (
+            "Адрес: улица Пушкина, 23, корпус 1.",
+            "Адрес: улица <<ADDR_1>>, <<ADDR_2>>, корпус <<ADDR_3>>.",
+        ),
+    ];
+    for (text, expected) in cases {
+        let addr = text
+            .split_once(": ")
+            .map(|(_, rest)| rest)
+            .unwrap_or(text);
+        let s = text.find(addr).unwrap();
+        let entities = vec![ent("address", s, s + addr.len(), 0.9)];
+        let res = mask(text, &entities, &reg, &token_opts(&HashMap::new()));
+        assert_eq!(res.text, expected, "mask mismatch for {text:?}");
+        let restored = unmask(&res.text, &res.mappings);
+        assert_eq!(restored, text, "round-trip failed for {text:?}");
+    }
+
+    let no_markers = "Москва Лесная 17";
+    let s = 0;
+    let entities = vec![ent("address", s, no_markers.len(), 0.9)];
+    let res = mask(no_markers, &entities, &reg, &token_opts(&HashMap::new()));
+    assert_eq!(res.text, "<<ADDR_1>>", "no-marker address must be one token, got {}", res.text);
+    let restored = unmask(&res.text, &res.mappings);
+    assert_eq!(restored, no_markers);
+}
