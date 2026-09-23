@@ -189,6 +189,30 @@ fn birth_place() {
 }
 
 #[test]
+fn birth_place_hyphenated_cities_in_oblique_case() {
+    // Hyphenated compound city names in an oblique case are recognized as a birth place.
+    assert_span("Клиент родился в Санкт-Петербурге", "birth_place", "Санкт-Петербурге");
+    assert_span("родился в Ростове-на-Дону", "birth_place", "Ростове-на-Дону");
+    // The "г." marker form keeps working unchanged.
+    assert_span("место рождения: г. Санкт-Петербург", "birth_place", "г. Санкт-Петербург");
+}
+
+#[test]
+fn fio_hyphenated_compound_names() {
+    // A hyphenated compound name is a single FIO token; the whole name is masked.
+    assert_span(
+        "Напиши письмо Анне-Марии Сергеевне Римской-Корсаковой",
+        "fio",
+        "Анне-Марии Сергеевне Римской-Корсаковой",
+    );
+    assert_span(
+        "Клиент Салтыков-Щедрин Михаил Евграфович, тел. 89123456789",
+        "fio",
+        "Салтыков-Щедрин Михаил Евграфович",
+    );
+}
+
+#[test]
 fn citizenship() {
     assert_span("гражданство: Россия", "citizenship", "Россия");
     assert_span("гражданин РФ", "citizenship", "РФ");
@@ -454,4 +478,64 @@ fn assert_not_found_prod(text: &str, type_id: &str) {
         "type {type_id} should not be found in {text:?}, got {:?}",
         entities
     );
+}
+
+#[test]
+fn street_address_with_comma_before_house_number() {
+    // A comma between the street name and the house number (and корпус/кв) is part of the
+    // address. The street name after a street marker is a street, not a FIO or a public person.
+    assert_span(
+        "Адрес: улица Пушкина, 23, корпус 1. Позвоню на 89161234567",
+        "address",
+        "улица Пушкина, 23, корпус 1",
+    );
+    assert_span(
+        "2014-12-01 09:00 - курс рубля упал вдвое, адрес: ул. Пушкина, 10, спад",
+        "address",
+        "ул. Пушкина, 10",
+    );
+    assert_span(
+        "на чердаке старого дома на улице Пушкина, 14, внезапно",
+        "address",
+        "улице Пушкина, 14",
+    );
+    assert_span(
+        "ул. Гагарина, 45, кв. 12 подьезд 2 домофон сломан поднимитесь сами",
+        "address",
+        "ул. Гагарина, 45, кв. 12",
+    );
+}
+
+#[test]
+fn street_address_public_person_surname_with_city() {
+    // A street name that is a public person's surname (Маркса, Пушкина) is a street, not a
+    // person; the house number, корпус and квартира after it attach as usual.
+    assert_span(
+        "переехал на новый адрес Новосибирск, проспект Маркса, 78, кв 91",
+        "address",
+        "Новосибирск, проспект Маркса, 78, кв 91",
+    );
+    assert_span(
+        "записали вас на Санкт-Петербург, улица Пушкина, 88, кв 34",
+        "address",
+        "Санкт-Петербург, улица Пушкина, 88, кв 34",
+    );
+}
+
+#[test]
+fn address_city_that_is_part_of_fio_not_attached() {
+    // A city-form word that is part of a found FIO (Гусева is the genitive of the city Гусев
+    // and a surname) is a person, not a city, and must not be attached to the address.
+    let text = "Дарья Гусева, ш. Ростовская 178 кв. 299 — куда везти заказ?";
+    let entities = detect(text);
+    let fio = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio not found in {:?}", entities));
+    assert_eq!(&text[fio.start..fio.end], "Дарья Гусева");
+    let addr = entities
+        .iter()
+        .find(|e| e.type_id == "address")
+        .unwrap_or_else(|| panic!("address not found in {:?}", entities));
+    assert_eq!(&text[addr.start..addr.end], "ш. Ростовская 178 кв. 299");
 }

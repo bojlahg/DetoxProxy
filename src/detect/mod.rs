@@ -303,6 +303,13 @@ fn normalize_yo(s: &str) -> String {
     s.replace('ё', "е").replace('Ё', "Е")
 }
 
+/// True if any hyphen-separated part of `lower` satisfies `pred`. Used for hyphenated
+/// compound names (e.g. "Анне-Марии", "Римской-Корсаковой"): a dictionary check passes
+/// when at least one part is in the dictionary.
+fn any_part(lower: &str, pred: impl Fn(&str) -> bool) -> bool {
+    lower.split('-').any(pred)
+}
+
 pub struct DetectOptions<'a> {
     /// Only these type ids are detected; None = all registry types.
     pub enabled_types: Option<&'a [String]>,
@@ -479,20 +486,38 @@ fn build_country_forms(dicts: &Dictionaries) -> HashSet<String> {
 
 /// Builds the set of all inflected case forms of every city in the `cities` dictionary.
 /// For each city all six grammatical cases are inflected via `crate::morph::inflect`;
-/// forms are lowercased and 'ё' normalized to 'е'. Used to recognize a trailing city after
-/// an address in any grammatical case.
+/// forms are lowercased and 'ё' normalized to 'е'. Hyphenated compound city names
+/// (e.g. "Ростов-на-Дону") are additionally inflected by their first part, since the
+/// inflector treats the whole word as one token and cannot inflect it when the last part
+/// ends in a vowel. Used to recognize a trailing city after an address in any grammatical
+/// case.
 fn build_city_forms(dicts: &Dictionaries) -> HashSet<String> {
     let mut set: HashSet<String> = HashSet::new();
     if let Some(cities) = dicts.lists.get("cities") {
         for city in cities {
-            for case in [Case::Nom, Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
-                if let Some(form) = crate::morph::inflect(city, Kind::Place, case) {
-                    set.insert(normalize_yo(&form.to_lowercase()));
-                }
-            }
+            push_city_case_forms(&mut set, city);
         }
     }
     set
+}
+
+/// Inserts all six inflected case forms of a single city into `set`. For a hyphenated
+/// compound city name (e.g. "Ростов-на-Дону") the first part is inflected and the rest is
+/// kept verbatim, since the inflector treats the whole word as one token and cannot inflect
+/// it when the last part ends in a vowel.
+fn push_city_case_forms(set: &mut HashSet<String>, city: &str) {
+    for case in [Case::Nom, Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+        if let Some(form) = crate::morph::inflect(city, Kind::Place, case) {
+            set.insert(normalize_yo(&form.to_lowercase()));
+        }
+    }
+    if let Some((first, rest)) = city.split_once('-') {
+        for case in [Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+            if let Some(inf) = crate::morph::inflect(first, Kind::Place, case) {
+                set.insert(normalize_yo(&format!("{inf}-{rest}").to_lowercase()));
+            }
+        }
+    }
 }
 
 /// Builds the resolved effective PII markers per type id: per-type `pii_markers`, else
@@ -721,7 +746,7 @@ impl Detector {
                 "birth_place" => candidates.extend(self.detect_birth_place(text, opts, spec)),
                 "citizenship" => candidates.extend(self.detect_citizenship(text, opts, spec)),
                 "passport_issuer" => candidates.extend(self.detect_passport_issuer(text, opts, spec)),
-                "address" => candidates.extend(self.detect_address(text, text_lower, opts, spec)),
+                "address" => candidates.extend(self.detect_address(text, text_lower, opts, spec, &candidates)),
                 "card_holder" => candidates.extend(self.detect_card_holder(text, opts, spec)),
                 _ => self.detect_regex_type(text, text_lower, opts, spec, &mut candidates),
             }
@@ -738,6 +763,7 @@ impl Detector {
         let mut result = resolve_overlaps(candidates);
         self.drop_biography_fios(text, &mut result);
         self.drop_historical_dates_bound_to_biography(text, &mut result, &all_fios);
+        self.drop_biography_birth_places(text, &mut result, &all_fios);
         result
     }
 
@@ -852,6 +878,40 @@ impl Detector {
                 // client). A biographical reference (not masked) means the date belongs to a
                 // public person and is dropped.
                 Some((fs, _)) => masked_fios.iter().any(|(s, _)| *s == *fs),
+                None => true,
+            }
+        });
+    }
+
+    /// A birth place whose nearest FIO to the left (within 80 chars) is a biographical
+    /// reference (not masked) is not masked: it belongs to a public person, not a client
+    /// (e.g. "Поэт Александр Сергеевич Пушкин родился ... в Москве").
+    fn drop_biography_birth_places(
+        &self,
+        text: &str,
+        result: &mut Vec<Entity>,
+        all_fios: &[(usize, usize)],
+    ) {
+        let masked_fios: Vec<(usize, usize)> = result
+            .iter()
+            .filter(|e| e.type_id == "fio")
+            .map(|e| (e.start, e.end))
+            .collect();
+        result.retain(|e| {
+            if e.type_id != "birth_place" {
+                return true;
+            }
+            let nearest = all_fios
+                .iter()
+                .filter(|(s, _)| *s < e.start && e.start - *s <= 80)
+                .max_by_key(|(s, _)| *s);
+            match nearest {
+                // A FIO exists to the left; keep the place only when that FIO is masked (a
+                // client). A biographical reference (not masked) means the place belongs to a
+                // public person and is dropped. The nearest FIO may be a sub-span of the full
+                // name (e.g. "Пётр Иванович" inside "Сидоров Пётр Иванович"), so containment
+                // in a masked FIO counts as masked.
+                Some((fs, fe)) => masked_fios.iter().any(|(ms, me)| *ms <= *fs && *fe <= *me),
                 None => true,
             }
         });
@@ -1613,14 +1673,18 @@ impl Detector {
         let refs: Vec<&str> = lower.iter().map(|s| s.as_str()).collect();
         match refs.len() {
             2 => {
-                let has_surname = refs.iter().any(|w| self.dicts.contains("surnames", w));
-                let has_first = refs.iter().any(|w| self.dicts.contains("first_names", w));
+                let has_surname = refs
+                    .iter()
+                    .any(|w| any_part(w, |p| self.dicts.contains("surnames", p)));
+                let has_first = refs
+                    .iter()
+                    .any(|w| any_part(w, |p| self.dicts.contains("first_names", p)));
                 has_surname && has_first
             }
             3 => {
-                let is_surname = |w: &str| self.dicts.contains("surnames", w);
-                let is_first = |w: &str| self.dicts.contains("first_names", w);
-                let is_patr = |w: &str| self.dicts.contains("patronymics", w);
+                let is_surname = |w: &str| any_part(w, |p| self.dicts.contains("surnames", p));
+                let is_first = |w: &str| any_part(w, |p| self.dicts.contains("first_names", p));
+                let is_patr = |w: &str| any_part(w, |p| self.dicts.contains("patronymics", p));
                 (is_surname(refs[0]) && is_first(refs[1]) && is_patr(refs[2]))
                     || (is_first(refs[0]) && is_patr(refs[1]) && is_surname(refs[2]))
             }
@@ -1642,11 +1706,13 @@ impl Detector {
         const SURNAME_ENDINGS: &[&str] = &[
             "ов", "ев", "ин", "ын", "ова", "ева", "ина", "ына", "ский", "ская", "цкий", "цкая",
         ];
-        let lower = word.to_lowercase();
-        if self.dicts.contains("surnames", &lower) {
-            return true;
-        }
-        SURNAME_ENDINGS.iter().any(|e| lower.ends_with(e))
+        any_part(word, |part| {
+            let lower = part.to_lowercase();
+            if self.dicts.contains("surnames", &lower) {
+                return true;
+            }
+            SURNAME_ENDINGS.iter().any(|e| lower.ends_with(e))
+        })
     }
 
     /// PII / non-PII context flags for a FIO window.
@@ -1799,7 +1865,8 @@ impl Detector {
             return false;
         }
         window.iter().any(|t| {
-            self.dicts.contains("surnames", &t.lower) || self.is_surname_suffix(&t.lower)
+            any_part(&t.lower, |part| self.dicts.contains("surnames", part))
+                || self.is_surname_suffix(&t.lower)
         })
     }
 
@@ -1815,7 +1882,9 @@ impl Detector {
         if !any_surname_suffix {
             return false;
         }
-        let any_first_name = window.iter().any(|t| self.dicts.contains("first_names", &t.lower));
+        let any_first_name = window
+            .iter()
+            .any(|t| any_part(&t.lower, |part| self.dicts.contains("first_names", part)));
         let any_initial = window.iter().any(|t| t.is_initial);
         any_first_name || any_initial
     }
@@ -1855,45 +1924,56 @@ impl Detector {
         !(has_cyr && has_lat)
     }
 
+    /// True if the word is a city name in any grammatical case: present in the inflected
+    /// `city_forms` set (primary) or in the `cities` dictionary (fallback).
     fn is_city(&self, lower: &str) -> bool {
+        if self.city_forms.contains(&normalize_yo(lower)) {
+            return true;
+        }
         self.dicts.contains("cities", lower)
     }
 
     fn in_any_name_dict(&self, lower: &str) -> bool {
-        self.dicts.contains("surnames", lower)
-            || self.dicts.contains("first_names", lower)
-            || self.dicts.contains("patronymics", lower)
+        any_part(lower, |part| {
+            self.dicts.contains("surnames", part)
+                || self.dicts.contains("first_names", part)
+                || self.dicts.contains("patronymics", part)
+        })
     }
 
     /// True if the word is a first name in any grammatical case (nominative or oblique).
     fn first_name_in_any_case(&self, lower: &str) -> bool {
-        if self.dicts.contains("first_names", lower) {
-            return true;
-        }
-        let spec = self.registry.get("fio");
-        let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
-        endings.iter().any(|e| {
-            if let Some(stripped) = lower.strip_suffix(e.as_str()) {
-                if !stripped.is_empty() && self.dicts.contains("first_names", stripped) {
-                    return true;
-                }
+        any_part(lower, |part| {
+            if self.dicts.contains("first_names", part) {
+                return true;
             }
-            false
+            let spec = self.registry.get("fio");
+            let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
+            endings.iter().any(|e| {
+                if let Some(stripped) = part.strip_suffix(e.as_str()) {
+                    if !stripped.is_empty() && self.dicts.contains("first_names", stripped) {
+                        return true;
+                    }
+                }
+                false
+            })
         })
     }
 
     /// True if the word is a surname in any grammatical case (nominative or oblique).
     fn surname_in_any_case(&self, lower: &str) -> bool {
-        if self.dicts.contains("surnames", lower) {
-            return true;
-        }
-        let spec = self.registry.get("fio");
-        let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
-        if self.surname_matches_any_suffix(lower, endings) {
-            return true;
-        }
-        let suffixes = spec.map(|s| s.surname_case_suffixes.as_slice()).unwrap_or(&[]);
-        self.surname_matches_any_suffix(lower, suffixes)
+        any_part(lower, |part| {
+            if self.dicts.contains("surnames", part) {
+                return true;
+            }
+            let spec = self.registry.get("fio");
+            let endings = spec.map(|s| s.first_name_case_endings.as_slice()).unwrap_or(&[]);
+            if self.surname_matches_any_suffix(part, endings) {
+                return true;
+            }
+            let suffixes = spec.map(|s| s.surname_case_suffixes.as_slice()).unwrap_or(&[]);
+            self.surname_matches_any_suffix(part, suffixes)
+        })
     }
 
     /// True if stripping any of the given suffixes from `lower` leaves a non-empty stem
@@ -1912,13 +1992,13 @@ impl Detector {
     fn is_patronymic(&self, lower: &str) -> bool {
         let spec = self.registry.get("fio");
         let suffixes = spec.map(|s| s.patronymic_suffixes.as_slice()).unwrap_or(&[]);
-        suffixes.iter().any(|s| lower.ends_with(s))
+        any_part(lower, |part| suffixes.iter().any(|s| part.ends_with(s)))
     }
 
     fn is_surname_suffix(&self, lower: &str) -> bool {
         let spec = self.registry.get("fio");
         let suffixes = spec.map(|s| s.surname_suffixes.as_slice()).unwrap_or(&[]);
-        suffixes.iter().any(|s| lower.ends_with(s))
+        any_part(lower, |part| suffixes.iter().any(|s| part.ends_with(s)))
     }
 
     fn has_pii_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
@@ -2290,6 +2370,11 @@ impl Detector {
         if markers.iter().any(|m| span.contains(m.as_str())) {
             return true;
         }
+        // The whole span may be a city in an oblique case (e.g. "Санкт-Петербурге",
+        // "Ростове-на-Дону").
+        if self.is_city_form(span) {
+            return true;
+        }
         cyrillic_words(span).iter().any(|(_, _, lower, _)| self.is_city(lower))
     }
 
@@ -2370,7 +2455,7 @@ impl Detector {
     ///
     /// The street marker may be abbreviated ("ул.", "пр.") or a full word in any case
     /// ("улице", "проспекте").
-    fn detect_street_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+    fn detect_street_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec, fio_spans: &[(usize, usize)]) -> Vec<Entity> {
         let mut candidates = Vec::new();
         for m in STREET_ADDR_RE.find_iter(text) {
             let start = m.start();
@@ -2379,9 +2464,14 @@ impl Detector {
             if self.has_non_pii_context(text, text_lower, start, end, spec) {
                 continue;
             }
+            // "площадь" is a street marker only when it names a square, not a size
+            // ("общая площадь 42 кв.м", "жилая площадь", "площадь 42 м²").
+            if !self.component_is_площадь_street(text, start, end) {
+                continue;
+            }
             let mut conf = 0.8f32;
             // Include a preceding city ("г. Москва, " or "Москва, ") in the span.
-            let (span_start, span_end) = self.extend_with_city(text, start, end);
+            let (span_start, span_end) = self.extend_with_city(text, start, end, fio_spans);
             // Include a trailing city after a comma ("ул. Ленина 5, Москва").
             let span_end = self.extend_with_trailing_city(text, span_end);
             // The span must end on a letter or digit (trim trailing punctuation).
@@ -2404,15 +2494,32 @@ impl Detector {
     /// Extends a street-address span to include a preceding city ("г. Москва, ",
     /// "Москва, ", "г. Химки ул. Победы 23", "Екатеринбург ул. Ленина 99"). Returns the
     /// widened span. The city may be separated from the street by a comma or by plain
-    /// whitespace.
-    fn extend_with_city(&self, text: &str, start: usize, end: usize) -> (usize, usize) {
+    /// whitespace. A word that is part of a found FIO is never attached (rule 2): a surname
+    /// that is also a city form (e.g. "Гусева" in "Дарья Гусева, ш. Ростовская 178") is a
+    /// person, not a city.
+    fn extend_with_city(&self, text: &str, start: usize, end: usize, fio_spans: &[(usize, usize)]) -> (usize, usize) {
         let window = context_window_before(text, start, 60);
         let window_start = start - window.len();
         let trimmed = window.trim_end();
+        // A word that is part of a found FIO is never attached (rule 2): a surname that is
+        // also a city form (e.g. "Гусева" in "Дарья Гусева, ш. Ростовская 178") is a person,
+        // not a city.
+        match self.preceding_city_start(text, start, window_start, trimmed) {
+            Some(city_start) if !self.span_in_fio(fio_spans, city_start, start) => (city_start, end),
+            _ => (start, end),
+        }
+    }
+
+    /// Returns the absolute byte offset of a city that precedes the street-address span at
+    /// `start`, or None when there is no preceding city. The city may be "г. X", a bare city
+    /// name before a comma, a bare city name immediately before the street marker, or a
+    /// capitalized word implied to be a city by a preceding location preposition or city
+    /// marker. `window_start` is the absolute offset of `trimmed` in `text`.
+    fn preceding_city_start(&self, text: &str, start: usize, window_start: usize, trimmed: &str) -> Option<usize> {
         // "г. Москва, " / "г. Химки ул. Победы 23" — city marker + city name.
         if let Some(pos) = trimmed.rfind("г.") {
             if self.city_after_marker(&trimmed[pos..]) {
-                return (window_start + pos, end);
+                return Some(window_start + pos);
             }
         }
         // "Москва, " — bare city name + comma. The city is the word before the comma.
@@ -2427,7 +2534,7 @@ impl Detector {
                 .unwrap_or(0);
             let city = &before[city_start..];
             if self.looks_like_city_name(city) {
-                return (window_start + city_start, end);
+                return Some(window_start + city_start);
             }
         }
         // "Екатеринбург ул. Ленина 99" — bare city name immediately before the street
@@ -2440,15 +2547,20 @@ impl Detector {
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
         if self.looks_like_city_name(last_word) {
-            return (window_start + last_word_start, end);
+            return Some(window_start + last_word_start);
         }
         // A capitalized word directly before the street marker that is preceded by a location
         // preposition or a city marker is a city even when it is not in the dictionary
         // (e.g. "В Коростене ул. Шевченко 12"). The word itself must not be a preposition.
         if self.word_is_implied_city(trimmed, last_word_start, last_word) {
-            return (window_start + last_word_start, end);
+            return Some(window_start + last_word_start);
         }
-        (start, end)
+        None
+    }
+
+    /// True if the byte range [start, end) overlaps any found FIO span.
+    fn span_in_fio(&self, fio_spans: &[(usize, usize)], start: usize, end: usize) -> bool {
+        fio_spans.iter().any(|&(fs, fe)| start < fe && fs < end)
     }
 
     /// True when the text right after a "г." marker starts with a city name. Handles both
@@ -2522,7 +2634,7 @@ impl Detector {
     /// True if a span is a city name (from the dictionary) or a city marker + name.
     fn looks_like_city_name(&self, span: &str) -> bool {
         let lower = span.to_lowercase();
-        if self.dicts.contains("cities", &lower) {
+        if self.is_city(&lower) {
             return true;
         }
         // "г. Москва" style: strip a leading "г." / "город".
@@ -2531,7 +2643,7 @@ impl Detector {
             .or_else(|| lower.strip_prefix("город"))
             .map(|s| s.trim())
             .unwrap_or(&lower);
-        self.dicts.contains("cities", stripped)
+        self.is_city(stripped)
     }
 
     /// True if a single word is a city name in any grammatical case (from the inflected
@@ -2624,9 +2736,17 @@ impl Detector {
     }
 
     /// Address: group of 2+ consecutive components (index, city, street, house, apartment, region).
-    fn detect_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
-        let mut candidates = self.detect_street_address(text, text_lower, opts, spec);
-        let comps = self.find_address_components(text);
+    fn detect_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec, candidates: &[Entity]) -> Vec<Entity> {
+        // FIO spans already detected (fio precedes address in the registry). A city that is
+        // part of a found FIO (e.g. "Гусева" in "Дарья Гусева, ш. Ростовская 178") is a
+        // person, not a city, and must not be attached to the address (rule 2).
+        let fio_spans: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| e.type_id == "fio")
+            .map(|e| (e.start, e.end))
+            .collect();
+        let mut candidates = self.detect_street_address(text, text_lower, opts, spec, &fio_spans);
+        let comps = self.find_address_components(text, &fio_spans);
         if comps.is_empty() {
             return candidates;
         }
@@ -2735,7 +2855,7 @@ impl Detector {
         if span.chars().all(|c| c.is_ascii_digit()) && span.chars().count() == 6 {
             return AddrKind::Index;
         }
-        if self.dicts.contains("cities", &lower) {
+        if self.is_city(&lower) {
             return AddrKind::City;
         }
         if span.chars().all(|c| c.is_ascii_digit()) {
@@ -2797,7 +2917,7 @@ impl Detector {
         true
     }
 
-    fn find_address_components(&self, text: &str) -> Vec<(usize, usize)> {
+    fn find_address_components(&self, text: &str, fio_spans: &[(usize, usize)]) -> Vec<(usize, usize)> {
         let mut comps: Vec<(usize, usize)> = Vec::new();
         for re in ADDRESS_COMPONENT_RES.iter() {
             for m in re.find_iter(text) {
@@ -2809,16 +2929,18 @@ impl Detector {
         // without a preceding city or street marker in the same group (rule 2).
         let word_number = self.word_number_components(text);
         comps.extend(word_number.iter().copied());
-        // Bare city names from the dictionary.
+        // Bare city names from the dictionary. A city that is part of a found FIO (e.g.
+        // "Гусева" in "Дарья Гусева, ш. Ростовская 178") is a person, not a city, and is
+        // not an address component (rule 2).
         for (start, end, lower, is_cap) in cyrillic_words(text) {
-            if is_cap && self.dicts.contains("cities", &lower) {
+            if is_cap && self.is_city(&lower) && !self.span_in_fio(fio_spans, start, end) {
                 comps.push((start, end));
             }
         }
         // Hyphenated city names (e.g. "Санкт-Петербург", "Ростов-на-Дону").
         for m in HYPHENATED_WORD_RE.find_iter(text) {
             let span = &text[m.start()..m.end()];
-            if self.dicts.contains("cities", &span.to_lowercase()) {
+            if self.is_city(&span.to_lowercase()) {
                 comps.push((m.start(), m.end()));
             }
         }
@@ -3414,7 +3536,9 @@ fn name_tokens(text: &str) -> Vec<NameToken> {
     let mut out = Vec::new();
     for m in NAME_TOKEN_RE.find_iter(text) {
         let w = &text[m.start()..m.end()];
-        let letters: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+        // Keep hyphens so that hyphenated compound names (e.g. "Анне-Марии",
+        // "Римской-Корсаковой") stay a single token whose parts can be checked separately.
+        let letters: String = w.chars().filter(|c| c.is_alphabetic() || *c == '-').collect();
         let is_initial = letters.chars().count() == 1;
         let capitalized = w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
         let is_latin = letters.chars().all(|c| c.is_ascii_alphabetic());
@@ -4564,7 +4688,7 @@ fn build_offset_map(out: &str, orig: &[usize], orig_len: usize) -> Vec<usize> {
 
 static NAME_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"\b[А-ЯЁ][а-яё]+\b|\b[А-ЯЁ]{2,}\b|\b[А-ЯЁ]\.|\b[A-Z][a-z]+\b|\b[A-Z]{2,}\b|\b[A-Z][A-Za-z]+\b|\b[A-Z]\.",
+        r"\b[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)+\b|\b[А-ЯЁ]{2,}(?:-[А-ЯЁ]{2,})+\b|\b[А-ЯЁ][а-яё]+\b|\b[А-ЯЁ]{2,}\b|\b[А-ЯЁ]\.|\b[A-Z][a-z]+\b|\b[A-Z]{2,}\b|\b[A-Z][A-Za-z]+\b|\b[A-Z]\.",
     )
     .unwrap()
 });
@@ -4620,14 +4744,16 @@ static HYPHENATED_WORD_RE: Lazy<Regex> =
 
 /// Street marker + street name (1-3 words, may start with a digit) + house number
 /// (`\d+[а-я]?(/\d+)?`) + optional корпус/к./стр./кв./квартира/подъезд + number.
-/// Street markers match in any grammatical case (e.g. "улице", "проспекте").
+/// Street markers match in any grammatical case (e.g. "улице", "проспекте"). The house
+/// number and the корпус/кв suffix may be separated from the street name by a comma
+/// (e.g. "улица Пушкина, 23, корпус 1", "проспект Маркса, 78, кв 91").
 static STREET_ADDR_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
         r"(?iu)\b(?:ул\.|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|ш\.|ш|шоссе|б-р|бульвар[а-яё]*|наб\.|набережн[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+",
         r"(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)",
         r"(?:\s+(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)){0,2}?",
-        r"\s+\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?",
-        r"(?:\s+(?:корпус|корп\.|к\.|стр\.|кв\.|квартира|подъезд)\s*\d+)?",
+        r"\s*,?\s*\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?",
+        r"(?:\s*,?\s*(?:корпус|корп\.|к\.|стр\.|кв\.|квартира|подъезд|кв)\s*\d+)?",
     ))
     .unwrap()
 });
