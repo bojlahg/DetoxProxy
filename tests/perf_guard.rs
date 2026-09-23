@@ -111,3 +111,38 @@ fn dense_capitalized_text_detect_and_mask_within_budget() {
         "detect+mask exceeds the dense-capitalized budget: best={best} us (expected <= 1500000 us)"
     );
 }
+
+#[test]
+fn large_address_text() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.0,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+
+    let det = detector();
+
+    let text = "Адрес доставки: г. Казань, ул. Баумана, д. 3, кв. 15, получатель Петрова Анна Сергеевна. "
+        .repeat(4445);
+    assert!(text.len() >= 400_000, "text too short: {} chars", text.len());
+
+    let mut best = u128::MAX;
+    for _ in 0..3 {
+        let start = Instant::now();
+        let _entities = det.detect(&text, &opts);
+        let elapsed = start.elapsed().as_micros();
+        if elapsed < best {
+            best = elapsed;
+        }
+    }
+
+    assert!(
+        best <= 1_500_000,
+        "detect exceeds the large-address budget: best={best} us (expected <= 1500000 us)"
+    );
+}

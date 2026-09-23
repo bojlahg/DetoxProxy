@@ -1948,24 +1948,27 @@ impl Detector {
         let after = &text[end..];
         let after = after.trim_start();
         let after = after.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(after);
-        let words = cyrillic_words(after);
-        if words.is_empty() {
-            return None;
-        }
-        // Take 1-2 capitalized words as the street name.
-        let (_, we, wlower, wcap) = &words[0];
-        if !*wcap {
+        // Only the first two Cyrillic words are needed for the street name; tokenize lazily
+        // instead of scanning the whole remainder.
+        let mut words = CYRILLIC_WORD_RE.find_iter(after);
+        let w0 = words.next()?;
+        let w0_span = &after[w0.start()..w0.end()];
+        let wlower = w0_span.to_lowercase();
+        let wcap = w0_span.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+        if !wcap {
             return None;
         }
         // A street name that is a context word of another PII type (e.g. "Паспорт 4509")
         // is not a street.
-        if self.non_address_context_words.contains(wlower) {
+        if self.non_address_context_words.contains(&wlower) {
             return None;
         }
-        let mut street_end = *we;
-        if let Some((_, we2, _, wcap2)) = words.get(1) {
-            if *wcap2 {
-                street_end = *we2;
+        let mut street_end = w0.end();
+        if let Some(w1) = words.next() {
+            let w1_span = &after[w1.start()..w1.end()];
+            let w1cap = w1_span.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+            if w1cap {
+                street_end = w1.end();
             }
         }
         // Convert the street-name end to an absolute byte offset in `text`. `after` is a
@@ -1976,7 +1979,9 @@ impl Detector {
         let between = &text[street_end_abs..];
         let between = between.trim_start();
         let between = between.strip_prefix(',').map(|s| s.trim_start()).unwrap_or(between);
-        let num = HOUSE_NUMBER_RE.find(between)?;
+        // The number must start at the beginning of `between`; use an anchored regex so the
+        // whole remainder is not scanned.
+        let num = HOUSE_NUMBER_ANCHORED_RE.find(between)?;
         if num.start() != 0 {
             return None;
         }
@@ -2142,21 +2147,47 @@ impl Detector {
         }
         // Bare numbers are house components only when they follow a street component.
         comps.sort_by_key(|c| c.0);
-        for m in BARE_NUMBER_RE.find_iter(text) {
-            if self.number_follows_street(text, m.start(), &comps) {
-                comps.push((m.start(), m.end()));
-            }
-        }
+        self.add_bare_number_components(text, &mut comps);
         comps.sort_by_key(|c| c.0);
         // Rule 2: drop a sentence-start "word number" component whose group has no city or
         // street marker before it.
-        let rejected: Vec<(usize, usize)> = word_number
+        let (pref_max, pref_max_idx) = build_prefix_max(&comps);
+        let rejected: HashSet<(usize, usize)> = word_number
             .iter()
             .copied()
-            .filter(|&(s, _)| self.sentence_start_word_number_rejected(text, s, &comps))
+            .filter(|&(s, _)| {
+                self.sentence_start_word_number_rejected(text, s, &comps, &pref_max, &pref_max_idx)
+            })
             .collect();
         comps.retain(|c| !rejected.contains(c));
         dedup_components(comps)
+    }
+
+    /// Appends bare numbers that follow a street component. `comps` is sorted by start and is
+    /// mutated in place: bare numbers are appended without re-sorting, so they sit at the end.
+    /// The original scan iterates the current `comps`; when every original component has
+    /// end <= start, it continues into the appended bare numbers and returns true only when the
+    /// first appended bare number has end > start (so the preceding component is the last
+    /// original one). Track the first appended bare number's end to reproduce that.
+    fn add_bare_number_components(&self, text: &str, comps: &mut Vec<(usize, usize)>) {
+        let (pref_max, _) = build_prefix_max(comps);
+        let mut appended_first_end: Option<usize> = None;
+        for m in BARE_NUMBER_RE.find_iter(text) {
+            let start = m.start();
+            let k = pref_max.partition_point(|&pm| pm <= start);
+            let add = if k == pref_max.len() {
+                appended_first_end.is_none_or(|fe| fe > start)
+                    && self.number_follows_street(text, start, comps, &pref_max)
+            } else {
+                self.number_follows_street(text, start, comps, &pref_max)
+            };
+            if add {
+                comps.push((m.start(), m.end()));
+                if appended_first_end.is_none() {
+                    appended_first_end = Some(m.end());
+                }
+            }
+        }
     }
 
     /// "word number" components (e.g. "Тверская 15") whose leading word is not a context word
@@ -2182,18 +2213,20 @@ impl Detector {
         text: &str,
         start: usize,
         comps: &[(usize, usize)],
+        pref_max: &[usize],
+        pref_max_idx: &[usize],
     ) -> bool {
         if !is_sentence_start(text, start) {
             return false;
         }
         let mut cur_start = start;
         loop {
-            let prev = comps
-                .iter()
-                .filter(|c| c.1 <= cur_start)
-                .max_by_key(|c| c.1);
+            // The component with the maximum end among those with end <= cur_start is at
+            // `pref_max_idx[k - 1]`, where `k` is the first prefix-max end exceeding cur_start.
+            let k = pref_max.partition_point(|&pm| pm <= cur_start);
+            let prev = if k == 0 { None } else { Some(comps[pref_max_idx[k - 1]]) };
             let prev = match prev {
-                Some(p) => *p,
+                Some(p) => p,
                 None => return true,
             };
             if !self.components_adjacent(text, prev.1, cur_start) {
@@ -2208,16 +2241,18 @@ impl Detector {
     }
 
     /// True if a bare number at `start` is preceded by a street component.
-    fn number_follows_street(&self, text: &str, start: usize, comps: &[(usize, usize)]) -> bool {
+    fn number_follows_street(
+        &self,
+        text: &str,
+        start: usize,
+        comps: &[(usize, usize)],
+        pref_max: &[usize],
+    ) -> bool {
         // The immediately preceding component must be a street (starts with a street marker).
-        let mut prev: Option<(usize, usize)> = None;
-        for c in comps {
-            if c.1 <= start {
-                prev = Some(*c);
-            } else {
-                break;
-            }
-        }
+        // `comps` is sorted by start; the last component with end <= start is at the index
+        // just before the first prefix-max end that exceeds `start`.
+        let k = pref_max.partition_point(|&pm| pm <= start);
+        let prev = if k == 0 { None } else { Some(comps[k - 1]) };
         let prev = match prev {
             Some(p) => p,
             None => return false,
@@ -2563,6 +2598,27 @@ fn starts_with_street_marker(lower: &str, markers: &[String]) -> bool {
             true
         }
     })
+}
+
+/// Builds the prefix-maximum of component ends and the index of the component achieving it
+/// (tie-break by the largest index, matching `max_by_key`). `pref_max` is non-decreasing, so
+/// it can be binary-searched with `partition_point`.
+fn build_prefix_max(comps: &[(usize, usize)]) -> (Vec<usize>, Vec<usize>) {
+    let mut pref_max = Vec::with_capacity(comps.len());
+    let mut pref_max_idx = Vec::with_capacity(comps.len());
+    for (i, &(_, e)) in comps.iter().enumerate() {
+        if i == 0 {
+            pref_max.push(e);
+            pref_max_idx.push(0);
+        } else if e >= pref_max[i - 1] {
+            pref_max.push(e);
+            pref_max_idx.push(i);
+        } else {
+            pref_max.push(pref_max[i - 1]);
+            pref_max_idx.push(pref_max_idx[i - 1]);
+        }
+    }
+    (pref_max, pref_max_idx)
 }
 
 /// Drops components fully contained in a previous one (keeps the longer).
@@ -3672,9 +3728,10 @@ static STREET_ADDR_RE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-/// A house number with an optional letter or fraction (e.g. "17к3", "28/4").
-static HOUSE_NUMBER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\d+[а-яА-ЯёЁ]?(?:/\d+)?").unwrap());
+/// Anchored house number: matches only at the start of the slice, so the whole remainder is
+/// not scanned when only a leading number is wanted.
+static HOUSE_NUMBER_ANCHORED_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\d+[а-яА-ЯёЁ]?(?:/\d+)?").unwrap());
 
 /// Passport series as two pairs + 6-digit number (e.g. "48 90 234004").
 static PASSPORT_PAIR_PAIR_RE: Lazy<Regex> =
