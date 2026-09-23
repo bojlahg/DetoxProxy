@@ -155,6 +155,7 @@
       <a href="/metrics">/metrics</a>
       <a href="/stats">/stats</a>
       <a href="/healthz">/healthz</a>
+      <a href="http://93.183.93.44/grafana/public-dashboards/a515ae2ac4b84f71a308b58b6a0fa1b2" target="_blank" rel="noopener noreferrer">Графики нагрузки (Grafana)</a>
     </div>
   </header>
 
@@ -285,6 +286,15 @@
 (function () {
   "use strict";
 
+  const SECONDARY_BUTTON_CLASS = "btn secondary";
+  const NO_DATA_TEXT = "нет данных";
+  const EXAMPLES_LABEL = "Примеры:";
+  const EX_LABEL_CLASS = "ex-label";
+  const BUTTON = "button";
+  const SPAN = "span";
+  const STRING_TYPE = "string";
+  const PSEUDO = "pseudo";
+
   const payloadEl = document.getElementById("payload");
   const systemEl = document.getElementById("system");
   const llmEl = document.getElementById("llm");
@@ -330,9 +340,9 @@
   let pseudoMaskText = "";
 
   function addExample(target, hintEl, label, text, hint) {
-    const btn = document.createElement("button");
-    btn.className = "btn secondary";
-    btn.type = "button";
+    const btn = document.createElement(BUTTON);
+    btn.className = SECONDARY_BUTTON_CLASS;
+    btn.type = BUTTON;
     btn.textContent = label;
     btn.addEventListener("click", function () {
       if (hint) {
@@ -347,9 +357,9 @@
   }
 
   function buildExamples() {
-    const exLabel = document.createElement("span");
-    exLabel.className = "ex-label";
-    exLabel.textContent = "Примеры:";
+    const exLabel = document.createElement(SPAN);
+    exLabel.className = EX_LABEL_CLASS;
+    exLabel.textContent = EXAMPLES_LABEL;
     payloadExamples.appendChild(exLabel);
     payloadExamples.appendChild(addExample(payloadEl, payloadHint, "Анкета клиента", payloadEl.value));
     payloadExamples.appendChild(addExample(payloadEl, payloadHint, "Все 17 типов",
@@ -362,9 +372,9 @@
       "Пин-код 4821 от домофона.\nКарта 4276 5500 1122 3347, пин-код 4821.",
       "Правило комбинаций включено у системы strict"));
 
-    const pseudoLabel = document.createElement("span");
-    pseudoLabel.className = "ex-label";
-    pseudoLabel.textContent = "Примеры:";
+    const pseudoLabel = document.createElement(SPAN);
+    pseudoLabel.className = EX_LABEL_CLASS;
+    pseudoLabel.textContent = EXAMPLES_LABEL;
     pseudoPayloadExamples.appendChild(pseudoLabel);
     pseudoPayloadExamples.appendChild(addExample(pseudoPayloadEl, pseudoPayloadHint, "Анкета клиента", payloadEl.value));
     pseudoPayloadExamples.appendChild(addExample(pseudoPayloadEl, pseudoPayloadHint, "Все 17 типов",
@@ -377,24 +387,24 @@
       "Пин-код 4821 от домофона.\nКарта 4276 5500 1122 3347, пин-код 4821.",
       "Правило комбинаций включено у системы strict"));
 
-    const llmLabel = document.createElement("span");
-    llmLabel.className = "ex-label";
-    llmLabel.textContent = "Примеры:";
+    const llmLabel = document.createElement(SPAN);
+    llmLabel.className = EX_LABEL_CLASS;
+    llmLabel.textContent = EXAMPLES_LABEL;
     llmExamples.appendChild(llmLabel);
     llmExamples.appendChild(makeLlmButton("Маска как есть", "as-is"));
     llmExamples.appendChild(makeLlmButton("Ответ с падежами", "cases"));
     llmExamples.appendChild(makeLlmButton("Все падежи", "all-cases"));
     llmExamples.appendChild(makeLlmButton("Искажённые токены", "distorted"));
 
-    const pseudoLlmLabel = document.createElement("span");
-    pseudoLlmLabel.className = "ex-label";
-    pseudoLlmLabel.textContent = "Примеры:";
+    const pseudoLlmLabel = document.createElement(SPAN);
+    pseudoLlmLabel.className = EX_LABEL_CLASS;
+    pseudoLlmLabel.textContent = EXAMPLES_LABEL;
     pseudoLlmExamples.appendChild(pseudoLlmLabel);
     pseudoLlmExamples.appendChild(makePseudoLlmButton("Маска как есть"));
 
-    const reqLabel = document.createElement("span");
-    reqLabel.className = "ex-label";
-    reqLabel.textContent = "Примеры:";
+    const reqLabel = document.createElement(SPAN);
+    reqLabel.className = EX_LABEL_CLASS;
+    reqLabel.textContent = EXAMPLES_LABEL;
     llmReqExamples.appendChild(reqLabel);
     llmReqExamples.appendChild(addExample(llmReq, payloadHint, "Письмо с отказом", llmReq.value));
     llmReqExamples.appendChild(addExample(llmReq, payloadHint, "Иван Иванов",
@@ -414,9 +424,9 @@
   }
 
   function makeLlmButton(label, kind) {
-    const btn = document.createElement("button");
-    btn.className = "btn secondary";
-    btn.type = "button";
+    const btn = document.createElement(BUTTON);
+    btn.className = SECONDARY_BUTTON_CLASS;
+    btn.type = BUTTON;
     btn.textContent = label;
     btn.disabled = true;
     btn.addEventListener("click", function () {
@@ -427,9 +437,9 @@
   }
 
   function makePseudoLlmButton(label) {
-    const btn = document.createElement("button");
-    btn.className = "btn secondary";
-    btn.type = "button";
+    const btn = document.createElement(BUTTON);
+    btn.className = SECONDARY_BUTTON_CLASS;
+    btn.type = BUTTON;
     btn.textContent = label;
     btn.disabled = true;
     btn.addEventListener("click", function () {
@@ -475,14 +485,14 @@
   }
 
   function updateLlmExamples() {
-    const buttons = llmExamples.querySelectorAll("button");
+    const buttons = llmExamples.querySelectorAll(BUTTON);
     for (const b of buttons) {
       b.disabled = !currentMask;
     }
   }
 
   function updatePseudoLlmExamples() {
-    const buttons = pseudoLlmExamples.querySelectorAll("button");
+    const buttons = pseudoLlmExamples.querySelectorAll(BUTTON);
     for (const b of buttons) {
       b.disabled = !pseudoMaskText;
     }
@@ -508,7 +518,7 @@
       first = false;
     }
     if (status !== null) {
-      const st = document.createElement("span");
+      const st = document.createElement(SPAN);
       st.className = status >= 200 && status < 300 ? "status-ok" : "status-err";
       st.textContent = "HTTP " + status;
       sep();
@@ -520,7 +530,7 @@
     }
     if (errText) {
       sep();
-      const err = document.createElement("span");
+      const err = document.createElement(SPAN);
       err.className = "err-text";
       err.textContent = "ошибка: " + errText;
       el.appendChild(err);
@@ -551,7 +561,7 @@
 
   function errorMessage(res) {
     if (res.json && res.json.error) {
-      if (typeof res.json.error === "string") return res.json.error;
+      if (typeof res.json.error === STRING_TYPE) return res.json.error;
       if (res.json.error.message) return res.json.error.message;
     }
     if (res.json && res.json.message) return res.json.message;
@@ -567,7 +577,7 @@
     post("/process", { payload: payload, payload_id: currentPayloadId }, systemEl.value).then(function (res) {
       maskBtn.disabled = false;
       setMeta(maskMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
-      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === "string") {
+      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === STRING_TYPE) {
         setText(maskOut, res.json.result);
         llmEl.value = res.json.result;
         currentMask = res.json.result;
@@ -584,10 +594,10 @@
     pseudoMaskBtn.disabled = true;
     setText(pseudoMaskOut, "…");
     setMeta(pseudoMaskMeta, null, null, null);
-    post("/process", { payload: payload, payload_id: pseudoPayloadId }, "pseudo").then(function (res) {
+    post("/process", { payload: payload, payload_id: pseudoPayloadId }, PSEUDO).then(function (res) {
       pseudoMaskBtn.disabled = false;
       setMeta(pseudoMaskMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
-      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === "string") {
+      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === STRING_TYPE) {
         setText(pseudoMaskOut, res.json.result);
         pseudoLlmEl.value = res.json.result;
         pseudoMaskText = res.json.result;
@@ -631,7 +641,7 @@
       }
       const mark = document.createElement("mark");
       mark.appendChild(document.createTextNode(decoder.decode(bytes.subarray(start, end))));
-      const tag = document.createElement("span");
+      const tag = document.createElement(SPAN);
       tag.className = "tag";
       tag.textContent = e.type || "unknown";
       mark.appendChild(tag);
@@ -658,7 +668,7 @@
     post("/process", { payload: text, payload_id: currentPayloadId }, systemEl.value).then(function (res) {
       unmaskBtn.disabled = false;
       setMeta(unmaskMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
-      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === "string") {
+      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === STRING_TYPE) {
         setText(unmaskOut, res.json.result);
       } else {
         setText(unmaskOut, errorMessage(res));
@@ -676,10 +686,10 @@
     pseudoUnmaskBtn.disabled = true;
     setText(pseudoUnmaskOut, "…");
     setMeta(pseudoUnmaskMeta, null, null, null);
-    post("/process", { payload: text, payload_id: pseudoPayloadId }, "pseudo").then(function (res) {
+    post("/process", { payload: text, payload_id: pseudoPayloadId }, PSEUDO).then(function (res) {
       pseudoUnmaskBtn.disabled = false;
       setMeta(pseudoUnmaskMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
-      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === "string") {
+      if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === STRING_TYPE) {
         setText(pseudoUnmaskOut, res.json.result);
       } else {
         setText(pseudoUnmaskOut, errorMessage(res));
@@ -754,7 +764,7 @@
     const msgs = json.detox && json.detox.upstream_messages;
     if (Array.isArray(msgs)) {
       const sys = msgs.find(function (m) { return m && m.role === "system"; });
-      if (sys && typeof sys.content === "string") {
+      if (sys && typeof sys.content === STRING_TYPE) {
         setText(llmSys, sys.content);
         return;
       }
@@ -766,7 +776,7 @@
     const msgs = json.detox && json.detox.upstream_messages;
     if (Array.isArray(msgs)) {
       const user = msgs.find(function (m) { return m && m.role === "user"; });
-      if (user && typeof user.content === "string") {
+      if (user && typeof user.content === STRING_TYPE) {
         setText(llmSent, user.content);
         return;
       }
@@ -774,15 +784,15 @@
     if (json.detox && json.detox.masked_messages && json.detox.masked_messages.length > 0) {
       setText(llmSent, json.detox.masked_messages[0].content);
     } else {
-      setText(llmSent, "нет данных");
+      setText(llmSent, NO_DATA_TEXT);
     }
   }
 
   function renderModel(json) {
-    if (json.detox && typeof json.detox.model_output === "string") {
+    if (json.detox && typeof json.detox.model_output === STRING_TYPE) {
       setText(llmModel, json.detox.model_output);
     } else {
-      setText(llmModel, "нет данных");
+      setText(llmModel, NO_DATA_TEXT);
     }
   }
 
@@ -790,7 +800,7 @@
     if (json.choices && json.choices[0] && json.choices[0].message) {
       setText(llmUser, json.choices[0].message.content);
     } else {
-      setText(llmUser, "нет данных");
+      setText(llmUser, NO_DATA_TEXT);
     }
   }
 
@@ -809,13 +819,13 @@
       section.hidden = key !== name;
     }
     if (name === "tokens") location.hash = "#tokens";
-    else if (name === "pseudo") location.hash = "#pseudo";
+    else if (name === PSEUDO) location.hash = "#pseudo";
     else location.hash = "#llm";
   }
 
   function tabFromHash() {
     const h = location.hash;
-    if (h === "#pseudo") return "pseudo";
+    if (h === "#pseudo") return PSEUDO;
     if (h === "#llm") return "llm";
     return "tokens";
   }
