@@ -678,6 +678,7 @@ impl Detector {
         }
 
         self.apply_neighbor_boost(text, &mut candidates);
+        self.detect_card_context_cvv_pin(text, opts, &enabled, &mut candidates);
         self.drop_bare_public_persons(text, opts, &mut candidates);
         let all_fios: Vec<(usize, usize)> = candidates
             .iter()
@@ -832,6 +833,124 @@ impl Detector {
         }
     }
 
+    /// Detects CVV/PIN values that appear in the same sentence as a detected bank card
+    /// number (confidence >= 0.6, i.e. any card with a card marker or a valid Luhn), preceded
+    /// within 30 chars by a back-of-card word (оборот, обратн, сзади) or a code word (код,
+    /// цифры, число). Without a card, "код N" masks nothing. A 3-digit value is a CVV, a
+    /// 4-digit value is a PIN, except the back-of-card case (always a CVV). "код
+    /// подразделения" is not this case. Non-PII markers (домофон, подъезд, ...) suppress the
+    /// candidate.
+    fn detect_card_context_cvv_pin(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        enabled: &Option<HashSet<&str>>,
+        candidates: &mut Vec<Entity>,
+    ) {
+        let has_card = candidates
+            .iter()
+            .any(|e| e.type_id == "card_number" && e.confidence >= 0.6);
+        if !has_card {
+            return;
+        }
+        for m in SHORT_NUMBER_RE.find_iter(text) {
+            if let Some(entity) = self.card_context_cvv_pin_entity(text, opts, enabled, candidates, m.start(), m.end()) {
+                candidates.push(entity);
+            }
+        }
+    }
+
+    /// Builds a CVV/PIN candidate for a single 3-4 digit number in card context, or None when
+    /// it is not a CVV/PIN. The number must be in the same sentence as a detected card number
+    /// (confidence >= 0.6), not part of the card itself, not already covered by an existing
+    /// cvv/pin candidate, and not suppressed by non-PII markers / allow-list / threshold.
+    fn card_context_cvv_pin_entity(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        enabled: &Option<HashSet<&str>>,
+        candidates: &[Entity],
+        start: usize,
+        end: usize,
+    ) -> Option<Entity> {
+        let cards: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| e.type_id == "card_number" && e.confidence >= 0.6)
+            .map(|e| (e.start, e.end))
+            .collect();
+        // Skip a number that is part of the card number itself (e.g. a 4-digit group of a
+        // spaced card number).
+        if cards.iter().any(|(cs, ce)| start < *ce && *cs < end) {
+            return None;
+        }
+        // The number must be in the same sentence as a card number.
+        if !cards.iter().any(|(cs, _)| same_sentence(text, *cs, start)) {
+            return None;
+        }
+        // Skip a number already covered by an existing cvv/card_pin candidate.
+        if candidates
+            .iter()
+            .any(|c| (c.type_id == "cvv" || c.type_id == "card_pin") && c.start == start && c.end == end)
+        {
+            return None;
+        }
+        let type_id = self.card_context_cvv_pin_type(text, start, end)?;
+        let type_enabled = enabled
+            .as_ref()
+            .map(|s| s.contains(type_id))
+            .unwrap_or(true);
+        if !type_enabled {
+            return None;
+        }
+        let spec = self.registry.get(type_id)?;
+        if self.has_non_pii_context(text, None, start, end, spec) {
+            return None;
+        }
+        if self.is_allow_listed(&text[start..end], opts) {
+            return None;
+        }
+        let conf = 0.9f32;
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        Some(Entity {
+            type_id: type_id.to_string(),
+            start,
+            end,
+            confidence: conf,
+        })
+    }
+
+    /// Classifies a 3-4 digit number in card context as a CVV or PIN type id, or None when it
+    /// is not a CVV/PIN. A back-of-card word (оборот, обратн, сзади) within 30 chars before
+    /// the number makes it a CVV regardless of digit count; otherwise a code word (код,
+    /// цифры, число) makes a 3-digit value a CVV and a 4-digit value a PIN. "код
+    /// подразделения" is not this case.
+    fn card_context_cvv_pin_type(&self, text: &str, start: usize, end: usize) -> Option<&'static str> {
+        let digits = digit_count(&text[start..end]);
+        if !(3..=4).contains(&digits) {
+            return None;
+        }
+        let before = context_window_before(text, start, 30).to_lowercase();
+        // "код подразделения" is a subdivision code, not a CVV/PIN.
+        if before.contains("код подразделения") {
+            return None;
+        }
+        let back_of_card = BACK_OF_CARD_WORDS.iter().any(|w| before.contains(w));
+        let code_word = CODE_WORDS.iter().any(|w| before.contains(w));
+        if !back_of_card && !code_word {
+            return None;
+        }
+        let pin_near = PIN_WORDS.iter().any(|w| before.contains(w));
+        if back_of_card {
+            Some("cvv")
+        } else if pin_near || digits == 4 {
+            Some("card_pin")
+        } else {
+            Some("cvv")
+        }
+    }
+
     /// Generic regex-based detection used by all non-special types.
     fn detect_regex_type(
         &self,
@@ -878,6 +997,13 @@ impl Detector {
         // is a date, not a passport or part of one (e.g. "12.01.2006" must not be split into
         // "12.01" and "2006" passports).
         if spec.id == "passport" && is_part_of_date(text, start, end) {
+            return None;
+        }
+        // A passport is a series (4 digits) + number (6 digits) = at least 10 digits. A
+        // candidate with fewer digits (e.g. "4821", "12/27") is not a passport at any
+        // threshold unless it is anchored to a passport marker (a series/number split across
+        // a phrase, e.g. "серия 43 21, а номер паспорта 987654").
+        if spec.id == "passport" && digit_count(span) < 10 && !has_context {
             return None;
         }
         let (conf, skip_context_boost) =
@@ -2916,6 +3042,17 @@ const GREETING_WORDS: &[&str] = &[
 /// personal phone.
 const SERVICE_MARKERS: &[&str] = &["горячая линия", "служба поддержки", "колл-центр"];
 
+/// Back-of-card words: a 3-4 digit number preceded by one of these (within 30 chars) in the
+/// same sentence as a card number is a CVV, regardless of digit count.
+const BACK_OF_CARD_WORDS: &[&str] = &["оборот", "обратн", "сзади"];
+
+/// Code words: a 3-4 digit number preceded by one of these (within 30 chars) in the same
+/// sentence as a card number is a CVV (3 digits) or a PIN (4 digits).
+const CODE_WORDS: &[&str] = &["код", "цифры", "число"];
+
+/// PIN words: a number near one of these is a card PIN.
+const PIN_WORDS: &[&str] = &["пин", "pin"];
+
 /// True if the word is a passport series label ("серия" in any case).
 fn is_series_label(word: &str) -> bool {
     matches!(word, "серия" | "серии" | "серию" | "серий")
@@ -4209,3 +4346,7 @@ static PASSPORT_PAIR_PAIR_RE: Lazy<Regex> =
 static FIELD_LABEL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?iu)\b[а-яёa-z0-9\-]+\s*:").unwrap()
 });
+
+/// Matches a 3-4 digit number (a candidate CVV/PIN value).
+static SHORT_NUMBER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?-u:\b)\d{3,4}(?-u:\b)").unwrap());
