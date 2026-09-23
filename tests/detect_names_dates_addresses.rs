@@ -197,6 +197,30 @@ fn citizenship() {
 }
 
 #[test]
+fn citizenship_inflected_forms() {
+    assert_span("Клиент гражданин России", "citizenship", "России");
+    assert_span("Клиент, гражданин Российской Федерации", "citizenship", "Российской Федерации");
+    assert_span("гражданин Республики Беларусь", "citizenship", "Республики Беларусь");
+    assert_span("гражданство: Россия, гражданин РФ", "citizenship", "Россия");
+}
+
+#[test]
+fn citizenship_not_part_of_fio() {
+    let text = "гражданка России Иванова Мария";
+    let entities = detect(text);
+    let cit = entities
+        .iter()
+        .find(|e| e.type_id == "citizenship")
+        .unwrap_or_else(|| panic!("citizenship not found in {:?}", entities));
+    assert_eq!(&text[cit.start..cit.end], "России");
+    let fio = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio not found in {:?}", entities));
+    assert_eq!(&text[fio.start..fio.end], "Иванова Мария");
+}
+
+#[test]
 fn passport_issuer() {
     assert_span("выдан ОУФМС России по г. Москве 12.05.2010", "passport_issuer", "ОУФМС России по г. Москве");
     assert_span("выдано Отделом УФМС", "passport_issuer", "Отделом УФМС");

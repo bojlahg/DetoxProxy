@@ -367,6 +367,9 @@ pub struct Detector {
     /// УФМС, ОУФМС, ОВД, УМВД, ОМВД, ТП...) and address abbreviations. Built once from the
     /// registry's `issuer_prefixes` and `abbreviation_words`.
     issuer_abbrev_words: HashSet<String>,
+    /// All inflected case forms of every country in the `countries` dictionary (lowercased,
+    /// 'ё' -> 'е'). A word or phrase that is a country form is a citizenship value, not a FIO.
+    country_forms: HashSet<String>,
 }
 
 /// Marker types that use the nearest-left-marker rule to resolve context.
@@ -448,6 +451,24 @@ fn build_issuer_abbrev_words(registry: &Registry) -> HashSet<String> {
     for w in &registry.context().abbreviation_words {
         if w.chars().count() >= 2 {
             set.insert(w.to_lowercase());
+        }
+    }
+    set
+}
+
+/// Builds the set of all inflected case forms of every country in the `countries`
+/// dictionary. For each country (single- and multi-word) all six grammatical cases are
+/// inflected via `crate::morph::inflect`; forms are lowercased and 'ё' normalized to 'е'.
+/// A word or phrase that is a country form is a citizenship value and never part of a FIO.
+fn build_country_forms(dicts: &Dictionaries) -> HashSet<String> {
+    let mut set: HashSet<String> = HashSet::new();
+    if let Some(countries) = dicts.lists.get("countries") {
+        for country in countries {
+            for case in [Case::Nom, Case::Gen, Case::Dat, Case::Acc, Case::Ins, Case::Prep] {
+                if let Some(form) = crate::morph::inflect(country, Kind::Country, case) {
+                    set.insert(normalize_yo(&form.to_lowercase()));
+                }
+            }
         }
     }
     set
@@ -579,6 +600,7 @@ impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
         let caches = build_caches(&registry);
         let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
+        let country_forms = build_country_forms(&dicts);
         Self {
             registry,
             dicts,
@@ -592,6 +614,7 @@ impl Detector {
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
             issuer_abbrev_words,
+            country_forms,
         }
     }
 
@@ -603,6 +626,7 @@ impl Detector {
     ) -> Self {
         let caches = build_caches(&registry);
         let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
+        let country_forms = build_country_forms(&dicts);
         Self {
             registry,
             dicts,
@@ -616,6 +640,7 @@ impl Detector {
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
             issuer_abbrev_words,
+            country_forms,
         }
     }
 
@@ -1424,6 +1449,11 @@ impl Detector {
                 // An issuer abbreviation (ГУ, МВД, УФМС, ОУФМС, ОВД...) or an address
                 // abbreviation never belongs to a FIO span (e.g. "ГУ МВД России" is an organ).
                 if self.issuer_abbrev_words.contains(&t.lower) {
+                    return false;
+                }
+                // A country form (e.g. "России", "Российской Федерации") is a citizenship
+                // value, never part of a FIO (e.g. "гражданка России Иванова Мария").
+                if self.country_forms.contains(&t.lower) {
                     return false;
                 }
                 // A greeting word (e.g. "Уважаемая", "Дорогой") never belongs to a FIO span.
@@ -2246,7 +2276,7 @@ impl Detector {
             let mut search_from = 0;
             while let Some(pos) = lower[search_from..].find(marker) {
                 let marker_end = search_from + pos + marker.len();
-                if let Some((start, end)) = find_country_after(text, marker_end, &self.dicts, &self.registry.context().country_suffixes) {
+                if let Some((start, end)) = find_country_after(text, marker_end, &self.dicts, &self.registry.context().country_suffixes, &self.country_forms) {
                     let conf = 0.7f32;
                     if conf >= opts.min_confidence {
                         candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
@@ -3588,7 +3618,13 @@ fn is_abbreviation_period(rest: &str, period_idx: usize, abbrev: &[String]) -> b
 }
 
 /// Finds a country word or multi-word country phrase after a marker (longest match wins).
-fn find_country_after(text: &str, from: usize, dicts: &Dictionaries, suffixes: &[String]) -> Option<(usize, usize)> {
+fn find_country_after(
+    text: &str,
+    from: usize,
+    dicts: &Dictionaries,
+    suffixes: &[String],
+    country_forms: &HashSet<String>,
+) -> Option<(usize, usize)> {
     let rest = &text[from..];
     let end_rel = rest.find([',', '.', ';', '\n']).unwrap_or(rest.len());
     let sentence = &rest[..end_rel];
@@ -3601,7 +3637,7 @@ fn find_country_after(text: &str, from: usize, dicts: &Dictionaries, suffixes: &
                 phrase.push(' ');
             }
             phrase.push_str(&words[j].2);
-            if is_country(&phrase, dicts, suffixes) {
+            if is_country(&normalize_yo(&phrase), dicts, suffixes, country_forms) {
                 let start = words[i].0;
                 let end = words[j].1;
                 let len = end - start;
@@ -3614,7 +3650,10 @@ fn find_country_after(text: &str, from: usize, dicts: &Dictionaries, suffixes: &
     best.map(|(s, e, _)| (from + s, from + e))
 }
 
-fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
+fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String], country_forms: &HashSet<String>) -> bool {
+    if country_forms.contains(lower) {
+        return true;
+    }
     if dicts.contains("countries", lower) {
         return true;
     }
