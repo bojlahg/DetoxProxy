@@ -265,31 +265,42 @@ fn numbering(sys: &SystemConfig) -> Numbering {
 }
 
 /// Per-stage timings for a request, logged in microseconds. `mask_us` is set for masking
-/// requests, `unmask_us` for restore requests; the other is zero.
+/// requests, `unmask_us` for restore requests, `llm_us` for the upstream LLM call; the others
+/// are zero.
 #[derive(Debug, Default, Clone, Copy)]
 struct RequestTiming {
     detect_us: u64,
     mask_us: u64,
     unmask_us: u64,
     store_us: u64,
+    llm_us: u64,
     total_us: u64,
 }
 
 /// Builds a `RequestTiming` from the request start instant and the measured stage durations.
-fn timing(started: Instant, detect_us: u64, mask_us: u64, unmask_us: u64, store_us: u64) -> RequestTiming {
+fn timing(
+    started: Instant,
+    detect_us: u64,
+    mask_us: u64,
+    unmask_us: u64,
+    store_us: u64,
+    llm_us: u64,
+) -> RequestTiming {
     RequestTiming {
         detect_us,
         mask_us,
         unmask_us,
         store_us,
+        llm_us,
         total_us: started.elapsed().as_micros() as u64,
     }
 }
 
-/// Bundles the latency and per-stage timings logged for a request.
+/// Bundles the latency, per-stage timings and input-token estimate logged for a request.
 struct RequestLog {
     latency_ms: u64,
     timing: RequestTiming,
+    tokens: u64,
 }
 
 fn log_request(
@@ -317,10 +328,22 @@ fn log_request(
         mask_us = log.timing.mask_us,
         unmask_us = log.timing.unmask_us,
         store_us = log.timing.store_us,
+        llm_us = log.timing.llm_us,
         total_us = log.timing.total_us,
+        tokens = log.tokens,
         status = status,
         "request"
     );
+}
+
+/// Records the input-token estimate for a request. Only numeric values are emitted — never PII.
+fn record_tokens(system: &str, direction: Direction, tokens: u64) {
+    metrics::counter!(
+        "pii_tokens_total",
+        "system" => system.to_string(),
+        "direction" => format!("{:?}", direction).to_lowercase(),
+    )
+    .increment(tokens);
 }
 
 fn record_metrics(system: &str, direction: Direction, status: u16, latency_ms: u64, entity_types: &HashMap<String, usize>) {
@@ -400,6 +423,7 @@ struct ProcessOutcome {
     is_retry: bool,
     unresolved_tokens: usize,
     payload_bytes: usize,
+    tokens: u64,
     direction: Direction,
     payload_id: String,
     detect_us: u64,
@@ -442,6 +466,7 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
     }
     if outcome.direction == Direction::Mask {
         if outcome.is_fresh_mask {
+            record_tokens(&sys.id, Direction::Mask, outcome.tokens);
             record_entities_per_request(outcome.entity_count);
             if outcome.entity_count == 0 {
                 metrics::counter!("pii_requests_without_entities_total", "system" => sys.id.clone())
@@ -452,10 +477,11 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
             metrics::counter!("pii_process_retry_total", "system" => sys.id.clone()).increment(1);
         }
     } else {
+        record_tokens(&sys.id, Direction::Unmask, outcome.tokens);
         record_unresolved(&sys.id, outcome.unresolved_tokens);
     }
-    let t = timing(started, outcome.detect_us, outcome.mask_us, outcome.unmask_us, outcome.store_us);
-    let log = RequestLog { latency_ms: latency, timing: t };
+    let t = timing(started, outcome.detect_us, outcome.mask_us, outcome.unmask_us, outcome.store_us, 0);
+    let log = RequestLog { latency_ms: latency, timing: t, tokens: outcome.tokens };
     log_request(rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, &log, 200);
     finish_response(
         rid,
@@ -471,8 +497,8 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
 /// Emits the error response for a /process failure.
 fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response, started: Instant) -> Response {
     let status = resp.status();
-    let t = timing(started, 0, 0, 0, 0);
-    let log = RequestLog { latency_ms: latency, timing: t };
+    let t = timing(started, 0, 0, 0, 0, 0);
+    let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
     log_request(rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
     finish_response(rid, sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), resp)
 }
@@ -512,6 +538,7 @@ async fn process_inner(
                 is_retry: false,
                 unresolved_tokens: 0,
                 payload_bytes: payload.len(),
+                tokens: crate::obs::estimate_tokens(&payload),
                 direction: Direction::Mask,
                 payload_id: payload_id.clone(),
                 detect_us: 0,
@@ -532,6 +559,7 @@ async fn process_inner(
             is_retry: true,
             unresolved_tokens: 0,
             payload_bytes: payload.len(),
+            tokens: crate::obs::estimate_tokens(&payload),
             direction: Direction::Mask,
             payload_id: payload_id.clone(),
             detect_us: 0,
@@ -554,6 +582,7 @@ fn empty_outcome(payload_id: &str) -> ProcessOutcome {
         is_retry: false,
         unresolved_tokens: 0,
         payload_bytes: 0,
+        tokens: 0,
         direction: Direction::Mask,
         payload_id: payload_id.to_string(),
         detect_us: 0,
@@ -577,6 +606,7 @@ fn unmask_outcome(payload_id: &str, payload: &str, entry: &crate::store::StoredE
         is_retry: false,
         unresolved_tokens: unresolved,
         payload_bytes: payload.len(),
+        tokens: crate::obs::estimate_tokens(payload),
         direction,
         payload_id: payload_id.to_string(),
         detect_us: 0,
@@ -630,6 +660,7 @@ async fn process_fresh_mask(
         is_retry: false,
         unresolved_tokens: 0,
         payload_bytes: payload.len(),
+        tokens: crate::obs::estimate_tokens(payload),
         direction: Direction::Mask,
         payload_id: payload_id.to_string(),
         detect_us,
@@ -657,16 +688,17 @@ async fn mask_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok((resp, detect_us, mask_us, store_us)) => {
-            let t = timing(started, detect_us, mask_us, 0, store_us);
-            let log = RequestLog { latency_ms: latency, timing: t };
+        Ok((resp, detect_us, mask_us, store_us, tokens)) => {
+            record_tokens(&sys.id, Direction::Mask, tokens);
+            let t = timing(started, detect_us, mask_us, 0, store_us, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens };
             log_request(&rid, &sys.id, Direction::Mask, &resp.session_id, &HashMap::new(), &log, 200);
             finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response())
         }
         Err(resp) => {
             let status = resp.status();
-            let t = timing(started, 0, 0, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, 0, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
             finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
@@ -674,14 +706,14 @@ async fn mask_handler(
 }
 
 /// Parses the /v1/mask body, runs detection+masking (stateful or stateless) and persists mappings.
-/// Returns the response plus detect/mask/store timings in microseconds.
+/// Returns the response plus detect/mask/store timings and the input-token estimate.
 async fn mask_inner(
     state: &Arc<AppState>,
     sys: &SystemConfig,
     body: &axum::body::Bytes,
     deadline: Duration,
     inline_max: usize,
-) -> Result<(MaskResponse, u64, u64, u64), Box<Response>> {
+) -> Result<(MaskResponse, u64, u64, u64, u64), Box<Response>> {
     let req: MaskRequest = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
@@ -734,8 +766,24 @@ async fn mask_inner(
     let t2 = Instant::now();
     state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
     let store_us = t2.elapsed().as_micros() as u64;
-    let out_entities = res
-        .entities
+    let out_entities = mask_entities(&res);
+    Ok((
+        MaskResponse {
+            text: res.text,
+            session_id,
+            entities: out_entities,
+            mappings: res.mappings,
+        },
+        detect_us,
+        mask_us,
+        store_us,
+        crate::obs::estimate_tokens(&req.text),
+    ))
+}
+
+/// Maps detected entities to the response shape, attaching the token of the first matching mapping.
+fn mask_entities(res: &crate::types::MaskResult) -> Vec<MaskEntity> {
+    res.entities
         .iter()
         .map(|e| MaskEntity {
             type_id: e.type_id.clone(),
@@ -748,18 +796,7 @@ async fn mask_inner(
                 .map(|m| m.masked.clone())
                 .unwrap_or_default(),
         })
-        .collect();
-    Ok((
-        MaskResponse {
-            text: res.text,
-            session_id,
-            entities: out_entities,
-            mappings: res.mappings,
-        },
-        detect_us,
-        mask_us,
-        store_us,
-    ))
+        .collect()
 }
 
 async fn unmask_handler(
@@ -781,25 +818,27 @@ async fn unmask_handler(
             Err(_) => return Err((StatusCode::BAD_REQUEST, "invalid json".to_string())),
         };
         let text_len = req.text.len();
+        let tokens = crate::obs::estimate_tokens(&req.text);
         match state.store.get(&store_key(&sys.id, &req.session_id)) {
             Some(entry) => {
                 let t0 = Instant::now();
                 let restored = unmask(&req.text, &entry.mappings);
                 let unmask_us = t0.elapsed().as_micros() as u64;
                 let unresolved = count_unresolved_tokens(&req.text, &entry.mappings);
-                Ok((false, unresolved, text_len, req.session_id, unmask_us, UnmaskResponse { text: restored }))
+                Ok((false, unresolved, text_len, req.session_id, unmask_us, tokens, UnmaskResponse { text: restored }))
             }
-            None => Ok((true, 0, text_len, req.session_id, 0, UnmaskResponse { text: req.text })),
+            None => Ok((true, 0, text_len, req.session_id, 0, tokens, UnmaskResponse { text: req.text })),
         }
     })
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((not_found, unresolved, text_len, session_id, unmask_us, resp))) => {
+        Ok(Ok((not_found, unresolved, text_len, session_id, unmask_us, tokens, resp))) => {
             record_metrics(&sys.id, Direction::Unmask, 200, latency, &HashMap::new());
-            let t = timing(started, 0, 0, unmask_us, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            record_tokens(&sys.id, Direction::Unmask, tokens);
+            let t = timing(started, 0, 0, unmask_us, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens };
             log_request(&rid, &sys.id, Direction::Unmask, &session_id, &HashMap::new(), &log, 200);
             record_payload_bytes(&sys.id, Direction::Unmask, text_len);
             record_unresolved(&sys.id, unresolved);
@@ -812,8 +851,8 @@ async fn unmask_handler(
         }
         Ok(Err((status, msg))) => {
             record_metrics(&sys.id, Direction::Unmask, status.as_u16(), latency, &HashMap::new());
-            let t = timing(started, 0, 0, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, 0, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
             log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = error_response(status, &msg, "bad_request");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -821,8 +860,8 @@ async fn unmask_handler(
         }
         Err(_) => {
             record_metrics(&sys.id, Direction::Unmask, 503, latency, &HashMap::new());
-            let t = timing(started, 0, 0, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, 0, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
             log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, 503);
             let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -871,16 +910,16 @@ async fn detect_handler(
                 confidence: e.confidence,
             })
             .collect();
-        Ok((DetectResponse { entities: out }, detect_us))
+        Ok((DetectResponse { entities: out }, detect_us, crate::obs::estimate_tokens(&req.text)))
     }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok((resp, detect_us)) => {
+        Ok((resp, detect_us, tokens)) => {
             record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
-            let t = timing(started, detect_us, 0, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, detect_us, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens };
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, 200);
             let mut resp = Json(resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -889,8 +928,8 @@ async fn detect_handler(
         Err(resp) => {
             let status = resp.status();
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
-            let t = timing(started, 0, 0, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, 0, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
             log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -940,6 +979,7 @@ async fn chat_completions_handler(
         .unwrap_or(false);
 
     let (masked, mask_us) = mask_chat_request(&state, &sys, &req, &rid);
+    let prompt_tokens = masked.texts.iter().map(|t| crate::obs::estimate_tokens(t)).sum::<u64>();
     let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
 
     let api_key = llm_cfg
@@ -948,25 +988,15 @@ async fn chat_completions_handler(
         .and_then(|env| std::env::var(env).ok())
         .filter(|k| !k.is_empty());
 
-    let upstream_result = match &llm_cfg.upstream_url {
-        Some(url) => {
-            crate::llm::call_upstream(
-                url,
-                api_key.as_deref(),
-                upstream_body,
-                Duration::from_millis(llm_cfg.timeout_ms),
-            )
-            .await
-        }
-        None => Ok(crate::llm::demo_response(&masked.mappings)),
-    };
+    let (upstream_result, llm_us) = call_llm(&llm_cfg, api_key.as_deref(), upstream_body, &masked).await;
+    metrics::histogram!("pii_llm_seconds", "system" => sys.id.clone()).record(llm_us as f64 / 1_000_000.0);
 
     let (status, model_text) = match upstream_result {
         Ok(text) => (200, text),
         Err(_) => {
             let latency = started.elapsed().as_millis() as u64;
-            let t = timing(started, 0, mask_us, 0, 0);
-            let log = RequestLog { latency_ms: latency, timing: t };
+            let t = timing(started, 0, mask_us, 0, 0, llm_us);
+            let log = RequestLog { latency_ms: latency, timing: t, tokens: prompt_tokens };
             log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, 502);
             let mut resp = error_response(StatusCode::BAD_GATEWAY, "upstream error", "upstream");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -985,6 +1015,10 @@ async fn chat_completions_handler(
     let unmask_us = t0.elapsed().as_micros() as u64;
     let model = req.model.clone().unwrap_or_default();
 
+    let completion_tokens = crate::obs::estimate_tokens(&model_text);
+    let restored_tokens = crate::obs::estimate_tokens(&restored);
+    record_llm_metrics(&sys.id, prompt_tokens, completion_tokens, restored_tokens, llm_us);
+
     let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text);
 
     let mut resp = build_chat_response(want_stream, &rid, model, restored, detox);
@@ -993,10 +1027,45 @@ async fn chat_completions_handler(
         .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
 
     let latency = started.elapsed().as_millis() as u64;
-    let t = timing(started, 0, mask_us, unmask_us, 0);
-    let log = RequestLog { latency_ms: latency, timing: t };
+    let t = timing(started, 0, mask_us, unmask_us, 0, llm_us);
+    let log = RequestLog { latency_ms: latency, timing: t, tokens: prompt_tokens };
     log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, status);
     resp
+}
+
+/// Calls the upstream LLM (or builds the demo response) and returns the result plus the call
+/// duration in microseconds.
+async fn call_llm(
+    llm_cfg: &crate::config::LlmConfig,
+    api_key: Option<&str>,
+    upstream_body: Value,
+    masked: &crate::llm::MaskedMessages,
+) -> (Result<String, crate::llm::UpstreamError>, u64) {
+    let started = Instant::now();
+    let result = match &llm_cfg.upstream_url {
+        Some(url) => {
+            crate::llm::call_upstream(url, api_key, upstream_body, Duration::from_millis(llm_cfg.timeout_ms))
+                .await
+        }
+        None => Ok(crate::llm::demo_response(&masked.mappings)),
+    };
+    let llm_us = started.elapsed().as_micros() as u64;
+    (result, llm_us)
+}
+
+/// Records the LLM token and throughput metrics for a chat-completions request. Only numeric
+/// values are emitted — never PII.
+fn record_llm_metrics(system: &str, prompt_tokens: u64, completion_tokens: u64, restored_tokens: u64, llm_us: u64) {
+    record_tokens(system, Direction::Mask, prompt_tokens);
+    record_tokens(system, Direction::Unmask, restored_tokens);
+    metrics::counter!("pii_llm_tokens_total", "system" => system.to_string(), "kind" => "prompt")
+        .increment(prompt_tokens);
+    metrics::counter!("pii_llm_tokens_total", "system" => system.to_string(), "kind" => "completion")
+        .increment(completion_tokens);
+    if llm_us > 0 {
+        let tps = completion_tokens as f64 / (llm_us as f64 / 1_000_000.0);
+        metrics::histogram!("pii_llm_tokens_per_second", "system" => system.to_string()).record(tps);
+    }
 }
 
 /// Builds the `detox` debug view when the client requested it for a non-streaming response.

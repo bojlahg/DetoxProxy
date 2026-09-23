@@ -488,6 +488,84 @@ async fn metrics_and_health() {
 }
 
 #[tokio::test]
+async fn metrics_tokens_after_process_mask_unmask() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let payload = "ИНН 7707083893, тел. +7 912 345-67-89 xy";
+    assert_eq!(payload.chars().count(), 40, "payload must be 40 chars");
+    let id = "tokens-check";
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": payload, "payload_id": id}),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": masked, "payload_id": id}),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), payload);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+    assert!(
+        body.contains("pii_tokens_total{system=\"autotest\",direction=\"mask\"}"),
+        "metrics missing mask tokens: {body}"
+    );
+    assert!(
+        body.contains("pii_tokens_total{system=\"autotest\",direction=\"unmask\"}"),
+        "metrics missing unmask tokens: {body}"
+    );
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
+async fn metrics_llm_demo_chat_completions() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, _json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &serde_json::json!({
+            "model": "demo",
+            "messages": [{"role": "user", "content": "ИНН 7707083893"}],
+            "stream": false
+        }),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+    assert!(
+        body.contains("pii_llm_tokens_total{system=\"autotest\",kind=\"prompt\"}"),
+        "metrics missing prompt tokens: {body}"
+    );
+    assert!(
+        body.contains("pii_llm_tokens_total{system=\"autotest\",kind=\"completion\"}"),
+        "metrics missing completion tokens: {body}"
+    );
+    assert!(body.contains("pii_llm_seconds_count"), "metrics missing llm_seconds: {body}");
+    assert!(
+        body.contains("pii_llm_tokens_per_second_count"),
+        "metrics missing llm_tokens_per_second: {body}"
+    );
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
 async fn logs_do_not_contain_pii() {
     let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
     let writer = buf.clone();
