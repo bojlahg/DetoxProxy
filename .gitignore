@@ -80,3 +80,4 @@ logs/
 docs/loadtest/
 check-process-config.yaml
 compare-*.yaml
+big-text-config.yaml
