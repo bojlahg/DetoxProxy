@@ -41,6 +41,17 @@ fn assert_not_found(text: &str, type_id: &str) {
     );
 }
 
+/// Detects with the strict threshold (0.3) and PreferSkip trap policy.
+fn detect_strict(text: &str) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.3,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferSkip,
+    };
+    detector().detect(text, &opts)
+}
+
 #[test]
 fn card_number_variants() {
     assert_span("карта 4111 1111 1111 1111", "card_number", "4111 1111 1111 1111");
@@ -125,6 +136,57 @@ fn cvv_and_pin_require_context() {
     assert_span("пин-код 1234", "card_pin", "1234");
     assert_not_found("123", "cvv");
     assert_not_found("1234", "card_pin");
+}
+
+#[test]
+fn cvv_pin_in_card_context() {
+    assert_span("Карта 4276 5500 1122 3347, код 4821.", "card_pin", "4821");
+    assert_span("Карта 4276 5500 1122 3347, код 482.", "cvv", "482");
+    assert_span(
+        "Карта 4276 5500 1122 3347, срок 12/27, код с обратной стороны 482.",
+        "cvv",
+        "482",
+    );
+    assert_span("Карта 4276 5500 1122 3347, секретный код 4821", "card_pin", "4821");
+    assert_span("Карта 4276 5500 1122 3347, цифры на обороте 4821.", "cvv", "4821");
+    assert_span("Карта 4276 5500 1122 3349, число на обороте 4823.", "cvv", "4823");
+    assert_span("Карта 4276 5500 1122 3347, три цифры сзади 482", "cvv", "482");
+}
+
+#[test]
+fn cvv_pin_not_in_card_context() {
+    assert_not_found("Пин 4821 от домофона.", "card_pin");
+    assert_not_found("Код от домофона 4821, подъезд 3.", "card_pin");
+    assert_not_found("Код от домофона 4821, подъезд 3.", "cvv");
+    assert_not_found("код 4821", "card_pin");
+    assert_not_found("код 4821", "cvv");
+}
+
+#[test]
+fn subdivision_code_unchanged() {
+    assert_span("код подразделения 770-001", "subdivision_code", "770-001");
+}
+
+#[test]
+fn short_numbers_never_passport_in_strict() {
+    let entities = detect_strict("Карта 4276 5500 1122 3347, код 4821.");
+    assert!(
+        !entities.iter().any(|e| e.type_id == "passport"),
+        "passport leaked in strict: {:?}",
+        entities
+    );
+    let entities = detect_strict("срок 12/27");
+    assert!(
+        !entities.iter().any(|e| e.type_id == "passport"),
+        "passport leaked in strict: {:?}",
+        entities
+    );
+    let entities = detect_strict("Код от домофона 4821");
+    assert!(
+        !entities.iter().any(|e| e.type_id == "passport"),
+        "passport leaked in strict: {:?}",
+        entities
+    );
 }
 
 #[test]

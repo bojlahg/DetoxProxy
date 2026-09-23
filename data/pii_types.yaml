@@ -347,6 +347,7 @@ types:
     context_required: true
     requires_companion: true
     context_words: [cvv, cvc, cvv2, cvc2, цвв, цвс, свв, свс, код безопасности, защитный код, код на обороте, на обороте карты, с обратной стороны карты]
+    non_pii_markers: [домофон, домофона, подъезд, калитк, сейф, сигнализац, wi-fi, вай-фай, wifi, роутер, замок, замка, двер]
     patterns:
       - '\d{3}\b'
 
@@ -356,6 +357,7 @@ types:
     context_required: true
     requires_companion: true
     context_words: [пин, pin, пин-код, pin-код]
+    non_pii_markers: [домофон, домофона, подъезд, калитк, сейф, сигнализац, wi-fi, вай-фай, wifi, роутер, замок, замка, двер]
     patterns:
       - '\d{4}\b'
 
