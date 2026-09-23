@@ -90,6 +90,15 @@ fn email_variants() {
 }
 
 #[test]
+fn email_spaces_around_dots_in_name() {
+    assert_span("email petr . sidorov @ mail . ru", "email", "petr . sidorov @ mail . ru");
+    assert_span("email petr.sidorov @ mail.ru", "email", "petr.sidorov @ mail.ru");
+    assert_span("email petr . sidorov@mail.ru", "email", "petr . sidorov@mail.ru");
+    assert_span("email ivan.petrov@mail.ru", "email", "ivan.petrov@mail.ru");
+    assert_not_found("Раздел 3 . 1 . 2 утверждён", "email");
+}
+
+#[test]
 fn passport_variants() {
     assert_span("паспорт 4509 123456", "passport", "4509 123456");
     assert_span("серия 4509 номер 123456", "passport", "4509 номер 123456");
