@@ -45,6 +45,8 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `POST /v1/chat/completions` | OpenAI-совместимый прокси к LLM: маскирует `messages`, отправляет в upstream, восстанавливает ответ (обычный и `stream: true`); без upstream — демо-режим |
 | `POST /admin/reload` | перечитать конфиг, типы ПД, allowlist и словари без рестарта (заголовок `X-Admin-Token` = переменная `DETOX_ADMIN_TOKEN`; без переменной эндпоинт выключен). То же по `SIGHUP` |
 | `GET /metrics` | Prometheus |
+| `GET /stats` | JSON за последнюю минуту: RPS, TPS, p50/p95/p99, ошибки |
+| `GET /demo` | страница демо: маскирование, восстановление, путь через LLM, живые метрики |
 
 Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная или выключенная система → 403, неверный ключ системы → 401, битый JSON или нет `payload_id` → 400, слишком большое тело → 413, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms` → 503 с `Retry-After`, LLM недоступна → 502. Значения в хранилище соответствий зашифрованы ключом процесса (`server.encrypt_mappings`, по умолчанию включено).
 
@@ -109,7 +111,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `unmask_enabled` | bool | разрешено ли восстановление |
 | `min_confidence` | 0…1 | порог уверенности |
 | `trap_policy` | `prefer_mask` / `prefer_skip` | что делать в спорных случаях |
-| `combination_rule` | bool | PIN/CVV маскировать только рядом с картой |
+| `combination_rule` | bool | PIN/CVV маскировать только при номере карты в том же предложении (какие типы разрешают — поле `companions` типа в `data/pii_types.yaml`, по умолчанию `card_number`) |
 | `allow_substrings` | список строк | никогда не маскировать |
 | `token_numbering` | `sequential` / `hash` | `<<INN_1>>` или `<<INN_f5c0b7>>` (стабильно между запросами — не ломает кеш промптов LLM) |
 | `hash_salt` | строка | соль для `hash` |
