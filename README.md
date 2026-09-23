@@ -120,7 +120,9 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 
 Сервер: `mapping_ttl_sec` (TTL соответствий, по умолчанию 900 с), `mapping_max_entries`, `max_inflight` (дальше — 429), `max_body_bytes`, `request_deadline_ms`, `historical_date_years` (старше — «историческая» дата).
 
-В поставке три системы: `autotest` (по умолчанию), `chatbot` (хеш-токены, без восстановления), `strict` (правило комбинаций, `prefer_skip`).
+В поставке четыре системы: `autotest` (по умолчанию), `chatbot` (хеш-токены, без восстановления), `strict` (правило комбинаций, `prefer_skip`), `pseudo` (правдоподобные подстановки вместо меток).
+
+Необязательные типы выключены по умолчанию (`enabled_by_default: false` в `data/pii_types.yaml`) и включаются явным упоминанием в `types` системы: `secret` — пароли и токены («Пароль: asdf1254sdf»).
 
 ### Прокси к LLM
 
