@@ -2864,18 +2864,35 @@ impl Detector {
         let span = &text[start..end];
         let lower = span.to_lowercase();
         let ctx = self.registry.context();
-        if lower.starts_with("г.") || lower.starts_with("город") {
+        if lower.starts_with("г.") || lower.starts_with("г ") || lower.starts_with("город") {
             return AddrKind::City;
         }
-        if lower.starts_with("кв.") || lower.starts_with("квартира")
+        let kv_dot_digit = lower
+            .strip_prefix("кв.")
+            .map(|s| s.trim_start())
+            .and_then(|s| s.chars().next())
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false);
+        if lower.starts_with("кв ") || lower.starts_with("квартира")
             || lower.starts_with("оф.") || lower.starts_with("пом.")
+            || kv_dot_digit
         {
             return AddrKind::Apartment;
         }
-        if lower.starts_with("д.") || lower.starts_with("дом")
+        let d_dot_digit = lower
+            .strip_prefix("д.")
+            .map(|s| s.trim_start())
+            .and_then(|s| s.chars().next())
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false);
+        if lower.starts_with("д ") || lower.starts_with("дом")
             || lower.starts_with("к.") || lower.starts_with("корп.") || lower.starts_with("стр.")
+            || d_dot_digit
         {
             return AddrKind::House;
+        }
+        if lower.starts_with("ул ") {
+            return AddrKind::Street;
         }
         if let Some(kind) = self.classify_street_component(text, start, end) {
             return kind;
@@ -4820,11 +4837,11 @@ static CARD_HOLDER_NAME_RE: Lazy<Regex> = Lazy::new(|| {
 static ADDRESS_COMPONENT_RES: Lazy<Vec<Regex>> = Lazy::new(|| {
     vec![
         Regex::new(r"\b[1-6]\d{5}\b").unwrap(),
-        Regex::new(r"(?:г\.|город)\s+[А-ЯЁ][а-яё]+").unwrap(),
-        Regex::new(r"(?:ул\.|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|наб\.|набережн[а-яё]*|ш\.|ш\b|шоссе|б-р|бульвар[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+[А-ЯЁ][а-яё]+").unwrap(),
-        Regex::new(r"[А-ЯЁ][а-яё]+\s+(?:пр-т|проспект[а-яё]*|ул\.|улиц[а-яё]*|пер\.|переул[а-яё]*|наб\.|набережн[а-яё]*|ш\.|ш\b|шоссе|б-р|бульвар[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)").unwrap(),
-        Regex::new(r"(?:д\.|дом|к\.|корп\.|стр\.)\s+\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?").unwrap(),
-        Regex::new(r"(?:кв\.|квартира|оф\.|пом\.)\s+\d+").unwrap(),
+        Regex::new(r"(?:г\.\s*|\bг\s+|город\s+)[А-ЯЁ][а-яё]+").unwrap(),
+        Regex::new(r"(?:ул\.|ул\b|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|наб\.|набережн[а-яё]*|ш\.|ш\b|шоссе|б-р|бульвар[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+[А-ЯЁ][а-яё]+").unwrap(),
+        Regex::new(r"[А-ЯЁ][а-яё]+\s+(?:пр-т|проспект[а-яё]*|ул\.|ул\b|улиц[а-яё]*|пер\.|переул[а-яё]*|наб\.|набережн[а-яё]*|ш\.|ш\b|шоссе|б-р|бульвар[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)").unwrap(),
+        Regex::new(r"(?:(?:д\.|к\.|корп\.|стр\.)\s*|(?:\bдом|\bд)\s+)\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?(?:-\d+)?").unwrap(),
+        Regex::new(r"(?:(?:кв\.|оф\.|пом\.)\s*|(?:квартира|\bкв)\s+)\d+").unwrap(),
         Regex::new(r"(?:обл\.|область|край|респ\.)\s+[А-ЯЁ][а-яё]+").unwrap(),
     ]
 });
@@ -4833,7 +4850,7 @@ static ADDRESS_COMPONENT_RES: Lazy<Vec<Regex>> = Lazy::new(|| {
 /// city or street marker in the same group.
 static WORD_NUMBER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[А-ЯЁ][а-яё]+\s+\d+").unwrap());
 static BARE_NUMBER_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b\d+(?:[кКсС]\d+|[А-ЯЁа-яё])?(?:[сС]\d+)?(?:/\d+)?(?:\s*к\.?\s*\d+)?\b").unwrap()
+    Regex::new(r"\b\d+(?:[кКсС]\d+|[А-ЯЁа-яё])?(?:[сС]\d+)?(?:/\d+)?(?:-\d+)?(?:\s*к\.?\s*\d+)?\b").unwrap()
 });
 static HYPHENATED_WORD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[А-ЯЁ][а-яё]+-[А-ЯЁ][а-яё]+").unwrap());
@@ -4845,10 +4862,10 @@ static HYPHENATED_WORD_RE: Lazy<Regex> =
 /// (e.g. "улица Пушкина, 23, корпус 1", "проспект Маркса, 78, кв 91").
 static STREET_ADDR_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
-        r"(?iu)\b(?:ул\.|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|ш\.|ш|шоссе|б-р|бульвар[а-яё]*|наб\.|набережн[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+",
+        r"(?iu)\b(?:ул\.|ул\b|улиц[а-яё]*|пр\.|пр-т|проспект[а-яё]*|пер\.|переул[а-яё]*|ш\.|ш|шоссе|б-р|бульвар[а-яё]*|наб\.|набережн[а-яё]*|пл\.|площад[а-яё]*|мкр\.|микрорайон[а-яё]*)\s+",
         r"(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)",
         r"(?:\s+(?:[А-ЯЁа-яё]+|\d+[а-яё-]*[А-ЯЁа-яё]*)){0,2}?",
-        r"\s*,?\s*\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?",
+        r"\s*,?\s*\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?(?:-\d+)?",
         r"(?:\s*,?\s*(?:корпус|корп\.|к\.|стр\.|кв\.|квартира|подъезд|кв)\s*\d+)?",
     ))
     .unwrap()
@@ -4857,7 +4874,7 @@ static STREET_ADDR_RE: Lazy<Regex> = Lazy::new(|| {
 /// Anchored house number: matches only at the start of the slice, so the whole remainder is
 /// not scanned when only a leading number is wanted.
 static HOUSE_NUMBER_ANCHORED_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?").unwrap());
+    Lazy::new(|| Regex::new(r"^\d+(?:[кКсС]\d+|[а-яА-ЯёЁ])?(?:[сС]\d+)?(?:/\d+)?(?:-\d+)?").unwrap());
 
 /// Passport series as two pairs + 6-digit number (e.g. "48 90 234004").
 static PASSPORT_PAIR_PAIR_RE: Lazy<Regex> =

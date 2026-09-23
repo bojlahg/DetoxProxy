@@ -418,6 +418,47 @@ fn площадь_as_size_is_not_an_address() {
 }
 
 #[test]
+fn address_hyphen_glued_and_dotless_markers() {
+    // A house number with a hyphenated apartment tail (дом-квартира) is part of the address.
+    let entities = detect("Живу на проспекте Мира 12-45");
+    let addr = entities
+        .iter()
+        .find(|e| e.type_id == "address")
+        .unwrap_or_else(|| panic!("address not found in {:?}", entities));
+    assert!(
+        text_span("Живу на проспекте Мира 12-45", addr).contains("Мира 12-45"),
+        "span {:?} does not cover 'Мира 12-45'",
+        text_span("Живу на проспекте Мира 12-45", addr)
+    );
+    // Markers with a dot need no space before the number (д.10А, кв.3).
+    let entities = detect("Зарегистрирован по адресу г. Химки, ул. Мичурина, д.10А, кв.3");
+    let addr = entities
+        .iter()
+        .find(|e| e.type_id == "address")
+        .unwrap_or_else(|| panic!("address not found in {:?}", entities));
+    assert!(
+        text_span("Зарегистрирован по адресу г. Химки, ул. Мичурина, д.10А, кв.3", addr)
+            .contains("д.10А, кв.3"),
+        "span {:?} does not cover 'д.10А, кв.3'",
+        text_span("Зарегистрирован по адресу г. Химки, ул. Мичурина, д.10А, кв.3", addr)
+    );
+    // Dotless markers (г, ул, д, кв) work as their dotted forms.
+    let entities = detect("г Новосибирск ул Красный проспект д 3 кв 7");
+    let addr = entities
+        .iter()
+        .find(|e| e.type_id == "address")
+        .unwrap_or_else(|| panic!("address not found in {:?}", entities));
+    assert!(
+        text_span("г Новосибирск ул Красный проспект д 3 кв 7", addr)
+            .contains("Новосибирск ул Красный проспект д 3 кв 7"),
+        "span {:?} does not cover 'Новосибирск ул Красный проспект д 3 кв 7'",
+        text_span("г Новосибирск ул Красный проспект д 3 кв 7", addr)
+    );
+    // "кв.м" as a size is not an address.
+    assert_not_found("Общая площадь 42 кв.м., третий этаж.", "address");
+}
+
+#[test]
 fn house_number_with_letter_is_included() {
     // A house number with a letter (дом 1А) is part of the address span.
     assert_span("на улице Карьерной, дом 1А,", "address", "улице Карьерной, дом 1А");
