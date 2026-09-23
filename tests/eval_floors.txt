@@ -36,7 +36,9 @@ rmr_benchmark_alfa:snils>=187
 rmr_benchmark_alfa:driver_license>=326
 rmr_benchmark_alfa:email>=212
 rmr_benchmark_alfa:card_number>=110
-tricky_negatives:clean>=273
+# 15 Title Case heading rows (group titlecase) are a known limitation: T48 removed them but cost
+# 0.4-1.3 pp FIO recall on holdout sets, and a miss costs more than an extra mask. Rejected.
+tricky_negatives:clean>=258
 # Control rows with a client's real address next to заказ/тикет/накладная (T28c): markers must not hide PII.
 tricky_negatives:address>=7
 tricky_negatives:phone>=3
