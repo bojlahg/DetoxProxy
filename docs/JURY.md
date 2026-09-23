@@ -130,10 +130,12 @@ curl -s localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -
 ## 7. Проверки, которые можно запустить
 
 ```bash
-cargo test                                                   # 188 тестов
+cargo test                                                   # модульные и HTTP-тесты
 python3 tools/check_process.py --bin target/release/detox-proxy --config config.yaml
                                                              # контракт /process: 54 проверки
 bash tools/manual_accept.sh                                  # 25 ручных кейсов с ловушками
+python3 tools/big_text_check.py --bin target/release/detox-proxy
+                                                             # текст ~100 000 токенов: маска и точное восстановление
 ```
 
 Наборы данных в архив не входят (по требованиям организаторов), поэтому оценка точности `tools/eval_dataset.py` запускается на своих размеченных данных в формате `{"text", "entities":[{"type","start","end"}]}`. Наши измерения — `docs/QUALITY.md`, нагрузка — `docs/LOAD.md`.

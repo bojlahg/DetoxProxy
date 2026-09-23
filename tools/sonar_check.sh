@@ -18,7 +18,7 @@ fi
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 for p in README.md Cargo.toml Cargo.lock config.yaml src data static tests tools/check_process.py \
-         tools/check_modes.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py; do
+         tools/check_modes.py tools/big_text_check.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py; do
   [ -e "$p" ] && cp -r --parents "$p" "$stage/"
 done
 rm -rf "$stage/tests/data" "$stage/data/dict/raw"

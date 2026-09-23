@@ -44,7 +44,7 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 | `POST /admin/reload` | перечитать конфиг, типы ПД, allowlist и словари без рестарта (заголовок `X-Admin-Token` = переменная `DETOX_ADMIN_TOKEN`; без переменной эндпоинт выключен). То же по `SIGHUP` |
 | `GET /metrics` | Prometheus |
 
-Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная система → 403, битый JSON или нет `payload_id` → 400, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms`, `encrypt_mappings` (шифрование значений в хранилище соответствий, по умолчанию включено) → 503 с `Retry-After`.
+Заголовок `X-System-Id` выбирает систему-потребителя из `config.yaml` (без заголовка — `default_system`). Неизвестная или выключенная система → 403, неверный ключ системы → 401, битый JSON или нет `payload_id` → 400, слишком большое тело → 413, перегрузка → 429 с `Retry-After`, не уложились в `request_deadline_ms` → 503 с `Retry-After`, LLM недоступна → 502. Значения в хранилище соответствий зашифрованы ключом процесса (`server.encrypt_mappings`, по умолчанию включено).
 
 Соответствия хранятся отдельно для каждой системы: маска системы A, присланная системой B с тем же `payload_id`, не раскрывается.
 
@@ -74,7 +74,21 @@ docker run --rm -v "$PWD:/src" -w /src rust:1-bookworm cargo build --release --t
 
 Ловушки, которые обрабатываются отдельно: общеизвестные люди и биографические даты («поэт Пушкин родился в 1799»), топонимы-омонимы фамилий («г. Пушкин», «ул. Пушкина»), адреса отделений и офисов, названия полей без значений («укажите ФИО и ИНН»), похожие числа без контекста (номер заказа, версия сборки), PIN/CVV без карты (правило комбинаций, включается на систему).
 
+## Дополнительные возможности
+
+| Возможность из задания | Как сделано | Где проверить |
+|---|---|---|
+| Токенизация / замена синтетическими данными | `mask_mode: token` (обратимые метки), `pseudonym` (правдоподобные ФИО, адреса, номера с верными контрольными суммами, восстанавливаются), `synthetic` | `docs/MASKS.md`, `python tools/check_modes.py` |
+| Вид маскирования под систему | `mask_mode` и `overrides` по типам у каждой системы; `token_numbering: hash` — стабильные метки между запросами | `config.yaml`, `docs/JURY.md` §4 |
+| RPS 2000 при задержке ≤ 0,5 с | 2000 масок/с + 2000 восстановлений/с: p99 3,8 мс, 0 ошибок | `docs/LOAD.md` |
+| Документы, кроме паспорта РФ | водительское удостоверение, СНИЛС | `data/pii_types.yaml` |
+| Маскирование по комбинации типов | `combination_rule: true`: PIN и CVV маскируются только рядом с номером карты | система `strict`, `docs/JURY.md` §4 |
+
+Сверх списка задания: шифрование хранилища соответствий (ChaCha20-Poly1305), ключи доступа систем, перезагрузка правил без рестарта, тексты до 100 000 токенов (`python tools/big_text_check.py`), OpenAI-совместимый прокси `/v1/chat/completions` с опцией падежей (`llm.case_hints`: LLM может запросить `<<FIO_1:дат>>`, прокси склоняет ФИО), страница `/demo`.
+
 ## Настройка
+
+**Коротко, в пять предложений.** Системы-потребители перечислены в `config.yaml` в списке `systems`: у каждой свой `id`, который клиент передаёт в заголовке `X-System-Id`, а `enabled: false` закрывает системе доступ. Какие типы ПД искать и маскировать для системы, задаёт поле `types` (`all` или список id из `data/pii_types.yaml`), а вид замены — `mask_mode` и `overrides` по типам. Восстановление для системы включает и выключает `unmask_enabled`, ключ доступа — `api_key_env`. Новый тип ПД добавляется записью в `data/pii_types.yaml` (шаблон, маркеры, валидатор) без правки кода. Изменения применяются без перезапуска: `POST /admin/reload` или `SIGHUP`.
 
 Всё поведение задаётся данными, без пересборки:
 
@@ -117,7 +131,11 @@ llm:
 
 ## Логи и метрики
 
-Логи — JSON в stdout, одна строка на запрос без значений ПД: `request_id`, система, направление (mask/unmask), `payload_id` (длинный — хешем), число сущностей по типам, задержка, статус. Метрики Prometheus: `pii_requests_total` и `pii_latency_seconds` (по системе, направлению, статусу), `pii_entities_total` (по типам), `pii_rejected_total` (429 и 503), `pii_inflight`, `pii_mappings_stored`; для разбора прогонов — `pii_payload_bytes` (размер текстов), `pii_entities_per_request`, `pii_requests_without_entities_total`, `pii_process_retry_total` (повторы с тем же `payload_id`), `pii_unmask_unresolved_tokens_total` (токены без соответствия), `pii_config_reloads_total`. Значения ПД не попадают ни в логи, ни в метрики, ни в тексты ошибок — это проверяется тестами.
+Логи — JSON в stdout, одна строка на запрос без значений ПД: `request_id`, система, направление (mask/unmask), `payload_id` (длинный — хешем), число сущностей по типам, время по этапам в микросекундах (`detect_us`, `mask_us`, `unmask_us`, `store_us`, `llm_us`, `total_us`), оценка числа токенов (`tokens`), статус.
+
+Latency, RPS и TPS: задержка — `pii_latency_seconds`, RPS — `rate(pii_requests_total[1m])`, TPS модуля — `rate(pii_tokens_total[1m])` (токены оцениваются как символы / 4); для чат-прокси — `pii_llm_tokens_total` (prompt и completion), `pii_llm_seconds` (время вызова LLM) и `pii_llm_tokens_per_second`.
+
+Остальные метрики Prometheus: `pii_requests_total` и `pii_latency_seconds` (по системе, направлению, статусу), `pii_entities_total` (по типам), `pii_rejected_total` (429 и 503), `pii_inflight`, `pii_mappings_stored`; для разбора прогонов — `pii_payload_bytes` (размер текстов), `pii_entities_per_request`, `pii_requests_without_entities_total`, `pii_process_retry_total` (повторы с тем же `payload_id`), `pii_unmask_unresolved_tokens_total` (токены без соответствия), `pii_config_reloads_total`. Значения ПД не попадают ни в логи, ни в метрики, ни в тексты ошибок — это проверяется тестами.
 
 ## Проверка
 
@@ -127,6 +145,7 @@ python tools/check_process.py --bin target/release/detox-proxy --config config.y
 bash tools/manual_accept.sh                            # 25 ручных кейсов с ловушками
 python tools/check_modes.py --bin target/release/detox-proxy   # все режимы маскирования: утечки и восстановление
 python tools/eval_dataset.py --url http://127.0.0.1:8080   # точность на размеченных наборах (tests/data)
+python tools/big_text_check.py --bin target/release/detox-proxy   # 400 тыс. символов (~100 000 токенов) за один запрос
 ```
 
 Что читать дальше:
