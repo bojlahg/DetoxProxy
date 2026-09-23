@@ -28,7 +28,14 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$stage"):/usr/src" \
   sonarsource/sonar-scanner-cli -Dsonar.projectKey="$key" -Dsonar.projectName="$key" \
   -Dsonar.qualitygate.wait=false 2>&1 | grep -E "ANALYSIS SUCCESSFUL|ERROR" | grep -v "Clippy prerequisites" || true
 
-sleep 15
+# wait until the server has processed this project's report (reports are processed one at a time)
+auth="admin:$(cat "$pass_file")"
+sleep 3
+for _ in $(seq 1 60); do
+  q="$(curl -s -u "$auth" "http://localhost:19000/api/ce/component?component=$key")"
+  echo "$q" | grep -q '"queue":\[\]' && ! echo "$q" | grep -q '"status":"IN_PROGRESS"' && break
+  sleep 3
+done
 PASS="$(cat "$pass_file")" KEY="$key" FILTER="$filter" python - <<'EOF'
 import base64, collections, json, os, re, sys, urllib.request
 auth = base64.b64encode(("admin:" + os.environ["PASS"]).encode()).decode()
