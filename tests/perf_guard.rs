@@ -68,3 +68,46 @@ fn dense_text_detect_and_mask_within_budget() {
         t4000 as f64 / t400 as f64
     );
 }
+
+#[test]
+fn dense_capitalized_text_detect_and_mask_within_budget() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.0,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    let overrides = HashMap::new();
+    let mask_opts = MaskOptions {
+        default_mode: MaskMode::Token,
+        overrides: &overrides,
+        combination_rule: false,
+    };
+
+    let det = detector();
+    let reg = Arc::new(Registry::from_yaml(
+        &std::fs::read_to_string("data/pii_types.yaml").expect("read pii_types.yaml"),
+    ).expect("parse registry"));
+
+    let text = "Встреча Отдела Продаж Прошла В Москве, Обсудили Новые Условия Кредита. ".repeat(10_000);
+
+    let mut best = u128::MAX;
+    for _ in 0..3 {
+        let start = Instant::now();
+        let entities = det.detect(&text, &opts);
+        let _res = mask(&text, &entities, &reg, &mask_opts);
+        let elapsed = start.elapsed().as_micros();
+        if elapsed < best {
+            best = elapsed;
+        }
+    }
+
+    assert!(
+        best <= 1_500_000,
+        "detect+mask exceeds the dense-capitalized budget: best={best} us (expected <= 1500000 us)"
+    );
+}

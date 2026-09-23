@@ -4,6 +4,7 @@ use crate::types::Entity;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Allow-list of public persons and organizations that must NOT be treated as personal data.
 /// A full-name match is a negative signal (−0.3); an organization near an address is −0.3.
@@ -13,6 +14,10 @@ pub struct Allowlist {
     public_persons: Vec<Vec<String>>,
     /// Organization names, lowercased.
     organizations: Vec<String>,
+    /// Union of every word appearing in any public person's full name. Used as a fast
+    /// rejection set: a FIO span whose words are not all in this set cannot be a subset of
+    /// any public person's name.
+    public_person_words: HashSet<String>,
 }
 
 impl Allowlist {
@@ -29,24 +34,35 @@ impl Allowlist {
             organizations: Vec<String>,
         }
         let root: Root = serde_yaml_ng::from_str(text)?;
-        let public_persons = root
+        let public_persons: Vec<Vec<String>> = root
             .public_persons
             .iter()
             .map(|p| normalize_name_words(p))
             .collect();
+        let mut public_person_words: HashSet<String> = HashSet::new();
+        for p in &public_persons {
+            for w in p {
+                public_person_words.insert(w.clone());
+            }
+        }
         let organizations = root.organizations.iter().map(|o| o.to_lowercase()).collect();
-        Ok(Self { public_persons, organizations })
+        Ok(Self { public_persons, organizations, public_person_words })
     }
 
     /// True if the normalized words of a detected FIO (2+ words) are a subset of a public person's
     /// full name. A single surname alone is not a match.
-    fn matches_person_subset(&self, words: &[String]) -> bool {
+    fn matches_person_subset(&self, words: &[&str]) -> bool {
         if words.len() < 2 {
             return false;
         }
-        let set: HashSet<&String> = words.iter().collect();
+        // Fast rejection: if any word is not in the union of all public-person words, the span
+        // cannot be a subset of any single public person's name.
+        if words.iter().any(|w| !self.public_person_words.contains(*w)) {
+            return false;
+        }
+        let set: HashSet<&str> = words.iter().copied().collect();
         self.public_persons.iter().any(|p| {
-            let pset: HashSet<&String> = p.iter().collect();
+            let pset: HashSet<&str> = p.iter().map(|s| s.as_str()).collect();
             set.iter().all(|w| pset.contains(w))
         })
     }
@@ -150,6 +166,28 @@ pub struct DetectOptions<'a> {
     pub trap_policy: TrapPolicy,
 }
 
+/// Per-request context shared by the detection pipeline. Holds the lowercased copy of the
+/// text so that context-window checks can slice it instead of allocating a new lowercase
+/// string for every window. `text_lower` is `Some` only when `to_lowercase` is byte-length
+/// preserving (the common case for Cyrillic/ASCII), so byte offsets stay valid.
+struct DetectCtx<'a> {
+    text: &'a str,
+    text_lower: Option<String>,
+}
+
+impl<'a> DetectCtx<'a> {
+    fn new(text: &'a str) -> Self {
+        let lower = text.to_lowercase();
+        let text_lower = if lower.len() == text.len() { Some(lower) } else { None };
+        DetectCtx { text, text_lower }
+    }
+
+    /// The lowercased text, or `None` when it is not byte-length preserving.
+    fn lower(&self) -> Option<&str> {
+        self.text_lower.as_deref()
+    }
+}
+
 pub struct Detector {
     registry: std::sync::Arc<Registry>,
     dicts: std::sync::Arc<Dictionaries>,
@@ -168,6 +206,16 @@ pub struct Detector {
     /// markers. A "word number" address component whose word is in this set is not a street
     /// (e.g. "Паспорт 4509", "Карта 4276", "Телефон 8..."). Built once at construction.
     non_address_context_words: HashSet<String>,
+    /// Resolved effective PII markers per type id (per-type override, else per-type pii_context,
+    /// else the global context.pii_markers). Built once at construction to avoid cloning on the
+    /// hot path.
+    pii_markers_by_type: HashMap<String, Arc<Vec<String>>>,
+    /// Resolved effective non-PII markers per type id. Built once at construction.
+    non_pii_markers_by_type: HashMap<String, Arc<Vec<String>>>,
+    /// Combined regex of the effective non-PII markers per type id (single-word markers with
+    /// word boundaries, multi-word markers as substrings). Used to check non-PII context in a
+    /// single regex match instead of scanning every marker.
+    non_pii_marker_re_by_type: HashMap<String, Option<Regex>>,
 }
 
 /// Marker types that use the nearest-left-marker rule to resolve context.
@@ -233,6 +281,112 @@ fn build_non_address_context_words(registry: &Registry) -> HashSet<String> {
     set
 }
 
+/// Builds the resolved effective PII markers per type id: per-type `pii_markers`, else
+/// per-type `pii_context`, else the global `context.pii_markers`.
+fn build_pii_markers_by_type(registry: &Registry) -> HashMap<String, Arc<Vec<String>>> {
+    let mut map = HashMap::new();
+    for spec in registry.types() {
+        let resolved: Vec<String> = if !spec.pii_markers.is_empty() {
+            spec.pii_markers.clone()
+        } else if !spec.pii_context.is_empty() {
+            spec.pii_context.clone()
+        } else {
+            registry.context().pii_markers.clone()
+        };
+        map.insert(spec.id.clone(), Arc::new(resolved));
+    }
+    map
+}
+
+/// Builds the resolved effective non-PII markers per type id: per-type `non_pii_markers`
+/// (or `non_pii_context`) combined with the global `context.non_pii_markers`. A type with its
+/// own `non_pii_markers` overrides the global list (like `effective_pii_markers`).
+fn build_non_pii_markers_by_type(registry: &Registry) -> HashMap<String, Arc<Vec<String>>> {
+    let mut map = HashMap::new();
+    for spec in registry.types() {
+        let mut out: Vec<String> = Vec::new();
+        if !spec.non_pii_markers.is_empty() {
+            out.extend(spec.non_pii_markers.iter().cloned());
+        } else {
+            if !spec.non_pii_context.is_empty() {
+                out.extend(spec.non_pii_context.iter().cloned());
+            }
+            for m in &registry.context().non_pii_markers {
+                if !out.contains(m) {
+                    out.push(m.clone());
+                }
+            }
+        }
+        map.insert(spec.id.clone(), Arc::new(out));
+    }
+    map
+}
+
+/// Builds a combined regex of the effective non-PII markers per type id. Single-word markers
+/// are matched with word boundaries, multi-word markers as plain substrings. Used to check
+/// non-PII context in a single regex match instead of scanning every marker.
+fn build_non_pii_marker_re_by_type(registry: &Registry) -> HashMap<String, Option<Regex>> {
+    let markers_by_type = build_non_pii_markers_by_type(registry);
+    let mut map = HashMap::new();
+    for (id, markers) in markers_by_type {
+        map.insert(id, build_non_pii_marker_re(&markers));
+    }
+    map
+}
+
+/// Builds a single combined regex from a list of markers. Returns None when the list is empty.
+fn build_non_pii_marker_re(markers: &[String]) -> Option<Regex> {
+    if markers.is_empty() {
+        return None;
+    }
+    let alts: Vec<String> = markers
+        .iter()
+        .map(|m| {
+            if m.contains(' ') {
+                regex::escape(m)
+            } else {
+                format!(r"\b{}\b", regex::escape(m))
+            }
+        })
+        .collect();
+    let alt = alts.join("|");
+    RegexBuilder::new(&format!(r"(?:{})", alt))
+        .case_insensitive(true)
+        .unicode(true)
+        .build()
+        .ok()
+}
+
+/// All per-type caches built once at construction and shared by every constructor.
+struct DetectorCaches {
+    marker_re: Option<Regex>,
+    marker_type_of: HashMap<String, String>,
+    non_address_context_words: HashSet<String>,
+    fio_marker_re: Option<Regex>,
+    pii_markers_by_type: HashMap<String, Arc<Vec<String>>>,
+    non_pii_markers_by_type: HashMap<String, Arc<Vec<String>>>,
+    non_pii_marker_re_by_type: HashMap<String, Option<Regex>>,
+}
+
+/// Builds all per-type caches from the registry.
+fn build_caches(registry: &Registry) -> DetectorCaches {
+    let (marker_re, marker_type_of) = build_marker_map(registry);
+    let non_address_context_words = build_non_address_context_words(registry);
+    let fio_marker_re = build_fio_marker_re(registry);
+    let pii_markers_by_type = build_pii_markers_by_type(registry);
+    let non_pii_markers_by_type = build_non_pii_markers_by_type(registry);
+    let non_pii_marker_re_by_type = build_non_pii_marker_re_by_type(registry);
+    DetectorCaches {
+        marker_re,
+        marker_type_of,
+        non_address_context_words,
+        fio_marker_re,
+        pii_markers_by_type,
+        non_pii_markers_by_type,
+        non_pii_marker_re_by_type,
+    }
+}
+
 /// Builds a regex matching the fio type's context words (клиент, фио, гр., заявитель...)
 /// as standalone words. Used as an anchor for detecting lowercase (chat-style) FIOs.
 fn build_fio_marker_re(registry: &Registry) -> Option<Regex> {
@@ -251,18 +405,19 @@ fn build_fio_marker_re(registry: &Registry) -> Option<Regex> {
 
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
-        let (marker_re, marker_type_of) = build_marker_map(&registry);
-        let non_address_context_words = build_non_address_context_words(&registry);
-        let fio_marker_re = build_fio_marker_re(&registry);
+        let caches = build_caches(&registry);
         Self {
             registry,
             dicts,
             historical_date_years: 120,
             allowlist: std::sync::Arc::new(Allowlist::empty()),
-            marker_re,
-            marker_type_of,
-            fio_marker_re,
-            non_address_context_words,
+            marker_re: caches.marker_re,
+            marker_type_of: caches.marker_type_of,
+            fio_marker_re: caches.fio_marker_re,
+            non_address_context_words: caches.non_address_context_words,
+            pii_markers_by_type: caches.pii_markers_by_type,
+            non_pii_markers_by_type: caches.non_pii_markers_by_type,
+            non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
         }
     }
 
@@ -272,18 +427,19 @@ impl Detector {
         dicts: std::sync::Arc<Dictionaries>,
         allowlist: Allowlist,
     ) -> Self {
-        let (marker_re, marker_type_of) = build_marker_map(&registry);
-        let non_address_context_words = build_non_address_context_words(&registry);
-        let fio_marker_re = build_fio_marker_re(&registry);
+        let caches = build_caches(&registry);
         Self {
             registry,
             dicts,
             historical_date_years: 120,
             allowlist: std::sync::Arc::new(allowlist),
-            marker_re,
-            marker_type_of,
-            fio_marker_re,
-            non_address_context_words,
+            marker_re: caches.marker_re,
+            marker_type_of: caches.marker_type_of,
+            fio_marker_re: caches.fio_marker_re,
+            non_address_context_words: caches.non_address_context_words,
+            pii_markers_by_type: caches.pii_markers_by_type,
+            non_pii_markers_by_type: caches.non_pii_markers_by_type,
+            non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
         }
     }
 
@@ -317,6 +473,8 @@ impl Detector {
     /// Detection pipeline over a single text (already normalized when needed). Offsets are
     /// relative to `text`.
     fn detect_inner(&self, text: &str, opts: &DetectOptions<'_>) -> Vec<Entity> {
+        let ctx = DetectCtx::new(text);
+        let text_lower = ctx.lower();
         let enabled: Option<HashSet<&str>> = opts
             .enabled_types
             .map(|ids| ids.iter().map(|s| s.as_str()).collect());
@@ -330,16 +488,16 @@ impl Detector {
                 }
             }
             match spec.id.as_str() {
-                "fio" => candidates.extend(self.detect_fio(text, opts, spec)),
+                "fio" => candidates.extend(self.detect_fio(text, text_lower, opts, spec)),
                 "birth_date" | "passport_issue_date" => {
                     candidates.extend(self.detect_date(text, opts, spec))
                 }
                 "birth_place" => candidates.extend(self.detect_birth_place(text, opts, spec)),
                 "citizenship" => candidates.extend(self.detect_citizenship(text, opts, spec)),
                 "passport_issuer" => candidates.extend(self.detect_passport_issuer(text, opts, spec)),
-                "address" => candidates.extend(self.detect_address(text, opts, spec)),
+                "address" => candidates.extend(self.detect_address(text, text_lower, opts, spec)),
                 "card_holder" => candidates.extend(self.detect_card_holder(text, opts, spec)),
-                _ => self.detect_regex_type(text, opts, spec, &mut candidates),
+                _ => self.detect_regex_type(text, text_lower, opts, spec, &mut candidates),
             }
         }
 
@@ -370,7 +528,8 @@ impl Detector {
                 return true;
             }
             let span_words = normalize_name_words(&text[e.start..e.end]);
-            if !self.allowlist.matches_person_subset(&span_words) {
+            let span_refs: Vec<&str> = span_words.iter().map(|s| s.as_str()).collect();
+            if !self.allowlist.matches_person_subset(&span_refs) {
                 return true;
             }
             if self.strong_pii_marker(text, e.start, e.end) {
@@ -465,6 +624,7 @@ impl Detector {
     fn detect_regex_type(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         opts: &DetectOptions<'_>,
         spec: &TypeSpec,
         candidates: &mut Vec<Entity>,
@@ -475,7 +635,7 @@ impl Detector {
         }
         for re in patterns {
             for m in re.find_iter(text) {
-                if let Some(entity) = self.regex_match_entity(text, opts, spec, m.start(), m.end()) {
+                if let Some(entity) = self.regex_match_entity(text, text_lower, opts, spec, m.start(), m.end()) {
                     candidates.push(entity);
                 }
             }
@@ -486,13 +646,14 @@ impl Detector {
     fn regex_match_entity(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         opts: &DetectOptions<'_>,
         spec: &TypeSpec,
         start: usize,
         end: usize,
     ) -> Option<Entity> {
         let span = &text[start..end];
-        let has_context = self.regex_has_context(text, start, end, spec);
+        let has_context = self.regex_has_context(text, text_lower, start, end, spec);
         if self.regex_wrong_document_type(text, start, spec) {
             return None;
         }
@@ -507,7 +668,7 @@ impl Detector {
         if spec.context_required && !has_context {
             return None;
         }
-        if self.has_non_pii_context(text, start, end, spec) {
+        if self.has_non_pii_context(text, text_lower, start, end, spec) {
             return None;
         }
         if !passes_threshold(conf, opts) {
@@ -520,7 +681,7 @@ impl Detector {
     }
 
     /// True when a marker context word is present for the span.
-    fn regex_has_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
+    fn regex_has_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
         if is_marker_type(&spec.id) {
             if matches!(spec.id.as_str(), "cvv" | "card_pin") {
                 self.has_cvv_pin_marker(text, start, spec)
@@ -530,8 +691,14 @@ impl Detector {
         } else if spec.context_words.is_empty() {
             false
         } else {
-            let window = context_window_before(text, start, spec.context_window);
-            let window_lower = window.to_lowercase();
+            let window_owned;
+            let window_lower: &str = match text_lower {
+                Some(l) => context_window_before(l, start, spec.context_window),
+                None => {
+                    window_owned = context_window_before(text, start, spec.context_window).to_lowercase();
+                    &window_owned
+                }
+            };
             spec.context_words.iter().any(|w| window_lower.contains(w))
         }
     }
@@ -631,7 +798,7 @@ impl Detector {
     }
 
     /// FIO: 2-3 capitalized words / initials, at least one dictionary or suffix hit.
-    fn detect_fio(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+    fn detect_fio(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         let all_tokens = name_tokens(text);
         let tokens = self.fio_tokens(text, &all_tokens);
@@ -642,7 +809,7 @@ impl Detector {
                     break;
                 }
                 let window = &tokens[i..i + len];
-                if let Some(entity) = self.fio_window_entity(text, opts, spec, window) {
+                if let Some(entity) = self.fio_window_entity(text, text_lower, opts, spec, window) {
                     candidates.push(entity);
                 }
             }
@@ -658,7 +825,7 @@ impl Detector {
         }
         // Lowercase (chat-style) FIOs via cheap anchors: a patronymic-suffixed word or a
         // FIO marker. This avoids tokenizing every word of the text, keeping large prose fast.
-        self.detect_lowercase_fio(text, opts, spec, &mut candidates);
+        self.detect_lowercase_fio(text, text_lower, opts, spec, &mut candidates);
         candidates
     }
 
@@ -671,6 +838,7 @@ impl Detector {
     fn detect_lowercase_fio(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         opts: &DetectOptions<'_>,
         spec: &TypeSpec,
         candidates: &mut Vec<Entity>,
@@ -679,7 +847,7 @@ impl Detector {
         for m in LOWERCASE_PATRONYMIC_RE.find_iter(text) {
             if let Some(e) = self
                 .lowercase_fio_anchor(text, opts, spec, m.start(), m.end(), 3)
-                .and_then(|(s, e)| self.fio_lowercase_entity(text, opts, spec, s, e, 3))
+                .and_then(|(s, e)| self.fio_lowercase_entity(text, text_lower, opts, spec, s, e))
             {
                 candidates.push(e);
             }
@@ -689,7 +857,7 @@ impl Detector {
             for m in re.find_iter(text) {
                 if let Some(e) = self
                     .lowercase_fio_anchor(text, opts, spec, m.start(), m.end(), 2)
-                    .and_then(|(s, e)| self.fio_lowercase_entity(text, opts, spec, s, e, 2))
+                    .and_then(|(s, e)| self.fio_lowercase_entity(text, text_lower, opts, spec, s, e))
                 {
                     candidates.push(e);
                 }
@@ -784,16 +952,17 @@ impl Detector {
     fn fio_lowercase_entity(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         opts: &DetectOptions<'_>,
         spec: &TypeSpec,
         start: usize,
         end: usize,
-        comps: usize,
     ) -> Option<Entity> {
         let span = &text[start..end];
+        let comps = span.split_whitespace().count();
         let first_word = span.split_whitespace().next().unwrap_or("");
-        let has_pii = self.has_pii_context(text, start, end, spec);
-        let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
+        let has_pii = self.has_pii_context(text, text_lower, start, end, spec);
+        let mut has_non_pii = self.has_non_pii_context(text, text_lower, start, end, spec);
         // A leading word that is itself a non-PII marker (e.g. "роман толстого") counts as
         // non-PII context even though it is inside the span.
         if !has_non_pii {
@@ -834,7 +1003,8 @@ impl Detector {
         };
         conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
         let span_words = normalize_name_words(span);
-        if self.allowlist.matches_person_subset(&span_words) {
+        let span_refs: Vec<&str> = span_words.iter().map(|s| s.as_str()).collect();
+        if self.allowlist.matches_person_subset(&span_refs) {
             conf -= 0.3;
         }
         conf.clamp(0.0, 1.0)
@@ -904,12 +1074,13 @@ impl Detector {
     fn fio_window_entity(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         opts: &DetectOptions<'_>,
         spec: &TypeSpec,
         window: &[NameToken],
     ) -> Option<Entity> {
-        let (start, end, comps) = self.fio_window_valid(text, spec, window)?;
-        let (has_pii, has_non_pii) = self.fio_context(text, spec, window, start, end);
+        let (start, end, comps) = self.fio_window_valid(text, text_lower, spec, window)?;
+        let (has_pii, has_non_pii) = self.fio_context(text, text_lower, spec, window, start, end);
         // Non-PII marker without PII marker suppresses the candidate.
         if has_non_pii && !has_pii {
             return None;
@@ -927,7 +1098,7 @@ impl Detector {
         {
             return None;
         }
-        let conf = self.fio_confidence(text, opts, window, has_pii, has_non_pii);
+        let conf = self.fio_confidence(opts, window, has_pii, has_non_pii);
         if !passes_threshold(conf, opts) {
             return None;
         }
@@ -938,6 +1109,7 @@ impl Detector {
     fn fio_window_valid(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         spec: &TypeSpec,
         window: &[NameToken],
     ) -> Option<(usize, usize, usize)> {
@@ -963,14 +1135,14 @@ impl Detector {
             return None;
         }
         // Single word requires PII context.
-        if comps == 1 && !self.has_pii_context(text, window[0].start, window[0].end, spec) {
+        if comps == 1 && !self.has_pii_context(text, text_lower, window[0].start, window[0].end, spec) {
             return None;
         }
         // A Latin name (e.g. "Theodore Weaver") requires PII context: Latin without a
         // PII marker is not a FIO (e.g. "Yves talks", "CREATE TABLE IF", "Russian State
         // University").
         if window.iter().all(|t| t.is_latin)
-            && !self.has_pii_context(text, window[0].start, window[0].end, spec)
+            && !self.has_pii_context(text, text_lower, window[0].start, window[0].end, spec)
         {
             return None;
         }
@@ -1008,13 +1180,14 @@ impl Detector {
     fn fio_context(
         &self,
         text: &str,
+        text_lower: Option<&str>,
         spec: &TypeSpec,
         window: &[NameToken],
         start: usize,
         end: usize,
     ) -> (bool, bool) {
-        let has_pii = self.has_pii_context(text, start, end, spec);
-        let mut has_non_pii = self.has_non_pii_context(text, start, end, spec);
+        let has_pii = self.has_pii_context(text, text_lower, start, end, spec);
+        let mut has_non_pii = self.has_non_pii_context(text, text_lower, start, end, spec);
         // A leading word that is itself a non-PII marker (e.g. "Поэт Александр Пушкин")
         // counts as non-PII context even though it is inside the span.
         if !has_non_pii {
@@ -1029,19 +1202,16 @@ impl Detector {
     /// Computes the confidence for a validated FIO window.
     fn fio_confidence(
         &self,
-        text: &str,
         opts: &DetectOptions<'_>,
         window: &[NameToken],
         has_pii: bool,
         has_non_pii: bool,
     ) -> f32 {
         let comps = window.len();
-        let start = window[0].start;
-        let end = window[window.len() - 1].end;
         let mut conf = self.fio_base_confidence(window, comps);
         conf = self.fio_marker_adjustment(conf, opts, has_pii, has_non_pii);
         // A span whose words are a subset of a public person's name is a negative signal.
-        let span_words = normalize_name_words(&text[start..end]);
+        let span_words: Vec<&str> = window.iter().map(|t| t.lower.as_str()).collect();
         if self.allowlist.matches_person_subset(&span_words) {
             conf -= 0.3;
         }
@@ -1102,22 +1272,50 @@ impl Detector {
     /// Returns (qualifies_as_fio, component_count). Dispatches to per-case helpers.
     fn fio_qualifies(&self, window: &[NameToken]) -> (bool, usize) {
         let comps = window.len();
+        let qualifies = match comps {
+            3 => self.fio_qualifies_three(window),
+            2 => self.fio_qualifies_two(window),
+            _ => self.fio_qualifies_other(window),
+        };
+        (qualifies, comps)
+    }
+
+    /// Three-word window: capitalized words with no initials and no mixed script qualify on
+    /// their own; otherwise fall back to dictionary, patronymic and surname-suffix checks.
+    fn fio_qualifies_three(&self, window: &[NameToken]) -> bool {
+        // Three capitalized words with no initials and no mixed script qualify on their own;
+        // check this first since it is the most permissive for 3-word windows and avoids the
+        // dictionary lookups below.
+        if self.fio_qualifies_three_words(window) {
+            return true;
+        }
         if self.fio_qualifies_dict_or_patronymic(window) {
-            return (true, comps);
+            return true;
+        }
+        self.fio_qualifies_surname_suffix(window)
+    }
+
+    /// Two-word window: dictionary/patronymic, surname-suffix, then first-name+surname checks.
+    fn fio_qualifies_two(&self, window: &[NameToken]) -> bool {
+        if self.fio_qualifies_dict_or_patronymic(window) {
+            return true;
         }
         if self.fio_qualifies_surname_suffix(window) {
-            return (true, comps);
+            return true;
         }
-        if self.fio_qualifies_single_surname_suffix(window) {
-            return (true, comps);
+        self.fio_qualifies_two_words(window)
+    }
+
+    /// Single-word (or other) window: dictionary/patronymic, surname-suffix, then single
+    /// surname-suffix with PII context.
+    fn fio_qualifies_other(&self, window: &[NameToken]) -> bool {
+        if self.fio_qualifies_dict_or_patronymic(window) {
+            return true;
         }
-        if self.fio_qualifies_two_words(window) {
-            return (true, comps);
+        if self.fio_qualifies_surname_suffix(window) {
+            return true;
         }
-        if self.fio_qualifies_three_words(window) {
-            return (true, comps);
-        }
-        (false, comps)
+        self.fio_qualifies_single_surname_suffix(window)
     }
 
     /// True when any word is in a name dictionary or is a patronymic.
@@ -1238,62 +1436,49 @@ impl Detector {
         suffixes.iter().any(|s| lower.ends_with(s))
     }
 
-    fn has_pii_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
+    fn has_pii_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
         let markers = self.effective_pii_markers(spec);
         if markers.is_empty() {
             return false;
         }
-        has_context_word_around(text, start, end, spec.context_window, &markers)
+        has_context_word_around(text, text_lower, start, end, spec.context_window, markers)
     }
 
-    fn has_non_pii_context(&self, text: &str, start: usize, end: usize, spec: &TypeSpec) -> bool {
+    fn has_non_pii_context(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize, spec: &TypeSpec) -> bool {
         let markers = self.effective_non_pii_markers(spec);
         if markers.is_empty() {
             return false;
         }
-        has_context_word_around_wb(text, start, end, spec.context_window, &markers)
+        has_context_word_around_wb(text, text_lower, start, end, spec.context_window, markers)
     }
 
     /// True if a global non-pii marker (юридический адрес, пункт выдачи, отделение,
     /// офис, банк...) appears within a window around the span.
-    fn has_global_non_pii_near(&self, text: &str, start: usize, end: usize) -> bool {
+    fn has_global_non_pii_near(&self, text: &str, text_lower: Option<&str>, start: usize, end: usize) -> bool {
         let markers = &self.registry.context().non_pii_markers;
         if markers.is_empty() {
             return false;
         }
-        has_context_word_around(text, start, end, 60, markers)
+        has_context_word_around(text, text_lower, start, end, 60, markers)
     }
 
     /// Effective PII markers for a type: per-type `pii_markers`, else per-type `pii_context`,
-    /// else the global `context.pii_markers`.
-    fn effective_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
-        if !spec.pii_markers.is_empty() {
-            spec.pii_markers.clone()
-        } else if !spec.pii_context.is_empty() {
-            spec.pii_context.clone()
-        } else {
-            self.registry.context().pii_markers.clone()
-        }
+    /// else the global `context.pii_markers`. Resolved once at construction.
+    fn effective_pii_markers(&self, spec: &TypeSpec) -> &[String] {
+        self.pii_markers_by_type
+            .get(&spec.id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Effective non-PII markers for a type: per-type `non_pii_markers` (or `non_pii_context`)
-/// combined with the global `context.non_pii_markers`. A type with its own `non_pii_markers`
-    /// overrides the global list (like `effective_pii_markers`).
-    fn effective_non_pii_markers(&self, spec: &TypeSpec) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        if !spec.non_pii_markers.is_empty() {
-            out.extend(spec.non_pii_markers.iter().cloned());
-            return out;
-        }
-        if !spec.non_pii_context.is_empty() {
-            out.extend(spec.non_pii_context.iter().cloned());
-        }
-        for m in &self.registry.context().non_pii_markers {
-            if !out.contains(m) {
-                out.push(m.clone());
-            }
-        }
-        out
+    /// combined with the global `context.non_pii_markers`. A type with its own `non_pii_markers`
+    /// overrides the global list (like `effective_pii_markers`). Resolved once at construction.
+    fn effective_non_pii_markers(&self, spec: &TypeSpec) -> &[String] {
+        self.non_pii_markers_by_type
+            .get(&spec.id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Strict cvv/pin marker check: the marker must be to the LEFT of the value, within 12
@@ -1475,13 +1660,13 @@ impl Detector {
         let lower = window.to_lowercase();
         let mut best_pii: Option<usize> = None;
         let mut best_non_pii: Option<usize> = None;
-        for m in &pii {
+        for m in pii {
             if let Some(pos) = lower.rfind(m) {
                 let end = window_start + pos + m.len();
                 best_pii = Some(best_pii.map_or(end, |b| b.max(end)));
             }
         }
-        for m in &non_pii {
+        for m in non_pii {
             if let Some(pos) = lower.rfind(m) {
                 let end = window_start + pos + m.len();
                 best_non_pii = Some(best_non_pii.map_or(end, |b| b.max(end)));
@@ -1657,13 +1842,13 @@ impl Detector {
     ///
     /// The street marker may be abbreviated ("ул.", "пр.") or a full word in any case
     /// ("улице", "проспекте").
-    fn detect_street_address(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+    fn detect_street_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         for m in STREET_ADDR_RE.find_iter(text) {
             let start = m.start();
             let end = m.end();
             // A non-pii marker (отделение, офис, банк...) suppresses the address.
-            if self.has_non_pii_context(text, start, end, spec) {
+            if self.has_non_pii_context(text, text_lower, start, end, spec) {
                 continue;
             }
             let mut conf = 0.8f32;
@@ -1671,7 +1856,7 @@ impl Detector {
             let (span_start, span_end) = self.extend_with_city(text, start, end);
             // An organization near the address is a negative signal.
             let non_pii = self.effective_non_pii_markers(spec);
-            if self.allowlist.org_near(text, span_start, span_end, 60, &non_pii) {
+            if self.allowlist.org_near(text, span_start, span_end, 60, non_pii) {
                 conf -= 0.3;
             }
             conf = conf.clamp(0.0, 1.0);
@@ -1680,7 +1865,7 @@ impl Detector {
             }
         }
         // "city, capitalized word, number" (e.g. "Хабаровск, Маршала Жукова, 188").
-        candidates.extend(self.detect_city_word_number(text, opts, spec));
+        candidates.extend(self.detect_city_word_number(text, text_lower, opts, spec));
         candidates
     }
 
@@ -1736,7 +1921,7 @@ impl Detector {
 
     /// "city, capitalized word(s), number" (e.g. "Хабаровск, Маршала Жукова, 188",
     /// "Вольск, Рокоссовского, 131") -> address 0.7.
-    fn detect_city_word_number(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+    fn detect_city_word_number(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         for (start, end, lower, is_cap) in cyrillic_words(text) {
             if !is_cap || !self.dicts.contains("cities", &lower) {
@@ -1745,7 +1930,7 @@ impl Detector {
             if let Some((span_start, span_end)) = self.city_word_number_span(text, start, end) {
                 // A non-pii marker (юридический адрес, пункт выдачи, отделение, офис, банк...)
                 // suppresses the address.
-                if self.has_global_non_pii_near(text, span_start, span_end) {
+                if self.has_global_non_pii_near(text, text_lower, span_start, span_end) {
                     continue;
                 }
                 if passes_threshold(0.7, opts) {
@@ -1812,8 +1997,8 @@ impl Detector {
     }
 
     /// Address: group of 2+ consecutive components (index, city, street, house, apartment, region).
-    fn detect_address(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
-        let mut candidates = self.detect_street_address(text, opts, spec);
+    fn detect_address(&self, text: &str, text_lower: Option<&str>, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
+        let mut candidates = self.detect_street_address(text, text_lower, opts, spec);
         let comps = self.find_address_components(text);
         if comps.is_empty() {
             return candidates;
@@ -1866,7 +2051,7 @@ impl Detector {
         }
         // An organization near the address is a negative signal.
         let non_pii = self.effective_non_pii_markers(spec);
-        if self.allowlist.org_near(text, start, end, 60, &non_pii) {
+        if self.allowlist.org_near(text, start, end, 60, non_pii) {
             conf -= 0.3;
         }
         conf = conf.clamp(0.0, 1.0);
@@ -2060,7 +2245,16 @@ impl Detector {
     fn detect_card_holder(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         self.card_holder_from_markers(text, opts, spec, &mut candidates);
-        self.card_holder_from_card_number(text, opts, spec, &mut candidates);
+        // Only scan for card-number-anchored holders when the text actually contains a card
+        // number; otherwise every name match would run the card-number regex on its window.
+        let has_card_number = self
+            .registry
+            .patterns("card_number")
+            .iter()
+            .any(|re| re.is_match(text));
+        if has_card_number {
+            self.card_holder_from_card_number(text, opts, spec, &mut candidates);
+        }
         candidates
     }
 
@@ -2121,7 +2315,7 @@ impl Detector {
             .get("card_holder")
             .map(|s| s.context_words.clone())
             .unwrap_or_default();
-        has_context_word_around(text, start, end, 40, &markers)
+        has_context_word_around(text, None, start, end, 40, &markers)
     }
 
     /// True if a card marker ("карта", "card", "номер карты", "№ карты") is near the span.
@@ -2251,7 +2445,8 @@ impl Detector {
         let last_word = &trimmed[last_word_start..];
         let last_word = last_word.trim_end_matches('.');
         let markers = &self.registry.context().street_markers;
-        markers.iter().any(|m| last_word.to_lowercase() == *m)
+        let last_word_lower = last_word.to_lowercase();
+        markers.contains(&last_word_lower)
     }
 
     /// True if the token at `start` is preceded by a city marker ("г.", "город").
@@ -2270,7 +2465,8 @@ impl Detector {
         let last_word = &trimmed[last_word_start..];
         let last_word = last_word.trim_end_matches('.');
         let markers = &self.registry.context().city_markers;
-        markers.iter().any(|m| last_word.to_lowercase() == *m)
+        let last_word_lower = last_word.to_lowercase();
+        markers.contains(&last_word_lower)
     }
 
     /// True if two address components are separated only by separators (comma, space, "г." etc.).
@@ -2475,19 +2671,61 @@ fn is_sentence_start(text: &str, start: usize) -> bool {
     trimmed.ends_with(['.', '!', '?', ';', '\n'])
 }
 
-fn has_context_word_around(text: &str, start: usize, end: usize, window: usize, words: &[String]) -> bool {
-    let before = context_window_before(text, start, window).to_lowercase();
-    let after = context_window_after(text, end, window).to_lowercase();
+fn has_context_word_around(
+    text: &str,
+    text_lower: Option<&str>,
+    start: usize,
+    end: usize,
+    window: usize,
+    words: &[String],
+) -> bool {
+    let before: &str;
+    let after: &str;
+    let before_owned;
+    let after_owned;
+    match text_lower {
+        Some(l) => {
+            before = context_window_before(l, start, window);
+            after = context_window_after(l, end, window);
+        }
+        None => {
+            before_owned = context_window_before(text, start, window).to_lowercase();
+            after_owned = context_window_after(text, end, window).to_lowercase();
+            before = &before_owned;
+            after = &after_owned;
+        }
+    }
     words.iter().any(|w| before.contains(w) || after.contains(w))
 }
 
 /// Like `has_context_word_around` but a single-word marker must appear as a standalone word
 /// (word boundaries), so "например" does not match the marker "пример". Multi-word markers
 /// (containing a space) still match as substrings.
-fn has_context_word_around_wb(text: &str, start: usize, end: usize, window: usize, words: &[String]) -> bool {
-    let before = context_window_before(text, start, window).to_lowercase();
-    let after = context_window_after(text, end, window).to_lowercase();
-    words.iter().any(|w| contains_word_boundary(&before, w) || contains_word_boundary(&after, w))
+fn has_context_word_around_wb(
+    text: &str,
+    text_lower: Option<&str>,
+    start: usize,
+    end: usize,
+    window: usize,
+    words: &[String],
+) -> bool {
+    let before: &str;
+    let after: &str;
+    let before_owned;
+    let after_owned;
+    match text_lower {
+        Some(l) => {
+            before = context_window_before(l, start, window);
+            after = context_window_after(l, end, window);
+        }
+        None => {
+            before_owned = context_window_before(text, start, window).to_lowercase();
+            after_owned = context_window_after(text, end, window).to_lowercase();
+            before = &before_owned;
+            after = &after_owned;
+        }
+    }
+    words.iter().any(|w| contains_word_boundary(before, w) || contains_word_boundary(after, w))
 }
 
 /// True if `needle` appears in `haystack` as a standalone word (not inside a longer word).
