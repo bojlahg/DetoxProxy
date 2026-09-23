@@ -539,3 +539,108 @@ fn address_city_that_is_part_of_fio_not_attached() {
         .unwrap_or_else(|| panic!("address not found in {:?}", entities));
     assert_eq!(&text[addr.start..addr.end], "ш. Ростовская 178 кв. 299");
 }
+
+#[test]
+fn biography_birth_place_and_date_not_masked() {
+    // A birth place and a historical birth date whose nearest FIO to the left is a known
+    // person (dropped by the biographical marker "поэт") are biographical references, not a
+    // client's data, and must not be masked at all.
+    assert_not_found_with_allowlist(
+        "Поэт Александр Сергеевич Пушкин родился 6 июня 1799 года в Москве.",
+        "birth_place",
+    );
+    assert_not_found_with_allowlist(
+        "Поэт Александр Сергеевич Пушкин родился 6 июня 1799 года в Москве.",
+        "birth_date",
+    );
+    assert_not_found_with_allowlist(
+        "Поэт Александр Сергеевич Пушкин родился 6 июня 1799 года в Москве.",
+        "fio",
+    );
+    // A known person dropped by the known-person rule (no biographical marker) also drops the
+    // birth place and the historical date.
+    assert_not_found_with_allowlist(
+        "Лев Николаевич Толстой родился в Ясной Поляне в 1828 году.",
+        "birth_place",
+    );
+    assert_not_found_with_allowlist(
+        "Лев Николаевич Толстой родился в Ясной Поляне в 1828 году.",
+        "birth_date",
+    );
+    assert_not_found_with_allowlist(
+        "Лев Николаевич Толстой родился в Ясной Поляне в 1828 году.",
+        "fio",
+    );
+}
+
+#[test]
+fn address_does_not_cross_a_date() {
+    // A date is always a date: the address span must not swallow the leading number of a
+    // date (e.g. "ПУШКИН АЛЕКСАНДР СЕРГЕЕВИЧ, 06" must not become an address crossing
+    // "06.06.1988"). The FIO and the birth date are detected separately.
+    let text = "Наш клиент ПУШКИН АЛЕКСАНДР СЕРГЕЕВИЧ, 06.06.1988 г.р.";
+    let entities = detect_with_allowlist(text);
+    let fio = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio not found in {:?}", entities));
+    assert_eq!(&text[fio.start..fio.end], "ПУШКИН АЛЕКСАНДР СЕРГЕЕВИЧ");
+    let bd = entities
+        .iter()
+        .find(|e| e.type_id == "birth_date")
+        .unwrap_or_else(|| panic!("birth_date not found in {:?}", entities));
+    assert_eq!(&text[bd.start..bd.end], "06.06.1988");
+    assert!(
+        !entities.iter().any(|e| e.type_id == "address"),
+        "address should not be found in {:?}",
+        entities
+    );
+}
+
+#[test]
+fn client_fio_birth_date_address() {
+    // A client's FIO, birth date and address are all detected independently.
+    let text = "Клиент Иванов Иван, 12.03.1985 г.р., проживает: Москва, ул. Лесная, дом 17";
+    let entities = detect(text);
+    let fio = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio not found in {:?}", entities));
+    assert_eq!(&text[fio.start..fio.end], "Иванов Иван");
+    let bd = entities
+        .iter()
+        .find(|e| e.type_id == "birth_date")
+        .unwrap_or_else(|| panic!("birth_date not found in {:?}", entities));
+    assert_eq!(&text[bd.start..bd.end], "12.03.1985");
+    let addr = entities
+        .iter()
+        .find(|e| e.type_id == "address")
+        .unwrap_or_else(|| panic!("address not found in {:?}", entities));
+    assert_eq!(&text[addr.start..addr.end], "Москва, ул. Лесная, дом 17");
+}
+
+#[test]
+fn birth_date_year_first_formats() {
+    // Year-first formats: yyyy.dd.mm (day > 12 disambiguates), yyyy.mm.dd (otherwise), and
+    // yyyy-mm-dd.
+    assert_span("Дата рождения клиента: 1985.31.12", "birth_date", "1985.31.12");
+    assert_span("Дата рождения клиента: 1985.12.31", "birth_date", "1985.12.31");
+    assert_span("Дата рождения клиента: 1985-12-31", "birth_date", "1985-12-31");
+}
+
+#[test]
+fn birth_place_for_client_not_celebrity() {
+    // A client (not a known person) born in a city: the birth place is masked.
+    let text = "Клиент родился в Москве, паспорт 4509 123456";
+    let entities = detect(text);
+    let bp = entities
+        .iter()
+        .find(|e| e.type_id == "birth_place")
+        .unwrap_or_else(|| panic!("birth_place not found in {:?}", entities));
+    assert_eq!(&text[bp.start..bp.end], "Москве");
+    let pp = entities
+        .iter()
+        .find(|e| e.type_id == "passport")
+        .unwrap_or_else(|| panic!("passport not found in {:?}", entities));
+    assert_eq!(&text[pp.start..pp.end], "4509 123456");
+}

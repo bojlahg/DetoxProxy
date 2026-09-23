@@ -759,12 +759,18 @@ impl Detector {
 
         self.apply_neighbor_boost(text, &mut candidates);
         self.detect_card_context_cvv_pin(text, opts, &enabled, &mut candidates);
-        self.drop_bare_public_persons(text, opts, &mut candidates);
+        // Collect every detected FIO span before `drop_bare_public_persons` removes the
+        // biographical references (known persons without a strong PII marker). These dropped
+        // FIOs must still be visible to `drop_historical_dates_bound_to_biography` and
+        // `drop_biography_birth_places`, which drop a historical date / birth place whose
+        // nearest FIO to the left is a biographical reference (e.g. "Поэт Александр Сергеевич
+        // Пушкин родился 6 июня 1799 года в Москве").
         let all_fios: Vec<(usize, usize)> = candidates
             .iter()
             .filter(|e| e.type_id == "fio")
             .map(|e| (e.start, e.end))
             .collect();
+        self.drop_bare_public_persons(text, opts, &mut candidates);
         let mut result = resolve_overlaps(candidates);
         self.drop_biography_fios(text, &mut result);
         self.drop_historical_dates_bound_to_biography(text, &mut result, &all_fios);
@@ -2750,11 +2756,34 @@ impl Detector {
             .filter(|e| e.type_id == "fio")
             .map(|e| (e.start, e.end))
             .collect();
+        // Date spans already detected (birth_date / passport_issue_date precede address in the
+        // registry). A date is always a date: the address span must never cross a found date
+        // (e.g. "ПУШКИН АЛЕКСАНДР СЕРГЕЕВИЧ, 06.06.1988 г.р." must not become an address that
+        // swallows the leading "06" of the date).
+        let date_spans: Vec<(usize, usize)> = candidates
+            .iter()
+            .filter(|e| e.type_id == "birth_date" || e.type_id == "passport_issue_date")
+            .map(|e| (e.start, e.end))
+            .collect();
         let mut candidates = self.detect_street_address(text, text_lower, opts, spec, &fio_spans);
         let comps = self.find_address_components(text, &fio_spans);
-        if comps.is_empty() {
-            return candidates;
-        }
+        self.push_address_groups(text, opts, spec, &comps, &mut candidates);
+        // An address span that crosses a found date is not an address: the date is always a
+        // date (e.g. "ПУШКИН АЛЕКСАНДР СЕРГЕЕВИЧ, 06" crossing "06.06.1988").
+        candidates.retain(|e| !date_spans.iter().any(|(ds, de)| e.start < *de && *ds < e.end));
+        candidates
+    }
+
+    /// Builds an address entity for each maximal run of 2+ adjacent components and pushes it
+    /// into `candidates`.
+    fn push_address_groups(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        comps: &[(usize, usize)],
+        candidates: &mut Vec<Entity>,
+    ) {
         let mut i = 0;
         while i < comps.len() {
             let mut j = i + 1;
@@ -2769,7 +2798,6 @@ impl Detector {
             }
             i = j;
         }
-        candidates
     }
 
     /// Builds an address entity for a group of adjacent components, or None when rejected.
@@ -4384,8 +4412,9 @@ pub mod validators {
         control == actual
     }
 
-    /// Accepts dd.mm.yyyy, dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd, mm.dd.yyyy (ambiguous both ways),
-    /// and textual Russian dates ("5 мая 1985", "пятого мая 1985").
+    /// Accepts dd.mm.yyyy, dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd, yyyy.mm.dd, yyyy.dd.mm
+    /// (a day > 12 disambiguates the order, otherwise yyyy.mm.dd), mm.dd.yyyy (ambiguous both
+    /// ways), and textual Russian dates ("5 мая 1985", "пятого мая 1985").
     pub fn date(s: &str) -> bool {
         let s = s.trim();
         if let Some((d, m, y)) = parse_textual_date(s) {
@@ -4426,7 +4455,11 @@ pub mod validators {
         let b: i32 = parts[1].trim().parse().ok()?;
         let c: i32 = parts[2].trim().parse().ok()?;
         if a >= 1000 {
-            // yyyy-mm-dd
+            // Year first: yyyy.mm.dd / yyyy.dd.mm / yyyy-mm-dd. A day > 12 unambiguously
+            // determines the order (yyyy.dd.mm); otherwise the format is yyyy.mm.dd.
+            if b > 12 {
+                return Some((b as u32, c as u32, a));
+            }
             return Some((c as u32, b as u32, a));
         }
         let year = if c < 100 {
