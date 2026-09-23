@@ -125,3 +125,58 @@ fn passport_issuer_mfc() {
     assert_span("Кем выдан: МФЦ района Ясенево.", "passport_issuer", "МФЦ района Ясенево");
     assert_span("орган выдачи — МФЦ района Ясенево.", "passport_issuer", "МФЦ района Ясенево");
 }
+
+#[test]
+fn passport_issuer_and_date_after_organ() {
+    // Date after the organ (through a space): the organ is the issuer, the date is the issue
+    // date, and the date must not be split into passports.
+    assert_span(
+        "паспорт серия 3604 номер 123456, выдан ГУ МВД России по Самарской области 12.01.2006, код подразделения 630-001",
+        "passport_issuer",
+        "ГУ МВД России по Самарской области",
+    );
+    assert_span(
+        "паспорт серия 3604 номер 123456, выдан ГУ МВД России по Самарской области 12.01.2006, код подразделения 630-001",
+        "passport_issue_date",
+        "12.01.2006",
+    );
+    assert_not_found(
+        "паспорт серия 3604 номер 123456, выдан ГУ МВД России по Самарской области 12.01.2006, код подразделения 630-001",
+        "fio",
+    );
+}
+
+#[test]
+fn passport_issuer_and_date_before_organ() {
+    // Date right after the marker, before the organ: the date is skipped, the organ follows.
+    assert_span(
+        "паспорт серия 3604 номер 123456, выдан 12.01.2006 ГУ МВД России по Самарской области, код подразделения 630-001",
+        "passport_issuer",
+        "ГУ МВД России по Самарской области",
+    );
+    assert_span(
+        "паспорт серия 3604 номер 123456, выдан 12.01.2006 ГУ МВД России по Самарской области, код подразделения 630-001",
+        "passport_issue_date",
+        "12.01.2006",
+    );
+    assert_not_found(
+        "паспорт серия 3604 номер 123456, выдан 12.01.2006 ГУ МВД России по Самарской области, код подразделения 630-001",
+        "fio",
+    );
+}
+
+#[test]
+fn passport_issuer_and_textual_date_before_organ() {
+    // Textual date with "г." right after the marker, before the organ.
+    assert_span(
+        "Паспорт 4509 123456 выдан 05 марта 2010 г. ОУФМС России по г. Москве",
+        "passport_issuer",
+        "ОУФМС России по г. Москве",
+    );
+    assert_span(
+        "Паспорт 4509 123456 выдан 05 марта 2010 г. ОУФМС России по г. Москве",
+        "passport_issue_date",
+        "05 марта 2010 г.",
+    );
+    assert_not_found("Паспорт 4509 123456 выдан 05 марта 2010 г. ОУФМС России по г. Москве", "fio");
+}

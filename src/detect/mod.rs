@@ -216,6 +216,10 @@ pub struct Detector {
     /// word boundaries, multi-word markers as substrings). Used to check non-PII context in a
     /// single regex match instead of scanning every marker.
     non_pii_marker_re_by_type: HashMap<String, Option<Regex>>,
+    /// Lowercased words that can never be part of a FIO: issuer abbreviations (ГУ, МВД,
+    /// УФМС, ОУФМС, ОВД, УМВД, ОМВД, ТП...) and address abbreviations. Built once from the
+    /// registry's `issuer_prefixes` and `abbreviation_words`.
+    issuer_abbrev_words: HashSet<String>,
 }
 
 /// Marker types that use the nearest-left-marker rule to resolve context.
@@ -277,6 +281,27 @@ fn build_non_address_context_words(registry: &Registry) -> HashSet<String> {
     }
     for m in DOCUMENT_MARKERS {
         set.insert(m.to_string());
+    }
+    set
+}
+
+/// Builds the set of lowercased words that can never be part of a FIO: issuer abbreviations
+/// (ГУ, МВД, УФМС, ОУФМС, ОВД, УМВД, ОМВД, ТП...) and address abbreviations. Taken from the
+/// registry's `issuer_prefixes` (split into words) and `abbreviation_words`. Single-letter
+/// abbreviations (г, с, п, д, к) are excluded: they are also valid initials in a FIO.
+fn build_issuer_abbrev_words(registry: &Registry) -> HashSet<String> {
+    let mut set: HashSet<String> = HashSet::new();
+    for p in &registry.context().issuer_prefixes {
+        for w in p.split_whitespace() {
+            if w.chars().count() >= 2 {
+                set.insert(w.to_lowercase());
+            }
+        }
+    }
+    for w in &registry.context().abbreviation_words {
+        if w.chars().count() >= 2 {
+            set.insert(w.to_lowercase());
+        }
     }
     set
 }
@@ -406,6 +431,7 @@ fn build_fio_marker_re(registry: &Registry) -> Option<Regex> {
 impl Detector {
     pub fn new(registry: std::sync::Arc<Registry>, dicts: std::sync::Arc<Dictionaries>) -> Self {
         let caches = build_caches(&registry);
+        let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
         Self {
             registry,
             dicts,
@@ -418,6 +444,7 @@ impl Detector {
             pii_markers_by_type: caches.pii_markers_by_type,
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
+            issuer_abbrev_words,
         }
     }
 
@@ -428,6 +455,7 @@ impl Detector {
         allowlist: Allowlist,
     ) -> Self {
         let caches = build_caches(&registry);
+        let issuer_abbrev_words = build_issuer_abbrev_words(&registry);
         Self {
             registry,
             dicts,
@@ -440,6 +468,7 @@ impl Detector {
             pii_markers_by_type: caches.pii_markers_by_type,
             non_pii_markers_by_type: caches.non_pii_markers_by_type,
             non_pii_marker_re_by_type: caches.non_pii_marker_re_by_type,
+            issuer_abbrev_words,
         }
     }
 
@@ -660,6 +689,12 @@ impl Detector {
         // A number right after a document marker (накладная, партия, счёт-фактура, артикул,
         // инвентарный номер, тикет, заказ) is a document number, not a passport.
         if spec.id == "passport" && self.has_document_marker_before(text, start) {
+            return None;
+        }
+        // A span that is part of a valid date (dd.mm.yyyy, dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd)
+        // is a date, not a passport or part of one (e.g. "12.01.2006" must not be split into
+        // "12.01" and "2006" passports).
+        if spec.id == "passport" && is_part_of_date(text, start, end) {
             return None;
         }
         let (conf, skip_context_boost) =
@@ -1076,6 +1111,11 @@ impl Detector {
             .filter(|(i, t)| {
                 // A context marker word (e.g. "Клиент", "Поэт") never belongs to a FIO span.
                 if self.is_marker_word(&t.lower) {
+                    return false;
+                }
+                // An issuer abbreviation (ГУ, МВД, УФМС, ОУФМС, ОВД...) or an address
+                // abbreviation never belongs to a FIO span (e.g. "ГУ МВД России" is an organ).
+                if self.issuer_abbrev_words.contains(&t.lower) {
                     return false;
                 }
                 // A greeting word (e.g. "Уважаемая", "Дорогой") never belongs to a FIO span.
@@ -1907,7 +1947,10 @@ impl Detector {
 
     /// Passport issuer: text after a marker up to a date / subdivision code / period.
     /// Markers: "выдан", "выдано", "кем выдан", "орган выдачи" (optionally "кем выдан (N):").
-    /// The phrase must start with an issuer prefix from the registry.
+    /// The phrase must start with an issuer prefix from the registry. A leading date right
+    /// after the marker is skipped. A date right after the organ (through space or comma) is
+    /// emitted as a `passport_issue_date` even when the "выдан" marker is beyond the date's
+    /// context window.
     fn detect_passport_issuer(&self, text: &str, opts: &DetectOptions<'_>, spec: &TypeSpec) -> Vec<Entity> {
         let mut candidates = Vec::new();
         let prefixes = &self.registry.context().issuer_prefixes;
@@ -1919,9 +1962,36 @@ impl Detector {
                 if conf >= opts.min_confidence {
                     candidates.push(Entity { type_id: spec.id.clone(), start, end, confidence: conf });
                 }
+                self.push_issue_date_after_issuer(text, opts, end, &mut candidates);
             }
         }
         candidates
+    }
+
+    /// Emits a `passport_issue_date` entity for a date right after the issuer organ (through
+    /// a space or comma), even when the "выдан" marker is beyond the date's context window.
+    fn push_issue_date_after_issuer(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        issuer_end: usize,
+        candidates: &mut Vec<Entity>,
+    ) {
+        let Some((ds, de)) = date_after_issuer(text, issuer_end) else {
+            return;
+        };
+        if date_in_future(&text[ds..de]) {
+            return;
+        }
+        let dconf = 0.6f32;
+        if dconf >= opts.min_confidence {
+            candidates.push(Entity {
+                type_id: "passport_issue_date".to_string(),
+                start: ds,
+                end: de,
+                confidence: dconf,
+            });
+        }
     }
 
     /// Street + house number without "д." (e.g. "ул. Гагарина 28", "пр. Победы 45 кв 89",
@@ -3237,17 +3307,33 @@ fn is_country(lower: &str, dicts: &Dictionaries, suffixes: &[String]) -> bool {
     false
 }
 
-/// Extracts the passport issuer phrase after a marker.
+/// Extracts the passport issuer phrase after a marker. A leading date (numeric or textual,
+/// with an optional "г."/"года" suffix) right after the marker is skipped before the organ
+/// is searched (e.g. "выдан 12.01.2006 ГУ МВД ...").
 fn extract_issuer_after(text: &str, from: usize, prefixes: &[String], abbrev: &[String]) -> Option<(usize, usize)> {
     let rest = &text[from..];
-    let stop = issuer_phrase_end(rest, abbrev);
-    let phrase = &rest[..stop];
     // Skip leading whitespace, colons, commas, dashes and a parenthesized number
     // (e.g. "кем выдан (12): ОВД ...").
-    let trimmed_start = phrase
+    let trimmed_start = rest
         .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
-        .unwrap_or(phrase.len());
-    let phrase = &phrase[trimmed_start..];
+        .unwrap_or(rest.len());
+    let mut offset = trimmed_start;
+    let mut tail = &rest[offset..];
+    // Skip a leading date (numeric or textual, with optional "г."/"года") that may precede
+    // the organ (e.g. "выдан 12.01.2006 ГУ МВД ...", "выдан 05 марта 2010 г. ОУФМС ...").
+    if let Some(m) = ISSUER_LEADING_DATE_RE.find(tail) {
+        if m.start() == 0 {
+            offset += m.end();
+            tail = &tail[m.end()..];
+            let skip = tail
+                .find(|c: char| !c.is_whitespace() && !matches!(c, ':' | ',' | '—' | '-'))
+                .unwrap_or(tail.len());
+            offset += skip;
+            tail = &tail[skip..];
+        }
+    }
+    let stop = issuer_phrase_end(tail, abbrev);
+    let phrase = &tail[..stop];
     let trimmed_end = phrase
         .trim_end_matches(|c: char| c.is_whitespace() || c == ',' || c == '.')
         .len();
@@ -3259,9 +3345,54 @@ fn extract_issuer_after(text: &str, from: usize, prefixes: &[String], abbrev: &[
     if !prefixes.iter().any(|p| lower.starts_with(p.as_str())) {
         return None;
     }
-    let start = from + trimmed_start;
+    let start = from + offset;
     let end = start + phrase.len();
     Some((start, end))
+}
+
+/// Finds a date immediately after the issuer organ (through a space or a comma). Returns the
+/// date span (including a trailing "г."/"года" suffix), or None. Used to detect the issue
+/// date when the "выдан" marker is further than the date's context window.
+fn date_after_issuer(text: &str, from: usize) -> Option<(usize, usize)> {
+    let rest = &text[from..];
+    let skip = rest
+        .find(|c: char| !c.is_whitespace() && c != ',')
+        .unwrap_or(rest.len());
+    let tail = &rest[skip..];
+    let m = ISSUER_LEADING_DATE_RE.find(tail)?;
+    if m.start() != 0 {
+        return None;
+    }
+    let start = from + skip + m.start();
+    let end = from + skip + m.end();
+    Some((start, end))
+}
+
+/// True if the span [start, end) is part of a valid numeric date (dd.mm.yyyy, dd/mm/yyyy,
+/// dd-mm-yyyy, yyyy-mm-dd). The span is expanded to the maximal run of digits and date
+/// separators around it, then validated. A passport candidate that is part of a date (e.g.
+/// "12.01" or "2006" inside "12.01.2006") is rejected.
+fn is_part_of_date(text: &str, start: usize, end: usize) -> bool {
+    let mut s = start;
+    let before = &text[..start];
+    while s > 0 {
+        let prev = before[..s].chars().next_back().unwrap();
+        if prev.is_ascii_digit() || matches!(prev, '.' | '/' | '-') {
+            s -= prev.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let mut e = end;
+    let after = &text[end..];
+    for c in after.chars() {
+        if c.is_ascii_digit() || matches!(c, '.' | '/' | '-') {
+            e += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    validators::date(&text[s..e])
 }
 
 /// Extracts a card holder name (2-3 capitalized or all-caps words, Cyrillic or Latin) right
@@ -3823,6 +3954,15 @@ static ISSUER_MARKER_RE: Lazy<Regex> = Lazy::new(|| {
 /// Matches the start of a date (numeric or textual) at the current position.
 static ISSUER_DATE_START_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|^\d{1,2}\s+[а-яё]+\s+\d{2,4}\b").unwrap()
+});
+/// Matches a full date (numeric or textual) with an optional trailing "г."/"года" suffix at
+/// the start of the slice. Used to skip a date right after an issuer marker and to detect a
+/// date right after the issuer organ.
+static ISSUER_LEADING_DATE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s*(?:г\.|года)?|^\d{1,2}\s+[а-яё]+\s+\d{2,4}\s*(?:г\.|года)?",
+    )
+    .unwrap()
 });
 /// 2-3 capitalized or all-caps words (Cyrillic or Latin), e.g. "Иванов Петров",
 /// "ИВАНОВ ПЕТРОВ", "IVAN PETROV".
