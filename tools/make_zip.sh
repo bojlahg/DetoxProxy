@@ -5,7 +5,7 @@
 # Before zipping, the whole exported folder is scanned (file names and contents of every file,
 # case-insensitive) for "claude" and other orchestrator traces; any hit aborts and no zip is created.
 set -euo pipefail
-out="${1:-../submission/DetoxProxy-$(git rev-parse --short HEAD).zip}"
+out="${1:-.work/submission/DetoxProxy-$(git rev-parse --short HEAD).zip}"
 paths=(
   README.md opencode.json Cargo.toml Cargo.lock config.yaml
   src data static ':(glob)tests/*.rs'

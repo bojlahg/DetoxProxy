@@ -15,8 +15,9 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 git archive "$rev" | tar -x -C "$work/"
 bin_name="$(sed -n 's/^name *= *"\(.*\)"/\1/p' "$work/Cargo.toml" | head -1)"
-mkdir -p /d/Hackaton/linux-build-cache
-MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$work"):/src" -v "D:/Hackaton/linux-build-cache:/cache" \
+cache="$(git rev-parse --show-toplevel)/.work/linux-build-cache"
+mkdir -p "$cache"
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(cygpath -w "$work"):/src" -v "$(cygpath -w "$cache"):/cache" \
   -w /src -e CARGO_HOME=/cache/cargo rust:1-bookworm \
   sh -c "find /src -name '*.rs' -newermt '@0' -exec touch {} + && cargo clean -p $bin_name --release --target-dir /cache/target 2>/dev/null; cargo build --release --target-dir /cache/target 2>&1 | tail -1 && cp /cache/target/release/$bin_name /src/app-linux"
 mkdir -p "$work/pkg"

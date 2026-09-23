@@ -7,7 +7,7 @@
 # First run starts a local SonarQube container (community, port 19000) and stores the admin
 # password and token under the scratch dir; later runs reuse them. Docker required.
 set -euo pipefail
-zip="${1:-$(ls -t ../submission/DetoxProxy-*.zip | head -1)}"
+zip="${1:-$(ls -t .work/submission/DetoxProxy-*.zip | head -1)}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unzip -q "$zip" -d "$work"

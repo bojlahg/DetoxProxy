@@ -72,3 +72,11 @@ Desktop.ini
 **/redis-data/
 check-modes-config.yaml
 check-modes.log
+
+# --- Local working data (orchestrator): datasets, build cache, submission zips, baselines ---
+.work/
+target-zip/
+logs/
+docs/loadtest/
+check-process-config.yaml
+compare-*.yaml

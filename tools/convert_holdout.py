@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Converts external PII benchmarks (downloaded from Hugging Face) into the tests/data jsonl format.
 
-  python tools/convert_holdout.py --src D:/Hackaton/reference/datasets/hf --out tests/data/holdout
+  python tools/convert_holdout.py --src .work/reference/datasets/hf --out tests/data/holdout
 
 Output rows: {"id", "text", "entities": [{"type", "start", "end", "text", "src_type"}], "source", "tags"}
 Offsets are char offsets. Types are mapped to the dataset taxonomy used by tools/eval_dataset.py
@@ -127,7 +127,7 @@ def alrosait(src):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default=r"D:\Hackaton\reference\datasets\hf")
+    ap.add_argument("--src", default=".work/reference/datasets/hf")
     ap.add_argument("--out", default="tests/data/holdout")
     a = ap.parse_args()
     write(os.path.join(a.out, "hivetrace_pii_bench.jsonl"), hivetrace(a.src))

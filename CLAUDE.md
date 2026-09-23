@@ -25,8 +25,9 @@ Zip — только `tools/make_zip.sh` (из закоммиченного HEAD
 ## Параллельные дорожки (с 22.09 21:00)
 
 - A — `D:\Hackaton\AlfaGen` (master): всё, что трогает `src/detect`, `data/`.
-- B — `D:\Hackaton\AlfaGen-b` (ветка `lane-b`): `src/server`, `src/store`, `src/obs`, `src/llm`, `src/morph`, `src/mask`.
-- hotfix — `D:\Hackaton\AlfaGen-hf` (ветка `hotfix`): срочные правки и сборка объединённой ревизии для деплоя, пока в master работает агент.
+- B — `.work/lanes/b` (ветка `lane-b`): `src/server`, `src/store`, `src/obs`, `src/llm`, `src/morph`, `src/mask`.
+- hotfix — `.work/lanes/hf` (ветка `hotfix`): срочные правки и сборка объединённой ревизии для деплоя, пока в master работает агент.
+- Рабочие деревья создаются по требованию: `git worktree add .work/lanes/b lane-b` (после `git branch -f lane-b master`), удаляются `git worktree remove`. **Вне `D:\Hackaton\AlfaGen` ничего не создавать** — все рабочие данные (наборы, кэш сборки, архивы, эталонные бинарники) лежат в `.work/` под `.gitignore` (решение пользователя 23.09).
 - Пока агент работает в дорожке, **в её ветку не коммитить** (ложный AGENT_COMMITTED/PROTECTED_FILE_CHANGED). Объединять ветки в свободном worktree, там же полная приёмка, потом `deploy.sh <rev>`.
 - Порты приёмки разные: `MANUAL_PORT`, `EVAL_PORT`, `check_process --port`.
 
