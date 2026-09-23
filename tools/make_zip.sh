@@ -12,7 +12,7 @@ paths=(
   tools/check_process.py tools/check_modes.py tools/big_text_check.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py
   docs/LICENSES.md docs/brief/manual-test-cases.md tests/manual_expect.json
 )
-for extra in Dockerfile .dockerignore docs/ARCHITECTURE.md docs/JURY.md docs/MASKS.md docs/QUALITY.md docs/LOAD.md docs/LIMITATIONS.md docs/DEMO.md; do
+for extra in AGENTS.md docs/PROCESS.md Dockerfile .dockerignore docs/ARCHITECTURE.md docs/JURY.md docs/MASKS.md docs/QUALITY.md docs/LOAD.md docs/LIMITATIONS.md docs/DEMO.md; do
   git cat-file -e "HEAD:$extra" 2>/dev/null && paths+=("$extra")
 done
 
@@ -22,14 +22,15 @@ git archive --format=tar --prefix=DetoxProxy/ HEAD -- "${paths[@]}" ':(exclude)d
 
 echo "scanning $(find "$stage" -type f | wc -l) files in the folder to be zipped..."
 fail=0
-name_hits="$(cd "$stage" && find . -iname '*claude*' -o -iname 'AGENTS.md' -o -iname '*.env')"
+name_hits="$(cd "$stage" && find . -iname '*claude*' -o -iname '*.env')"
 if [ -n "$name_hits" ]; then echo "FORBIDDEN FILE NAMES:"; echo "$name_hits"; fail=1; fi
-if (cd "$stage" && grep -rnia "claude" .); then echo "FOUND 'claude'"; fail=1; fi
+# The disclosure of how the specs were prepared lives only in these files.
+if (cd "$stage" && grep -rnia "claude" . | grep -vE '^\./DetoxProxy/(AGENTS\.md|README\.md|docs/PROCESS\.md):'); then echo "FOUND 'claude' outside the disclosure files"; fail=1; fi
 if (cd "$stage" && grep -rnaiE "anthropic|оркестр|orchestrat|chatgpt|codex|\bopus\b|\bsonnet\b" . | grep -v "/Cargo.lock:"); then
   echo "FOUND other orchestrator traces"; fail=1
 fi
 if [ "$fail" != 0 ]; then echo "zip NOT created"; exit 1; fi
-echo "scan clean: no 'claude' anywhere"
+echo "scan clean: mentions only in AGENTS.md, README.md, docs/PROCESS.md"
 
 mkdir -p "$(dirname "$out")"
 out_abs="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"
