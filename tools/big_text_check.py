@@ -11,7 +11,7 @@ the restored text equals the original, no original passport/card/phone digits in
 masking time is under --limit-ms. With --bin it starts the binary on a spare port with config.yaml.
 Exit 0 only when every text passes. Only stdlib.
 """
-import argparse, json, os, random, re, subprocess, sys, time, urllib.error, urllib.request
+import argparse, itertools, json, os, re, subprocess, sys, time, urllib.error, urllib.request, uuid
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -27,11 +27,11 @@ SECRETS = ["4509 123456", "4276 3800 1234 5678", "345-67-89"]
 
 
 def build(kind, chars):
-    rnd = random.Random(kind)
     pool = list(SENTENCES.values()) if kind == "mix" else [SENTENCES[kind]]
     parts, n = [], 0
-    while n < chars:
-        s = rnd.choice(pool)
+    for s in itertools.cycle(pool):
+        if n >= chars:
+            break
         parts.append(s)
         n += len(s) + 1
     return " ".join(parts)
@@ -65,6 +65,27 @@ def start(binary, port):
     sys.exit("binary did not start")
 
 
+def check_one(base, kind, chars, limit_ms):
+    """Masks and restores one text; returns (masked_ms, list of problems)."""
+    text = build(kind, chars)
+    pid = f"big-{kind}-{uuid.uuid4().hex}"
+    code, masked, mask_ms = post(base, text, pid)
+    if code != 200:
+        return len(text), mask_ms, [f"mask HTTP {code}"]
+    problems = []
+    if mask_ms > limit_ms:
+        problems.append(f"mask {mask_ms:.0f} ms > {limit_ms:.0f} ms")
+    leaked = [s for s in SECRETS if s in text and s in masked]
+    if leaked:
+        problems.append("leak " + ", ".join(leaked))
+    code2, restored, _ = post(base, masked, pid)
+    if code2 != 200:
+        problems.append(f"unmask HTTP {code2}")
+    elif restored != text:
+        problems.append("restored text differs")
+    return len(text), mask_ms, problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin")
@@ -73,36 +94,20 @@ def main():
     ap.add_argument("--chars", type=int, default=400_000)
     ap.add_argument("--limit-ms", type=float, default=1500)
     a = ap.parse_args()
+    if not (a.bin or a.url):
+        sys.exit("--bin or --url is required")
     proc = path = None
     if a.bin:
         proc, base, path = start(a.bin, a.port)
-    elif a.url:
-        base = a.url.rstrip("/")
     else:
-        sys.exit("--bin or --url is required")
+        base = a.url.rstrip("/")
     failed = 0
     try:
         for kind in list(SENTENCES) + ["mix"]:
-            text = build(kind, a.chars)
-            pid = f"big-{kind}-{random.randrange(10**12)}"
-            code, masked, mask_ms = post(base, text, pid)
-            problems = []
-            if code != 200:
-                problems.append(f"mask HTTP {code}")
-            else:
-                if mask_ms > a.limit_ms:
-                    problems.append(f"mask {mask_ms:.0f} ms > {a.limit_ms:.0f} ms")
-                leaked = [s for s in SECRETS if s in text and s in masked]
-                if leaked:
-                    problems.append("leak " + ", ".join(leaked))
-                code2, restored, _ = post(base, masked, pid)
-                if code2 != 200:
-                    problems.append(f"unmask HTTP {code2}")
-                elif restored != text:
-                    problems.append("restored text differs")
+            n, mask_ms, problems = check_one(base, kind, a.chars, a.limit_ms)
             failed += bool(problems)
             status = "FAIL " + "; ".join(problems) if problems else "ok"
-            print(f"{kind:8} {len(text):>8} chars  mask {mask_ms:7.0f} ms  {status}", flush=True)
+            print(f"{kind:8} {n:>8} chars  mask {mask_ms:7.0f} ms  {status}", flush=True)
     finally:
         if proc:
             proc.kill()
