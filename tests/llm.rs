@@ -131,7 +131,7 @@ async fn fake_upstream_echoes_tokens_and_restores() {
                 .find(|m| m["role"] == "user")
                 .and_then(|m| m["content"].as_str())
                 .unwrap();
-            let tokens: Vec<String> = regex::Regex::new(r"<<[A-Za-z_]+_\d+>>")
+            let tokens: Vec<String> = regex::Regex::new(r"<<[A-Za-z_]+_\d+(?::[а-яё]+)?>>")
                 .unwrap()
                 .find_iter(content)
                 .map(|m| m.as_str().to_string())
@@ -365,8 +365,8 @@ async fn autotest_demo_restores_values() {
     assert_eq!(st, 200, "body: {text}");
     let json: serde_json::Value = serde_json::from_str(&text).expect("valid json");
     let content = json["choices"][0]["message"]["content"].as_str().unwrap();
-    assert!(content.contains("Иванов Иван Иванович"), "content: {content}");
-    assert!(content.contains("7707083893"), "content: {content}");
+    assert!(content.contains("им: Иванов Иван Иванович"), "content: {content}");
+    assert!(content.contains("дат: Иванову Ивану Ивановичу"), "content: {content}");
 }
 
 #[tokio::test]

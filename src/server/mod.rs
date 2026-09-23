@@ -967,6 +967,7 @@ async fn chat_completions_handler(
         Err(resp) => return *resp,
     };
     let llm_cfg = cfg.llm.clone().unwrap_or_default();
+    let mode = if llm_cfg.upstream_url.is_some() { "upstream" } else { "demo" };
 
     let req: crate::llm::ChatRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
@@ -1021,7 +1022,7 @@ async fn chat_completions_handler(
     let restored_tokens = crate::obs::estimate_tokens(&restored);
     record_llm_metrics(&sys.id, prompt_tokens, completion_tokens, restored_tokens, llm_us);
 
-    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text, upstream_messages);
+    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text, upstream_messages, mode);
 
     let mut resp = build_chat_response(want_stream, &rid, model, restored, detox);
     resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -1079,6 +1080,7 @@ fn build_detox_debug(
     masked: &crate::llm::MaskedMessages,
     model_text: String,
     upstream_messages: Vec<crate::llm::MaskedMessage>,
+    mode: &str,
 ) -> Option<crate::llm::DetoxDebug> {
     if !want_debug || want_stream {
         return None;
@@ -1096,6 +1098,7 @@ fn build_detox_debug(
         masked_messages,
         upstream_messages,
         model_output: model_text,
+        mode: mode.to_string(),
     })
 }
 
@@ -1128,8 +1131,9 @@ fn mask_chat_request(
 /// model how to request a grammatical case for a placeholder token.
 const CASE_HINTS_PROMPT: &str = "Placeholders like <<FIO_1>> stand for hidden personal data. Keep them unchanged. If a Russian grammatical case is needed, append it inside the brackets: <<FIO_1:gen>>, <<FIO_1:dat>>, <<FIO_1:acc>>, <<FIO_1:ins>>, <<FIO_1:prep>>; nominative is <<FIO_1:nom>>.";
 
-/// Appends a grammatical-case suffix to every FIO token whose original is not in the nominative
-/// case, producing `<<FIO_1:дат>>`. Only applied when `llm.case_hints` is enabled.
+/// Appends a grammatical-case suffix to every FIO token, producing `<<FIO_1:дат>>` (or
+/// `<<FIO_1:им>>` for the nominative), so the original case is always visible in the request.
+/// Only applied when `llm.case_hints` is enabled.
 fn apply_case_hints(text: &str, mappings: &[Mapping]) -> String {
     let mut out = text.to_string();
     for m in mappings {
@@ -1137,9 +1141,6 @@ fn apply_case_hints(text: &str, mappings: &[Mapping]) -> String {
             continue;
         }
         let case = morph::detect_person_case(&m.original);
-        if case == morph::Case::Nom {
-            continue;
-        }
         let suffixed = format!("{}:{}>>", m.masked.trim_end_matches('>'), case.short_ru());
         out = out.replace(&m.masked, &suffixed);
     }

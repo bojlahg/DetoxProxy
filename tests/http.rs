@@ -1197,3 +1197,69 @@ async fn case_hints_disabled_no_system_message_no_suffix() {
     let content = msgs[0]["content"].as_str().unwrap();
     assert!(!content.contains("<<FIO_1:дат>>"), "no suffix expected: {content}");
 }
+
+#[tokio::test]
+async fn demo_mode_declension_table_and_mode() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши поздравление Ивану Иванову"}
+        ],
+        "stream": false
+    });
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &body,
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    assert_eq!(detox["mode"], "demo", "mode: {detox}");
+
+    let user = &detox["upstream_messages"][1];
+    assert_eq!(user["role"], "user", "upstream_messages[1]: {user}");
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:дат>>"), "upstream content: {content}");
+    assert!(!content.contains("Иванов"), "upstream leaked original: {content}");
+
+    let resp_content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(resp_content.contains("им: Иван Иванов"), "resp: {resp_content}");
+    assert!(resp_content.contains("род: Ивана Иванова"), "resp: {resp_content}");
+    assert!(resp_content.contains("дат: Ивану Иванову"), "resp: {resp_content}");
+    assert!(resp_content.contains("твор: Иваном Ивановым"), "resp: {resp_content}");
+}
+
+#[tokio::test]
+async fn demo_mode_nominative_fio_gets_nom_suffix() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо Иван Иванов"}
+        ],
+        "stream": false
+    });
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &body,
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let user = &detox["upstream_messages"][1];
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:им>>"), "upstream content: {content}");
+}

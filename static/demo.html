@@ -167,7 +167,7 @@
   </div>
 
   <div class="card">
-    <div class="hint" style="margin-bottom:10px">Система → DetoxProxy: маскирование → LLM → DetoxProxy: восстановление → Система</div>
+    <div class="hint" style="margin-bottom:10px" id="llmBlockHint">LLM не подключена (демо-режим): показываем, что уходит в модель, и как DetoxProxy восстанавливает метки во всех падежах. Реальная LLM подключается в config.yaml: llm.upstream_url.</div>
     <div class="field">
       <label for="llmReq">Запрос к LLM</label>
       <div class="examples" id="llmReqExamples"></div>
@@ -185,12 +185,12 @@
       <label for="llmSent">Ушло в LLM</label>
       <div class="out" id="llmSent"><span class="placeholder">Замаскированный запрос появится здесь</span></div>
     </div>
-    <div class="field" style="margin-top:12px">
+    <div class="field" style="margin-top:12px" id="llmModelField">
       <label for="llmModel">Ответила LLM</label>
       <div class="out" id="llmModel"><span class="placeholder">Ответ модели появится здесь</span></div>
     </div>
     <div class="field" style="margin-top:12px">
-      <label for="llmUser">Получил пользователь</label>
+      <label for="llmUser" id="llmUserLabel">Получил пользователь</label>
       <div class="out" id="llmUser"><span class="placeholder">Восстановленный ответ появится здесь</span></div>
     </div>
   </div>
@@ -220,6 +220,8 @@
   const llmSent = document.getElementById("llmSent");
   const llmModel = document.getElementById("llmModel");
   const llmUser = document.getElementById("llmUser");
+  const llmModelField = document.getElementById("llmModelField");
+  const llmUserLabel = document.getElementById("llmUserLabel");
   const payloadExamples = document.getElementById("payloadExamples");
   const llmExamples = document.getElementById("llmExamples");
   const llmReqExamples = document.getElementById("llmReqExamples");
@@ -275,6 +277,8 @@
     reqLabel.textContent = "Примеры:";
     llmReqExamples.appendChild(reqLabel);
     llmReqExamples.appendChild(addExample(llmReq, "Письмо с отказом", llmReq.value));
+    llmReqExamples.appendChild(addExample(llmReq, "Иван Иванов",
+      "Напиши поздравление Ивану Иванову"));
     llmReqExamples.appendChild(addExample(llmReq, "Справка о клиенте",
       "Составь справку о Сидорове Петре Ивановиче, паспорт 4509 123456, проживающем по адресу г. Казань, ул. Баумана, д. 14, кв. 8."));
     llmReqExamples.appendChild(addExample(llmReq, "Поздравление",
@@ -536,6 +540,7 @@
     llmBtn.disabled = false;
     setMeta(llmMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
     if (res.status >= 200 && res.status < 300 && res.json) {
+      renderMode(res.json);
       renderSys(res.json);
       renderSent(res.json);
       renderModel(res.json);
@@ -545,6 +550,17 @@
       setText(llmSent, errorMessage(res));
       setText(llmModel, "");
       setText(llmUser, "");
+    }
+  }
+
+  function renderMode(json) {
+    const mode = json.detox && json.detox.mode;
+    if (mode === "demo") {
+      llmModelField.hidden = true;
+      llmUserLabel.textContent = "Склонения меток (восстановил DetoxProxy)";
+    } else {
+      llmModelField.hidden = false;
+      llmUserLabel.textContent = "Получил пользователь";
     }
   }
 
