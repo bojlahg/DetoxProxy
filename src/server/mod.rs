@@ -23,9 +23,10 @@ use serde_json::Value;
 use crate::config::{ConfigStore, SystemConfig, TokenNumbering};
 use crate::detect::{DetectOptions, Detector};
 use crate::mask::{count_unresolved_tokens, mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
+use crate::morph;
 use crate::registry::Registry;
 use crate::store::MappingStore;
-use crate::types::Direction;
+use crate::types::{Direction, Mapping};
 
 pub struct AppState {
     pub config: ConfigStore,
@@ -980,7 +981,8 @@ async fn chat_completions_handler(
 
     let (masked, mask_us) = mask_chat_request(&state, &sys, &req, &rid);
     let prompt_tokens = masked.texts.iter().map(|t| crate::obs::estimate_tokens(t)).sum::<u64>();
-    let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
+    let upstream_messages = build_upstream_messages(&masked, &req, llm_cfg.case_hints, llm_cfg.case_hints_prompt.as_deref());
+    let upstream_body = build_upstream_body(&body, &upstream_messages);
 
     let api_key = llm_cfg
         .api_key_env
@@ -1019,7 +1021,7 @@ async fn chat_completions_handler(
     let restored_tokens = crate::obs::estimate_tokens(&restored);
     record_llm_metrics(&sys.id, prompt_tokens, completion_tokens, restored_tokens, llm_us);
 
-    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text);
+    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text, upstream_messages);
 
     let mut resp = build_chat_response(want_stream, &rid, model, restored, detox);
     resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
@@ -1076,6 +1078,7 @@ fn build_detox_debug(
     req: &crate::llm::ChatRequest,
     masked: &crate::llm::MaskedMessages,
     model_text: String,
+    upstream_messages: Vec<crate::llm::MaskedMessage>,
 ) -> Option<crate::llm::DetoxDebug> {
     if !want_debug || want_stream {
         return None;
@@ -1091,6 +1094,7 @@ fn build_detox_debug(
         .collect();
     Some(crate::llm::DetoxDebug {
         masked_messages,
+        upstream_messages,
         model_output: model_text,
     })
 }
@@ -1124,23 +1128,65 @@ fn mask_chat_request(
 /// model how to request a grammatical case for a placeholder token.
 const CASE_HINTS_PROMPT: &str = "Placeholders like <<FIO_1>> stand for hidden personal data. Keep them unchanged. If a Russian grammatical case is needed, append it inside the brackets: <<FIO_1:gen>>, <<FIO_1:dat>>, <<FIO_1:acc>>, <<FIO_1:ins>>, <<FIO_1:prep>>; nominative is <<FIO_1:nom>>.";
 
-/// Replaces `messages` and forces `stream: true` in the upstream body. When `case_hints` is set, a
-/// system message is prepended as the first message.
-fn build_upstream_body(
-    body: &axum::body::Bytes,
+/// Appends a grammatical-case suffix to every FIO token whose original is not in the nominative
+/// case, producing `<<FIO_1:дат>>`. Only applied when `llm.case_hints` is enabled.
+fn apply_case_hints(text: &str, mappings: &[Mapping]) -> String {
+    let mut out = text.to_string();
+    for m in mappings {
+        if m.type_id != "fio" {
+            continue;
+        }
+        let case = morph::detect_person_case(&m.original);
+        if case == morph::Case::Nom {
+            continue;
+        }
+        let suffixed = format!("{}:{}>>", m.masked.trim_end_matches('>'), case.short_ru());
+        out = out.replace(&m.masked, &suffixed);
+    }
+    out
+}
+
+/// Builds the `messages` array sent upstream: an optional system message first, then the masked
+/// user/assistant messages. When `case_hints` is set, FIO tokens in oblique cases carry a case
+/// suffix and the system prompt (custom or built-in) is prepended.
+fn build_upstream_messages(
     masked: &crate::llm::MaskedMessages,
     req: &crate::llm::ChatRequest,
     case_hints: bool,
+    case_hints_prompt: Option<&str>,
+) -> Vec<crate::llm::MaskedMessage> {
+    let mut msgs: Vec<crate::llm::MaskedMessage> = Vec::with_capacity(masked.texts.len() + 1);
+    if case_hints {
+        msgs.push(crate::llm::MaskedMessage {
+            role: "system".to_string(),
+            content: case_hints_prompt.unwrap_or(CASE_HINTS_PROMPT).to_string(),
+        });
+    }
+    for (t, m) in masked.texts.iter().zip(req.messages.iter()) {
+        let content = if case_hints {
+            apply_case_hints(t, &masked.mappings)
+        } else {
+            t.clone()
+        };
+        msgs.push(crate::llm::MaskedMessage {
+            role: m.role.clone(),
+            content,
+        });
+    }
+    msgs
+}
+
+/// Replaces `messages` and forces `stream: true` in the upstream body.
+fn build_upstream_body(
+    body: &axum::body::Bytes,
+    upstream_messages: &[crate::llm::MaskedMessage],
 ) -> Value {
     let mut upstream_body = serde_json::from_slice::<Value>(body).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut upstream_body {
-        let mut msgs: Vec<Value> = Vec::with_capacity(masked.texts.len() + 1);
-        if case_hints {
-            msgs.push(serde_json::json!({ "role": "system", "content": CASE_HINTS_PROMPT }));
-        }
-        for (t, m) in masked.texts.iter().zip(req.messages.iter()) {
-            msgs.push(serde_json::json!({ "role": m.role, "content": t }));
-        }
+        let msgs: Vec<Value> = upstream_messages
+            .iter()
+            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+            .collect();
         map.insert("messages".to_string(), Value::Array(msgs));
         map.insert("stream".to_string(), Value::Bool(true));
     }

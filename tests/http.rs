@@ -1071,3 +1071,129 @@ allowlist_file: data/allowlist.yaml
     assert_eq!(st, 200, "server must stay alive without a shutdown signal");
     assert!(!serve_task.is_finished(), "server shut down without a signal");
 }
+
+const CASE_HINTS_CFG: &str = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+llm:
+  case_hints: true
+  case_hints_prompt: "В тексте персональные данные заменены метками вида <<FIO_1>>. Не изменяй и не раскрывай метки, не пытайся угадать их значения. Если метке нужен падеж, укажи его внутри скобок: <<FIO_1:им>>, <<FIO_1:род>>, <<FIO_1:дат>>, <<FIO_1:вин>>, <<FIO_1:твор>>, <<FIO_1:пр>>. Метка с падежом в запросе показывает, в каком падеже стояло исходное слово."
+"#;
+
+const CASE_HINTS_OFF_CFG: &str = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+llm:
+  case_hints: false
+"#;
+
+fn chat_case_body() -> serde_json::Value {
+    serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо с отказом Иванову Ивану Ивановичу, ИНН 500100732259"}
+        ],
+        "stream": false
+    })
+}
+
+#[tokio::test]
+async fn case_hints_upstream_messages_and_restore() {
+    let mut cfg = Config::from_yaml(CASE_HINTS_CFG).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &chat_case_body(),
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let sys = &detox["upstream_messages"][0];
+    assert_eq!(sys["role"], "system", "upstream_messages[0]: {sys}");
+    let prompt = sys["content"].as_str().unwrap();
+    assert!(prompt.contains("<<FIO_1:дат>>"), "system prompt: {prompt}");
+
+    let user = &detox["upstream_messages"][1];
+    assert_eq!(user["role"], "user", "upstream_messages[1]: {user}");
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:дат>>"), "upstream content: {content}");
+    assert!(!content.contains("Иванов"), "upstream leaked original: {content}");
+
+    let resp_content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(resp_content.contains("Иванов Иван Иванович"), "resp: {resp_content}");
+    assert!(resp_content.contains("Иванову Ивану Ивановичу"), "resp: {resp_content}");
+}
+
+#[tokio::test]
+async fn case_hints_disabled_no_system_message_no_suffix() {
+    let mut cfg = Config::from_yaml(CASE_HINTS_OFF_CFG).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &chat_case_body(),
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let msgs = detox["upstream_messages"].as_array().unwrap();
+    assert!(
+        msgs.iter().all(|m| m["role"] != "system"),
+        "no system message expected: {msgs:?}"
+    );
+    let content = msgs[0]["content"].as_str().unwrap();
+    assert!(!content.contains("<<FIO_1:дат>>"), "no suffix expected: {content}");
+}

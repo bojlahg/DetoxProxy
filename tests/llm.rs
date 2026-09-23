@@ -169,6 +169,7 @@ async fn fake_upstream_echoes_tokens_and_restores() {
         api_key_env: None,
         timeout_ms: 5000,
         case_hints: true,
+        case_hints_prompt: None,
     });
     let base = spawn_app(build_state(cfg)).await;
 
@@ -203,6 +204,7 @@ async fn upstream_500_returns_502_without_body() {
         api_key_env: None,
         timeout_ms: 5000,
         case_hints: true,
+        case_hints_prompt: None,
     });
     let base = spawn_app(build_state(cfg)).await;
 
@@ -274,6 +276,7 @@ async fn case_hints_system_message_and_inflected_unmask() {
         api_key_env: None,
         timeout_ms: 5000,
         case_hints: true,
+        case_hints_prompt: None,
     });
     let base = spawn_app(build_state(cfg)).await;
 
@@ -306,6 +309,7 @@ async fn case_hints_disabled_no_system_message() {
         api_key_env: None,
         timeout_ms: 5000,
         case_hints: false,
+        case_hints_prompt: None,
     });
     let base = spawn_app(build_state(cfg)).await;
 

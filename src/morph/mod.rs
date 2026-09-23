@@ -28,6 +28,18 @@ impl Case {
             _ => None,
         }
     }
+
+    /// Short Russian suffix for the case, used in token hints (`<<FIO_1:дат>>`).
+    pub fn short_ru(self) -> &'static str {
+        match self {
+            Case::Nom => "им",
+            Case::Gen => "род",
+            Case::Dat => "дат",
+            Case::Acc => "вин",
+            Case::Ins => "твор",
+            Case::Prep => "пр",
+        }
+    }
 }
 
 /// Grammatical gender.

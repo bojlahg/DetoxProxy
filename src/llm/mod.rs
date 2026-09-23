@@ -42,6 +42,7 @@ pub struct ChatCompletionResponse {
 #[derive(Debug, Serialize)]
 pub struct DetoxDebug {
     pub masked_messages: Vec<MaskedMessage>,
+    pub upstream_messages: Vec<MaskedMessage>,
     pub model_output: String,
 }
 
