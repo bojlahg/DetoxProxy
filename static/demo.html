@@ -55,6 +55,14 @@
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn.secondary { background: #e5e7eb; color: #1f2430; }
   .btn.secondary:hover { background: #d1d5db; }
+  .examples { margin-bottom: 6px; }
+  .examples .ex-label { font-size: 12px; color: #6b7280; margin-right: 6px; }
+  .examples .btn {
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    margin: 0 4px 4px 0;
+  }
   .meta { font-size: 13px; color: #6b7280; margin-top: 8px; }
   .meta .status-ok { color: #16a34a; font-weight: 600; }
   .meta .status-err { color: #dc2626; font-weight: 600; }
@@ -126,7 +134,9 @@
       </div>
       <div class="field" style="flex:2">
         <label for="payload">Исходный текст</label>
+        <div class="examples" id="payloadExamples"></div>
         <textarea id="payload">Клиент Сидоров Пётр Иванович, 12.03.1985 г.р., паспорт 4509 123456, ИНН 500100732259, тел. +7 912 345-67-89, email petr.sidorov@mail.ru, карта 4276 5500 1122 3347, CVV 317. Проживает: г. Казань, ул. Баумана, д. 14, кв. 8.</textarea>
+        <div class="hint" id="payloadHint" hidden></div>
       </div>
     </div>
     <div class="row" style="margin-top:12px">
@@ -144,9 +154,11 @@
   <div class="card">
     <div class="field">
       <label for="llm">Ответ LLM (маска)</label>
+      <div class="examples" id="llmExamples"></div>
       <textarea id="llm" placeholder="Сюда копируется маска; можно отредактировать, например: Уважаемый &lt;&lt;FIO_1:дат&gt;&gt;..."></textarea>
     </div>
     <div class="hint">Нажмите «Замаскировать», чтобы скопировать маску сюда, затем отредактируйте и нажмите «Восстановить».</div>
+    <div class="hint">LLM может запросить падеж суффиксом: &lt;&lt;FIO_1:дат&gt;&gt;. DetoxProxy склонит исходное ФИО.</div>
     <div class="row" style="margin-top:12px">
       <button class="btn" id="unmaskBtn">Восстановить</button>
     </div>
@@ -158,12 +170,17 @@
     <div class="hint" style="margin-bottom:10px">Система → DetoxProxy: маскирование → LLM → DetoxProxy: восстановление → Система</div>
     <div class="field">
       <label for="llmReq">Запрос к LLM</label>
+      <div class="examples" id="llmReqExamples"></div>
       <textarea id="llmReq">Напиши письмо с отказом Иванову Ивану Ивановичу, ИНН 500100732259, тел. +7 912 345-67-89</textarea>
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn" id="llmBtn">Отправить в LLM</button>
     </div>
     <div class="meta" id="llmMeta"></div>
+    <div class="field" style="margin-top:12px">
+      <label for="llmSys">Системный промпт (добавляет DetoxProxy)</label>
+      <div class="out" id="llmSys"><span class="placeholder">не добавлялся</span></div>
+    </div>
     <div class="field" style="margin-top:12px">
       <label for="llmSent">Ушло в LLM</label>
       <div class="out" id="llmSent"><span class="placeholder">Замаскированный запрос появится здесь</span></div>
@@ -199,11 +216,128 @@
   const llmReq = document.getElementById("llmReq");
   const llmBtn = document.getElementById("llmBtn");
   const llmMeta = document.getElementById("llmMeta");
+  const llmSys = document.getElementById("llmSys");
   const llmSent = document.getElementById("llmSent");
   const llmModel = document.getElementById("llmModel");
   const llmUser = document.getElementById("llmUser");
+  const payloadExamples = document.getElementById("payloadExamples");
+  const llmExamples = document.getElementById("llmExamples");
+  const llmReqExamples = document.getElementById("llmReqExamples");
+  const payloadHint = document.getElementById("payloadHint");
 
   let currentPayloadId = null;
+  let currentMask = "";
+
+  function addExample(target, label, text, hint) {
+    const btn = document.createElement("button");
+    btn.className = "btn secondary";
+    btn.type = "button";
+    btn.textContent = label;
+    btn.addEventListener("click", function () {
+      if (hint) {
+        payloadHint.textContent = hint;
+        payloadHint.hidden = false;
+      } else {
+        payloadHint.hidden = true;
+      }
+      target.value = text;
+    });
+    return btn;
+  }
+
+  function buildExamples() {
+    const exLabel = document.createElement("span");
+    exLabel.className = "ex-label";
+    exLabel.textContent = "Примеры:";
+    payloadExamples.appendChild(exLabel);
+    payloadExamples.appendChild(addExample(payloadEl, "Анкета клиента", payloadEl.value));
+    payloadExamples.appendChild(addExample(payloadEl, "Все 17 типов",
+      "Клиентка Иванова Мария Петровна, дата рождения 03.12.1985, родилась в г. Самара, гражданка РФ, паспорт серия 3604 номер 123456, выдан 12.01.2006 ГУ МВД России по Самарской области, код подразделения 630-001, в/у 63 12 345678, адрес: 443001, г. Самара, ул. Ленинградская, д. 5, кв. 12, e-mail ivanova@mail.ru, тел. 8 (927) 123-45-67, ИНН 500100732259, карта 4276 3800 1234 5678, CVV 123, PIN 4321, держатель MARIA IVANOVA"));
+    payloadExamples.appendChild(addExample(payloadEl, "Ловушки: не ПДн",
+      "Поэт Александр Сергеевич Пушкин родился 6 июня 1799 года в Москве. Адрес отделения банка: г. Казань, ул. Баумана, д. 3. Заполните форму: ФИО, дата рождения, ИНН, PIN и CVV. Номер заказа 500100732258 передан в доставку."));
+    payloadExamples.appendChild(addExample(payloadEl, "Регистр и форматы",
+      "иванов иван иванович, тел 89123456789. ПЕТРОВ ПЁТР ПЕТРОВИЧ, дата рождения 03.12.1985. Родился двенадцатого марта 1985 г. Паспорт серия 4509, номер 123456. Клиент Иванoв Сергей"));
+    payloadExamples.appendChild(addExample(payloadEl, "PIN: один и с картой",
+      "Пин-код 4821 от домофона.\nКарта 4276 5500 1122 3347, пин-код 4821.",
+      "Правило комбинаций включено у системы strict"));
+
+    const llmLabel = document.createElement("span");
+    llmLabel.className = "ex-label";
+    llmLabel.textContent = "Примеры:";
+    llmExamples.appendChild(llmLabel);
+    llmExamples.appendChild(makeLlmButton("Маска как есть", "as-is"));
+    llmExamples.appendChild(makeLlmButton("Ответ с падежами", "cases"));
+    llmExamples.appendChild(makeLlmButton("Все падежи", "all-cases"));
+    llmExamples.appendChild(makeLlmButton("Искажённые токены", "distorted"));
+
+    const reqLabel = document.createElement("span");
+    reqLabel.className = "ex-label";
+    reqLabel.textContent = "Примеры:";
+    llmReqExamples.appendChild(reqLabel);
+    llmReqExamples.appendChild(addExample(llmReq, "Письмо с отказом", llmReq.value));
+    llmReqExamples.appendChild(addExample(llmReq, "Справка о клиенте",
+      "Составь справку о Сидорове Петре Ивановиче, паспорт 4509 123456, проживающем по адресу г. Казань, ул. Баумана, д. 14, кв. 8."));
+    llmReqExamples.appendChild(addExample(llmReq, "Поздравление",
+      "Поздравь с днём рождения Петрову Анну Сергеевну и отправь письмо на anna.petrova@mail.ru"));
+    llmReqExamples.appendChild(addExample(llmReq, "Проверка карты",
+      "Клиент Смирнов Олег Викторович просит проверить операции по карте 4276 5500 1122 3347 за март."));
+  }
+
+  function makeLlmButton(label, kind) {
+    const btn = document.createElement("button");
+    btn.className = "btn secondary";
+    btn.type = "button";
+    btn.textContent = label;
+    btn.disabled = true;
+    btn.addEventListener("click", function () {
+      const text = llmExampleText(kind);
+      if (text !== null) llmEl.value = text;
+    });
+    return btn;
+  }
+
+  function llmExampleText(kind) {
+    if (!currentMask) return null;
+    const tokens = collectTokens(currentMask);
+    if (kind === "as-is") return currentMask;
+    if (tokens.length === 0) return null;
+    if (kind === "cases") {
+      const lines = [];
+      if (tokens.some(function (t) { return t.label === "FIO"; })) {
+        lines.push("Уважаемый <<FIO_1:им>>! Сообщаем <<FIO_1:дат>>, что заявка одобрена. Договор с <<FIO_1:твор>> подписан, копия направлена по адресу <<ADDR_1>>.");
+      }
+      return lines.join("\n");
+    }
+    if (kind === "all-cases") {
+      return "им: <<FIO_1:им>>\nрод: <<FIO_1:род>>\nдат: <<FIO_1:дат>>\nвин: <<FIO_1:вин>>\nтвор: <<FIO_1:твор>>\nпр: <<FIO_1:пр>>";
+    }
+    if (kind === "distorted") {
+      return "<< fio_1 >>, <<Fio_1>>, <<FIO_1>>";
+    }
+    return null;
+  }
+
+  function collectTokens(mask) {
+    const re = /<<([A-Z]+)_(\d+)>>/g;
+    const seen = {};
+    const out = [];
+    let m;
+    while ((m = re.exec(mask)) !== null) {
+      const key = m[1] + "_" + m[2];
+      if (!seen[key]) {
+        seen[key] = true;
+        out.push({ label: m[1], num: m[2], key: key });
+      }
+    }
+    return out;
+  }
+
+  function updateLlmExamples() {
+    const buttons = llmExamples.querySelectorAll("button");
+    for (const b of buttons) {
+      b.disabled = !currentMask;
+    }
+  }
 
   function randomId() {
     const arr = new Uint8Array(16);
@@ -287,6 +421,8 @@
       if (res.status >= 200 && res.status < 300 && res.json && typeof res.json.result === "string") {
         setText(maskOut, res.json.result);
         llmEl.value = res.json.result;
+        currentMask = res.json.result;
+        updateLlmExamples();
       } else {
         setText(maskOut, errorMessage(res));
       }
@@ -400,17 +536,39 @@
     llmBtn.disabled = false;
     setMeta(llmMeta, res.ms, res.status, res.status >= 200 && res.status < 300 ? null : errorMessage(res));
     if (res.status >= 200 && res.status < 300 && res.json) {
+      renderSys(res.json);
       renderSent(res.json);
       renderModel(res.json);
       renderUser(res.json);
     } else {
+      setText(llmSys, "не добавлялся");
       setText(llmSent, errorMessage(res));
       setText(llmModel, "");
       setText(llmUser, "");
     }
   }
 
+  function renderSys(json) {
+    const msgs = json.detox && json.detox.upstream_messages;
+    if (Array.isArray(msgs)) {
+      const sys = msgs.find(function (m) { return m && m.role === "system"; });
+      if (sys && typeof sys.content === "string") {
+        setText(llmSys, sys.content);
+        return;
+      }
+    }
+    setText(llmSys, "не добавлялся");
+  }
+
   function renderSent(json) {
+    const msgs = json.detox && json.detox.upstream_messages;
+    if (Array.isArray(msgs)) {
+      const user = msgs.find(function (m) { return m && m.role === "user"; });
+      if (user && typeof user.content === "string") {
+        setText(llmSent, user.content);
+        return;
+      }
+    }
     if (json.detox && json.detox.masked_messages && json.detox.masked_messages.length > 0) {
       setText(llmSent, json.detox.masked_messages[0].content);
     } else {
@@ -438,6 +596,7 @@
   detectBtn.addEventListener("click", detect);
   unmaskBtn.addEventListener("click", unmask);
   llmBtn.addEventListener("click", sendToLlm);
+  buildExamples();
 })();
 </script>
 </body>
