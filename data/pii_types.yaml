@@ -379,3 +379,12 @@ types:
       - '(?-u:\b)\d{9}\s*\d{2}(?-u:\b)'
       - '(?-u:\b)\d{3}\s*[^\d\s]\s*\d{3}\s*[^\d\s]\s*\d{5}(?-u:\b)'
       - '(?-u:\b)\d{3}точка\d{3}точка\d{5}(?-u:\b)'
+
+  - id: secret
+    name: Password or access token
+    token_label: SECRET
+    enabled_by_default: false
+    context_required: true
+    context_words: [пароль, пароля, password, passwd, pwd, код доступа, токен, token, api key, api-key, секретный ключ]
+    patterns:
+      - '(?i)(?:пароль|пароля|password|passwd|pwd|код доступа|токен|token|api[ -]?key|секретный ключ)\s*[:=—-]?\s*(\S{6,64})'

@@ -63,6 +63,10 @@ pub struct TypeSpec {
     /// If true, a match is accepted only when a context word is present.
     #[serde(default)]
     pub context_required: bool,
+    /// Whether the type is detected under `types: all` (enabled_types == None). Types that
+    /// are off by default (e.g. secrets) are detected only when explicitly listed.
+    #[serde(default = "default_enabled_by_default")]
+    pub enabled_by_default: bool,
     #[serde(default = "default_validator")]
     pub validator: Validator,
     /// Named dictionary this type consults (e.g. "surnames"); resolved by the detector.
@@ -114,6 +118,7 @@ pub struct TypeSpec {
 fn default_context_window() -> usize { 40 }
 fn default_validator() -> Validator { Validator::None }
 fn default_mask_mode() -> MaskMode { MaskMode::Token }
+fn default_enabled_by_default() -> bool { true }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {

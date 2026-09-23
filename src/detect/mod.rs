@@ -737,6 +737,10 @@ impl Detector {
                 if !set.contains(spec.id.as_str()) {
                     continue;
                 }
+            } else if !spec.enabled_by_default {
+                // `types: all` (enabled_types == None) skips types that are off by default
+                // (e.g. secrets); they are detected only when explicitly listed.
+                continue;
             }
             match spec.id.as_str() {
                 "fio" => candidates.extend(self.detect_fio(text, text_lower, opts, spec)),
@@ -748,6 +752,7 @@ impl Detector {
                 "passport_issuer" => candidates.extend(self.detect_passport_issuer(text, opts, spec)),
                 "address" => candidates.extend(self.detect_address(text, text_lower, opts, spec, &candidates)),
                 "card_holder" => candidates.extend(self.detect_card_holder(text, opts, spec)),
+                "secret" => candidates.extend(self.detect_secret(text, text_lower, opts, spec)),
                 _ => self.detect_regex_type(text, text_lower, opts, spec, &mut candidates),
             }
         }
@@ -3082,6 +3087,64 @@ impl Detector {
             self.card_holder_from_card_number(text, opts, spec, &mut candidates);
         }
         candidates
+    }
+
+    /// Detects secret values (passwords, tokens) that follow a marker word. The pattern
+    /// captures only the value (group 1), not the marker word itself. A value is masked only
+    /// when it is 6-64 non-whitespace chars and contains at least one digit (or a mix of
+    /// letters and digits); a plain word ("пароль: забыл") is not masked.
+    fn detect_secret(
+        &self,
+        text: &str,
+        text_lower: Option<&str>,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+    ) -> Vec<Entity> {
+        let mut candidates = Vec::new();
+        for re in self.registry.patterns(&spec.id) {
+            for caps in re.captures_iter(text) {
+                if let Some(entity) = self.secret_capture_entity(text, text_lower, opts, spec, &caps) {
+                    candidates.push(entity);
+                }
+            }
+        }
+        candidates
+    }
+
+    /// Builds a secret entity from a single regex capture (group 1 is the value), or None
+    /// when the value is rejected.
+    fn secret_capture_entity(
+        &self,
+        text: &str,
+        text_lower: Option<&str>,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        caps: &regex::Captures<'_>,
+    ) -> Option<Entity> {
+        let g = caps.get(1)?;
+        let start = g.start();
+        let end = g.end();
+        let span = &text[start..end];
+        // The value must contain at least one digit (or a mix of letters and digits);
+        // a plain word is not a secret.
+        if !span.chars().any(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let has_context = self.regex_has_context(text, text_lower, start, end, spec);
+        if spec.context_required && !has_context {
+            return None;
+        }
+        if self.has_non_pii_context(text, text_lower, start, end, spec) {
+            return None;
+        }
+        let conf = 0.9f32;
+        if !passes_threshold(conf, opts) {
+            return None;
+        }
+        if self.is_allow_listed(span, opts) {
+            return None;
+        }
+        Some(Entity { type_id: spec.id.clone(), start, end, confidence: conf })
     }
 
     /// Marker-anchored card holders: a name right after a card-holder marker.

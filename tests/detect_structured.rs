@@ -263,3 +263,71 @@ fn detect_performance() {
     let elapsed = start.elapsed();
     assert!(elapsed.as_secs_f64() < 2.0, "1000 detects took {:?}", elapsed);
 }
+
+/// Detects with an explicit list of enabled type ids.
+fn detect_types(text: &str, types: &[&str]) -> Vec<Entity> {
+    let ids: Vec<String> = types.iter().map(|s| s.to_string()).collect();
+    let opts = DetectOptions {
+        enabled_types: Some(&ids),
+        min_confidence: 0.0,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector().detect(text, &opts)
+}
+
+#[test]
+fn secret_detected_when_explicitly_enabled() {
+    let entities = detect_types("Пароль: asdf1254sdf", &["secret"]);
+    let ent = entities
+        .iter()
+        .find(|e| e.type_id == "secret")
+        .unwrap_or_else(|| panic!("secret not found in {:?}", entities));
+    assert_eq!(&"Пароль: asdf1254sdf"[ent.start..ent.end], "asdf1254sdf");
+}
+
+#[test]
+fn secret_password_equals() {
+    let entities = detect_types("password=Qw3rty!2024", &["secret"]);
+    let ent = entities
+        .iter()
+        .find(|e| e.type_id == "secret")
+        .unwrap_or_else(|| panic!("secret not found in {:?}", entities));
+    assert_eq!(&"password=Qw3rty!2024"[ent.start..ent.end], "Qw3rty!2024");
+}
+
+#[test]
+fn secret_token() {
+    let entities = detect_types("токен ghp_4f8a9c2e1b7d", &["secret"]);
+    let ent = entities
+        .iter()
+        .find(|e| e.type_id == "secret")
+        .unwrap_or_else(|| panic!("secret not found in {:?}", entities));
+    assert_eq!(&"токен ghp_4f8a9c2e1b7d"[ent.start..ent.end], "ghp_4f8a9c2e1b7d");
+}
+
+#[test]
+fn secret_plain_word_not_masked() {
+    assert!(
+        !detect_types("пароль от wi-fi не помню", &["secret"])
+            .iter()
+            .any(|e| e.type_id == "secret"),
+        "plain word should not be masked"
+    );
+    assert!(
+        !detect_types("Пароль: забыл", &["secret"])
+            .iter()
+            .any(|e| e.type_id == "secret"),
+        "short plain word should not be masked"
+    );
+}
+
+#[test]
+fn secret_off_by_default_with_types_all() {
+    assert!(
+        !detect("Пароль: asdf1254sdf")
+            .iter()
+            .any(|e| e.type_id == "secret"),
+        "secret must be off by default under types: all"
+    );
+}
