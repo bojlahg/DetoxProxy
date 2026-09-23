@@ -1,3 +1,5 @@
+pub mod stats;
+
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 
 /// Rough LLM token estimate used by metrics and logs: one token per 4 characters, rounded up.

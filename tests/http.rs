@@ -48,6 +48,7 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
         config_path,
         shutting_down: Arc::new(AtomicBool::new(false)),
         processed: Arc::new(AtomicU64::new(0)),
+        stats: detox_proxy::obs::stats::LiveStats::new(),
     })
 }
 
@@ -466,6 +467,33 @@ async fn demo_page_served() {
     let body = resp.text().await.expect("text");
     assert!(body.contains("/v1/detect"), "demo body missing /v1/detect");
     assert!(body.contains("payload_id"), "demo body missing payload_id");
+}
+
+#[tokio::test]
+async fn stats_after_process_requests() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    for i in 0..5 {
+        let (st, _json, _) = post_json(
+            &base,
+            "/process",
+            &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": format!("stats-{}", i)}),
+            &[],
+        )
+        .await;
+        assert_eq!(st, 200);
+    }
+
+    let (st, body) = get(&base, "/stats").await;
+    assert_eq!(st, 200);
+    let json: serde_json::Value = serde_json::from_str(&body).expect("stats json");
+    assert!(json["requests"].as_u64().unwrap() >= 5, "requests: {json}");
+    assert!(json["rps"].as_f64().unwrap() > 0.0, "rps: {json}");
+    assert!(
+        json["p99_ms"].as_f64().unwrap() >= json["p50_ms"].as_f64().unwrap(),
+        "p99 < p50: {json}"
+    );
 }
 
 #[tokio::test]

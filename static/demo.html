@@ -118,9 +118,14 @@
     <div class="sub">Маскирование и восстановление персональных данных</div>
     <div class="links">
       <a href="/metrics">/metrics</a>
+      <a href="/stats">/stats</a>
       <a href="/healthz">/healthz</a>
     </div>
   </header>
+
+  <div class="card" id="statsPanel">
+    <div class="sub" id="statsLine">Загрузка статистики…</div>
+  </div>
 
   <div class="card">
     <div class="row">
@@ -620,6 +625,36 @@
   unmaskBtn.addEventListener("click", unmask);
   llmBtn.addEventListener("click", sendToLlm);
   buildExamples();
+
+  const statsLine = document.getElementById("statsLine");
+
+  function fmtNum(v) {
+    return Math.round(v * 10) / 10;
+  }
+
+  function refreshStats() {
+    fetch("/stats").then(function (resp) {
+      if (!resp.ok) {
+        statsLine.textContent = "Статистика недоступна (HTTP " + resp.status + ")";
+        return;
+      }
+      return resp.json();
+    }).then(function (s) {
+      if (!s) return;
+      statsLine.textContent =
+        "RPS " + fmtNum(s.rps) +
+        " \u00b7 TPS " + fmtNum(s.tps) +
+        " \u00b7 p50 " + fmtNum(s.p50_ms) + " мс" +
+        " \u00b7 p99 " + fmtNum(s.p99_ms) + " мс" +
+        " \u00b7 запросов за минуту " + s.requests +
+        " \u00b7 ошибок " + s.errors;
+    }).catch(function () {
+      statsLine.textContent = "Статистика недоступна";
+    });
+  }
+
+  refreshStats();
+  setInterval(refreshStats, 2000);
 })();
 </script>
 </body>
