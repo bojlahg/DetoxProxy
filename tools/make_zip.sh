@@ -8,8 +8,8 @@ set -euo pipefail
 out="${1:-../submission/DetoxProxy-$(git rev-parse --short HEAD).zip}"
 paths=(
   README.md opencode.json Cargo.toml Cargo.lock config.yaml
-  src data ':(glob)tests/*.rs'
-  tools/check_process.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py
+  src data static ':(glob)tests/*.rs'
+  tools/check_process.py tools/check_modes.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py
   docs/LICENSES.md docs/brief/manual-test-cases.md tests/manual_expect.json
 )
 for extra in docs/ARCHITECTURE.md docs/JURY.md docs/MASKS.md docs/QUALITY.md docs/LOAD.md docs/LIMITATIONS.md docs/DEMO.md; do
