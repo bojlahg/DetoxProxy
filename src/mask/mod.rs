@@ -123,7 +123,7 @@ pub fn mask_with_seed(
     numbering: Numbering,
     seed: &[Mapping],
 ) -> MaskResult {
-    let mut active = collect_active(entities, registry, opts);
+    let mut active = collect_active(text, entities, registry, opts);
     active.sort_by_key(|(_, e, _)| e.start);
 
     let mut token_state = build_token_state(seed, text);
@@ -142,6 +142,7 @@ pub fn mask_with_seed(
 
 /// Selects entities that are not masked with `Off` and applies the combination rule.
 fn collect_active<'a>(
+    text: &str,
     entities: &'a [Entity],
     registry: &Registry,
     opts: &MaskOptions<'_>,
@@ -162,17 +163,29 @@ fn collect_active<'a>(
     }
 
     if opts.combination_rule {
-        let has_companion = entities.iter().any(|e| {
-            let requires = registry.get(&e.type_id).map(|s| s.requires_companion).unwrap_or(false);
-            !requires && e.confidence >= 0.9
+        active.retain(|(_, e, _)| {
+            let Some(spec) = registry.get(&e.type_id) else {
+                return true;
+            };
+            if !spec.requires_companion {
+                return true;
+            }
+            let companions = registry.companions(&e.type_id);
+            entities.iter().any(|c| {
+                c.type_id != e.type_id
+                    && companions.contains(&c.type_id)
+                    && c.confidence >= 0.9
+                    && same_sentence(text, e.start, c.start)
+            })
         });
-        if !has_companion {
-            active.retain(|(_, e, _)| {
-                !registry.get(&e.type_id).map(|s| s.requires_companion).unwrap_or(false)
-            });
-        }
     }
     active
+}
+
+/// True if two byte offsets are in the same sentence (no '.', '!', '?' or newline between them).
+fn same_sentence(text: &str, a: usize, b: usize) -> bool {
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    !text[lo..hi].contains(['.', '!', '?', '\n'])
 }
 
 /// Mutable token bookkeeping shared across the replacement plan.

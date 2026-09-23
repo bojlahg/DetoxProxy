@@ -336,6 +336,61 @@ fn combination_rule() {
 }
 
 #[test]
+fn combination_rule_same_sentence() {
+    let reg = load();
+    let overrides = HashMap::new();
+    let opts = MaskOptions {
+        default_mode: MaskMode::Token,
+        overrides: &overrides,
+        combination_rule: true,
+    };
+
+    // PIN in a different sentence than the card: PIN not masked, card masked.
+    let text1 = "Пин 4821 от домофона.\nКарта 4276 5500 1122 3347.";
+    let pin1 = text1.find("4821").unwrap();
+    let card1 = text1.find("4276 5500 1122 3347").unwrap();
+    let entities1 = vec![
+        ent("card_pin", pin1, pin1 + 4, 0.9),
+        ent("card_number", card1, card1 + "4276 5500 1122 3347".len(), 0.9),
+    ];
+    let res1 = mask(text1, &entities1, &reg, &opts);
+    assert!(res1.text.contains("4821"), "pin in another sentence must stay, got {}", res1.text);
+    assert!(res1.text.contains("<<CARD_1>>"), "card must be masked, got {}", res1.text);
+
+    // PIN and card in the same sentence: both masked.
+    let text2 = "Карта 4276 5500 1122 3347, пин 4821.";
+    let pin2 = text2.find("4821").unwrap();
+    let card2 = text2.find("4276 5500 1122 3347").unwrap();
+    let entities2 = vec![
+        ent("card_number", card2, card2 + "4276 5500 1122 3347".len(), 0.9),
+        ent("card_pin", pin2, pin2 + 4, 0.9),
+    ];
+    let res2 = mask(text2, &entities2, &reg, &opts);
+    assert!(res2.text.contains("<<PIN_1>>"), "pin must be masked, got {}", res2.text);
+    assert!(res2.text.contains("<<CARD_1>>"), "card must be masked, got {}", res2.text);
+
+    // INN is not a companion for PIN: PIN not masked.
+    let text3 = "ИНН 500100732259, пин 4821.";
+    let pin3 = text3.find("4821").unwrap();
+    let inn3 = text3.find("500100732259").unwrap();
+    let entities3 = vec![
+        ent("inn", inn3, inn3 + 12, 0.9),
+        ent("card_pin", pin3, pin3 + 4, 0.9),
+    ];
+    let res3 = mask(text3, &entities3, &reg, &opts);
+    assert!(res3.text.contains("4821"), "inn is not a pin companion, got {}", res3.text);
+    assert!(res3.text.contains("<<INN_1>>"), "inn must be masked, got {}", res3.text);
+
+    // PIN alone: not masked.
+    let text4 = "пин-код 4821";
+    let pin4 = text4.find("4821").unwrap();
+    let entities4 = vec![ent("card_pin", pin4, pin4 + 4, 0.9)];
+    let res4 = mask(text4, &entities4, &reg, &opts);
+    assert_eq!(res4.text, text4, "pin alone must not be masked");
+    assert!(res4.mappings.is_empty());
+}
+
+#[test]
 fn offsets_with_non_ascii() {
     let reg = load();
     let text = "Привет мир! ИНН 7707083893, конец.";

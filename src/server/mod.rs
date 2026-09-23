@@ -24,6 +24,7 @@ use crate::config::{ConfigStore, SystemConfig, TokenNumbering};
 use crate::detect::{DetectOptions, Detector};
 use crate::mask::{count_unresolved_tokens, mask_with, mask_with_seed, unmask, MaskOptions, Numbering};
 use crate::morph;
+use crate::obs::stats::LiveStats;
 use crate::registry::Registry;
 use crate::store::MappingStore;
 use crate::types::{Direction, Mapping};
@@ -39,6 +40,7 @@ pub struct AppState {
     pub config_path: PathBuf,
     pub shutting_down: Arc<AtomicBool>,
     pub processed: Arc<AtomicU64>,
+    pub stats: LiveStats,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,24 +306,31 @@ struct RequestLog {
     tokens: u64,
 }
 
-fn log_request(
-    request_id: &str,
-    system: &str,
+/// Bundles the per-request logging context: identifiers, direction and the live stats recorder.
+struct LogCtx<'a> {
+    rid: &'a str,
+    system: &'a str,
     direction: Direction,
+    stats: &'a LiveStats,
+}
+
+fn log_request(
+    ctx: &LogCtx,
     payload_id: &str,
     entity_types: &HashMap<String, usize>,
     log: &RequestLog,
     status: u16,
 ) {
+    ctx.stats.record(log.timing.total_us, log.tokens, status);
     let pid = if payload_id.len() > 64 {
         hash_id(payload_id)
     } else {
         payload_id.to_string()
     };
     tracing::info!(
-        request_id = %request_id,
-        system = %system,
-        direction = ?direction,
+        request_id = %ctx.rid,
+        system = %ctx.system,
+        direction = ?ctx.direction,
         payload_id = %pid,
         entities = ?entity_types,
         latency_ms = log.latency_ms,
@@ -455,13 +464,13 @@ async fn process_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(outcome) => process_success(&rid, &sys, latency, outcome, started),
-        Err(resp) => process_error(&rid, &sys, latency, *resp, started),
+        Ok(outcome) => process_success(&rid, &sys, latency, outcome, started, &state.stats),
+        Err(resp) => process_error(&rid, &sys, latency, *resp, started, &state.stats),
     }
 }
 
 /// Emits per-branch metrics and the success response for a /process outcome.
-fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: ProcessOutcome, started: Instant) -> Response {
+fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: ProcessOutcome, started: Instant, stats: &LiveStats) -> Response {
     if outcome.payload_bytes > 0 {
         record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
     }
@@ -483,7 +492,8 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
     }
     let t = timing(started, outcome.detect_us, outcome.mask_us, outcome.unmask_us, outcome.store_us, 0);
     let log = RequestLog { latency_ms: latency, timing: t, tokens: outcome.tokens };
-    log_request(rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, &log, 200);
+    let ctx = LogCtx { rid, system: &sys.id, direction: outcome.direction, stats };
+    log_request(&ctx, &outcome.payload_id, &outcome.entity_types, &log, 200);
     finish_response(
         rid,
         sys,
@@ -496,11 +506,12 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
 }
 
 /// Emits the error response for a /process failure.
-fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response, started: Instant) -> Response {
+fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response, started: Instant, stats: &LiveStats) -> Response {
     let status = resp.status();
     let t = timing(started, 0, 0, 0, 0, 0);
     let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
-    log_request(rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
+    let ctx = LogCtx { rid, system: &sys.id, direction: Direction::Mask, stats };
+    log_request(&ctx, "", &HashMap::new(), &log, status.as_u16());
     finish_response(rid, sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), resp)
 }
 
@@ -693,14 +704,16 @@ async fn mask_handler(
             record_tokens(&sys.id, Direction::Mask, tokens);
             let t = timing(started, detect_us, mask_us, 0, store_us, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens };
-            log_request(&rid, &sys.id, Direction::Mask, &resp.session_id, &HashMap::new(), &log, 200);
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+            log_request(&ctx, &resp.session_id, &HashMap::new(), &log, 200);
             finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response())
         }
         Err(resp) => {
             let status = resp.status();
             let t = timing(started, 0, 0, 0, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+            log_request(&ctx, "", &HashMap::new(), &log, status.as_u16());
             finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
@@ -840,7 +853,8 @@ async fn unmask_handler(
             record_tokens(&sys.id, Direction::Unmask, tokens);
             let t = timing(started, 0, 0, unmask_us, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens };
-            log_request(&rid, &sys.id, Direction::Unmask, &session_id, &HashMap::new(), &log, 200);
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Unmask, stats: &state.stats };
+            log_request(&ctx, &session_id, &HashMap::new(), &log, 200);
             record_payload_bytes(&sys.id, Direction::Unmask, text_len);
             record_unresolved(&sys.id, unresolved);
             let mut resp = Json(resp).into_response();
@@ -854,7 +868,8 @@ async fn unmask_handler(
             record_metrics(&sys.id, Direction::Unmask, status.as_u16(), latency, &HashMap::new());
             let t = timing(started, 0, 0, 0, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
-            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, status.as_u16());
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Unmask, stats: &state.stats };
+            log_request(&ctx, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = error_response(status, &msg, "bad_request");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -863,7 +878,8 @@ async fn unmask_handler(
             record_metrics(&sys.id, Direction::Unmask, 503, latency, &HashMap::new());
             let t = timing(started, 0, 0, 0, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
-            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, 503);
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Unmask, stats: &state.stats };
+            log_request(&ctx, "", &HashMap::new(), &log, 503);
             let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -921,7 +937,8 @@ async fn detect_handler(
             record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
             let t = timing(started, detect_us, 0, 0, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens };
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, 200);
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+            log_request(&ctx, "", &HashMap::new(), &log, 200);
             let mut resp = Json(resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -931,7 +948,8 @@ async fn detect_handler(
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
             let t = timing(started, 0, 0, 0, 0, 0);
             let log = RequestLog { latency_ms: latency, timing: t, tokens: 0 };
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+            log_request(&ctx, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -1000,7 +1018,8 @@ async fn chat_completions_handler(
             let latency = started.elapsed().as_millis() as u64;
             let t = timing(started, 0, mask_us, 0, 0, llm_us);
             let log = RequestLog { latency_ms: latency, timing: t, tokens: prompt_tokens };
-            log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, 502);
+            let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+            log_request(&ctx, "", &masked.entity_types, &log, 502);
             let mut resp = error_response(StatusCode::BAD_GATEWAY, "upstream error", "upstream");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp.headers_mut()
@@ -1032,7 +1051,8 @@ async fn chat_completions_handler(
     let latency = started.elapsed().as_millis() as u64;
     let t = timing(started, 0, mask_us, unmask_us, 0, llm_us);
     let log = RequestLog { latency_ms: latency, timing: t, tokens: prompt_tokens };
-    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, status);
+    let ctx = LogCtx { rid: &rid, system: &sys.id, direction: Direction::Mask, stats: &state.stats };
+    log_request(&ctx, "", &masked.entity_types, &log, status);
     resp
 }
 
@@ -1254,6 +1274,10 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
     state.metrics.render()
 }
 
+async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<crate::obs::stats::StatsSnapshot> {
+    Json(state.stats.snapshot())
+}
+
 async fn inflight_middleware(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -1361,6 +1385,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/demo", get(demo_handler))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_handler))
+        .route("/stats", get(stats_handler))
         .layer(middleware::from_fn_with_state(state.clone(), body_limit_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), inflight_middleware))
         .with_state(state)
@@ -1388,6 +1413,7 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         config_path: config_path.clone(),
         shutting_down: Arc::new(AtomicBool::new(false)),
         processed: Arc::new(AtomicU64::new(0)),
+        stats: LiveStats::new(),
     });
 
     store.spawn_sweeper(Duration::from_secs(5));

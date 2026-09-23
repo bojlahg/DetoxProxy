@@ -80,6 +80,10 @@ pub struct TypeSpec {
     /// Masked only when another confidently detected type is present in the same text (cvv, pin).
     #[serde(default)]
     pub requires_companion: bool,
+    /// Type ids that allow masking this type when present in the same sentence. When empty and
+    /// `requires_companion` is true, defaults to `["card_number"]`.
+    #[serde(default)]
+    pub companions: Vec<String>,
     /// Patronymic suffixes (e.g. "-ович", "-овна"); a word ending with one is a patronymic.
     #[serde(default)]
     pub patronymic_suffixes: Vec<String>,
@@ -198,6 +202,16 @@ impl Registry {
 
     pub fn get(&self, id: &str) -> Option<&TypeSpec> {
         self.specs.iter().find(|s| s.id == id)
+    }
+
+    /// Companion type ids that allow masking the given type. When the spec has `requires_companion`
+    /// and no explicit `companions`, defaults to `["card_number"]`.
+    pub fn companions(&self, id: &str) -> Vec<String> {
+        match self.get(id) {
+            Some(s) if s.requires_companion && s.companions.is_empty() => vec!["card_number".to_string()],
+            Some(s) => s.companions.clone(),
+            None => Vec::new(),
+        }
     }
 
     pub fn patterns(&self, id: &str) -> &[regex::Regex] {
