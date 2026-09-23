@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,6 +33,22 @@ pub struct ChatCompletionResponse {
     pub object: &'static str,
     pub model: String,
     pub choices: Vec<Choice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detox: Option<DetoxDebug>,
+}
+
+/// Debug view of the masking chain, returned only when the client sends `X-Detox-Debug: 1`.
+/// Contains only masked texts and the raw model output — never original PII values.
+#[derive(Debug, Serialize)]
+pub struct DetoxDebug {
+    pub masked_messages: Vec<MaskedMessage>,
+    pub model_output: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MaskedMessage {
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,10 +133,86 @@ pub fn collect_sse_text(body: &str) -> String {
     out
 }
 
-/// Builds the demo-mode model text: a fixed greeting that references the first FIO token with a
-/// nominative case suffix so that inflection is exercised during unmasking.
-pub fn demo_response(_mappings: &[Mapping]) -> String {
-    "Уважаемый <<FIO_1:им>>, сообщаем…".to_string()
+/// Matches a token mapping value of the form `<<LABEL_N>>` where N is a sequential number or a
+/// hex hash suffix (hash numbering).
+static TOKEN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^<<([A-Za-z_]+)_([0-9a-f]+)>>$").expect("valid token regex"));
+
+/// Appends a grammatical-case suffix to a token, producing `<<LABEL_N:case>>`.
+fn token_with_case(token: &str, case: &str) -> String {
+    let trimmed = token.trim_end_matches('>');
+    format!("{}:{}>>", trimmed, case)
+}
+
+/// Short Russian display names for PII types, used in the demo response. Unknown types fall back
+/// to the bare token.
+fn type_display_name(type_id: &str) -> Option<&'static str> {
+    Some(match type_id {
+        "fio" => "ФИО",
+        "birth_date" => "дата рождения",
+        "birth_place" => "место рождения",
+        "citizenship" => "гражданство",
+        "passport" => "паспорт",
+        "passport_issuer" => "кем выдан",
+        "passport_issue_date" => "дата выдачи",
+        "subdivision_code" => "код подразделения",
+        "driver_license" => "водительское удостоверение",
+        "snils" => "СНИЛС",
+        "inn" => "ИНН",
+        "phone" => "телефон",
+        "email" => "email",
+        "address" => "адрес",
+        "card_number" => "карта",
+        "cvv" => "CVV",
+        "card_pin" => "PIN",
+        "card_holder" => "держатель карты",
+        _ => return None,
+    })
+}
+
+/// Builds the demo-mode model text from the token mappings so that restoration is visible on
+/// every masked type. Only token entries (`<<LABEL_N>>`) are referenced; the type display name
+/// comes from `type_display_name`, otherwise the bare token is used.
+pub fn demo_response(mappings: &[Mapping]) -> String {
+    let mut fio: Option<String> = None;
+    let mut others: Vec<(String, String)> = Vec::new();
+    for m in mappings {
+        let Some(caps) = TOKEN_RE.captures(&m.masked) else { continue };
+        let token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+        if m.type_id == "fio" {
+            if fio.is_none() {
+                fio = Some(token);
+            }
+        } else {
+            let name = type_display_name(&m.type_id).unwrap_or("").to_string();
+            others.push((name, token));
+        }
+    }
+
+    let mut out = String::new();
+    match &fio {
+        Some(t) => out.push_str(&format!("Уважаемый {}!", token_with_case(t, "им"))),
+        None => out.push_str("Здравствуйте!"),
+    }
+    out.push_str(" Ваше обращение рассмотрено.");
+    if !others.is_empty() {
+        out.push_str(" Проверены данные: ");
+        let parts: Vec<String> = others
+            .iter()
+            .map(|(n, t)| {
+                if n.is_empty() {
+                    t.clone()
+                } else {
+                    format!("{} {}", n, t)
+                }
+            })
+            .collect();
+        out.push_str(&parts.join(", "));
+        out.push('.');
+    }
+    if let Some(t) = &fio {
+        out.push_str(&format!(" Копия письма направлена {}.", token_with_case(t, "дат")));
+    }
+    out
 }
 
 /// Classification of an upstream failure. Never carries upstream body text.

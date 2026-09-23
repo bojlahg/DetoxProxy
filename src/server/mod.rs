@@ -264,13 +264,41 @@ fn numbering(sys: &SystemConfig) -> Numbering {
     }
 }
 
+/// Per-stage timings for a request, logged in microseconds. `mask_us` is set for masking
+/// requests, `unmask_us` for restore requests; the other is zero.
+#[derive(Debug, Default, Clone, Copy)]
+struct RequestTiming {
+    detect_us: u64,
+    mask_us: u64,
+    unmask_us: u64,
+    store_us: u64,
+    total_us: u64,
+}
+
+/// Builds a `RequestTiming` from the request start instant and the measured stage durations.
+fn timing(started: Instant, detect_us: u64, mask_us: u64, unmask_us: u64, store_us: u64) -> RequestTiming {
+    RequestTiming {
+        detect_us,
+        mask_us,
+        unmask_us,
+        store_us,
+        total_us: started.elapsed().as_micros() as u64,
+    }
+}
+
+/// Bundles the latency and per-stage timings logged for a request.
+struct RequestLog {
+    latency_ms: u64,
+    timing: RequestTiming,
+}
+
 fn log_request(
     request_id: &str,
     system: &str,
     direction: Direction,
     payload_id: &str,
     entity_types: &HashMap<String, usize>,
-    latency_ms: u64,
+    log: &RequestLog,
     status: u16,
 ) {
     let pid = if payload_id.len() > 64 {
@@ -284,7 +312,12 @@ fn log_request(
         direction = ?direction,
         payload_id = %pid,
         entities = ?entity_types,
-        latency_ms = latency_ms,
+        latency_ms = log.latency_ms,
+        detect_us = log.timing.detect_us,
+        mask_us = log.timing.mask_us,
+        unmask_us = log.timing.unmask_us,
+        store_us = log.timing.store_us,
+        total_us = log.timing.total_us,
         status = status,
         "request"
     );
@@ -369,6 +402,10 @@ struct ProcessOutcome {
     payload_bytes: usize,
     direction: Direction,
     payload_id: String,
+    detect_us: u64,
+    mask_us: u64,
+    unmask_us: u64,
+    store_us: u64,
 }
 
 async fn process_handler(
@@ -393,13 +430,13 @@ async fn process_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(outcome) => process_success(&rid, &sys, latency, outcome),
-        Err(resp) => process_error(&rid, &sys, latency, *resp),
+        Ok(outcome) => process_success(&rid, &sys, latency, outcome, started),
+        Err(resp) => process_error(&rid, &sys, latency, *resp, started),
     }
 }
 
 /// Emits per-branch metrics and the success response for a /process outcome.
-fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: ProcessOutcome) -> Response {
+fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: ProcessOutcome, started: Instant) -> Response {
     if outcome.payload_bytes > 0 {
         record_payload_bytes(&sys.id, outcome.direction, outcome.payload_bytes);
     }
@@ -417,7 +454,9 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
     } else {
         record_unresolved(&sys.id, outcome.unresolved_tokens);
     }
-    log_request(rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, latency, 200);
+    let t = timing(started, outcome.detect_us, outcome.mask_us, outcome.unmask_us, outcome.store_us);
+    let log = RequestLog { latency_ms: latency, timing: t };
+    log_request(rid, &sys.id, outcome.direction, &outcome.payload_id, &outcome.entity_types, &log, 200);
     finish_response(
         rid,
         sys,
@@ -430,9 +469,11 @@ fn process_success(rid: &str, sys: &SystemConfig, latency: u64, outcome: Process
 }
 
 /// Emits the error response for a /process failure.
-fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response) -> Response {
+fn process_error(rid: &str, sys: &SystemConfig, latency: u64, resp: Response, started: Instant) -> Response {
     let status = resp.status();
-    log_request(rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
+    let t = timing(started, 0, 0, 0, 0);
+    let log = RequestLog { latency_ms: latency, timing: t };
+    log_request(rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
     finish_response(rid, sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), resp)
 }
 
@@ -473,6 +514,10 @@ async fn process_inner(
                 payload_bytes: payload.len(),
                 direction: Direction::Mask,
                 payload_id: payload_id.clone(),
+                detect_us: 0,
+                mask_us: 0,
+                unmask_us: 0,
+                store_us: 0,
             });
         }
         return Ok(unmask_outcome(&payload_id, &payload, &entry, Direction::Unmask));
@@ -489,6 +534,10 @@ async fn process_inner(
             payload_bytes: payload.len(),
             direction: Direction::Mask,
             payload_id: payload_id.clone(),
+            detect_us: 0,
+            mask_us: 0,
+            unmask_us: 0,
+            store_us: 0,
         });
     }
 
@@ -507,12 +556,18 @@ fn empty_outcome(payload_id: &str) -> ProcessOutcome {
         payload_bytes: 0,
         direction: Direction::Mask,
         payload_id: payload_id.to_string(),
+        detect_us: 0,
+        mask_us: 0,
+        unmask_us: 0,
+        store_us: 0,
     }
 }
 
 /// Outcome for a payload that must be unmasked against an existing store entry.
 fn unmask_outcome(payload_id: &str, payload: &str, entry: &crate::store::StoredEntry, direction: Direction) -> ProcessOutcome {
+    let t0 = Instant::now();
     let restored = unmask(payload, &entry.mappings);
+    let unmask_us = t0.elapsed().as_micros() as u64;
     let unresolved = count_unresolved_tokens(payload, &entry.mappings);
     ProcessOutcome {
         resp: ProcessResponse { result: restored },
@@ -524,6 +579,10 @@ fn unmask_outcome(payload_id: &str, payload: &str, entry: &crate::store::StoredE
         payload_bytes: payload.len(),
         direction,
         payload_id: payload_id.to_string(),
+        detect_us: 0,
+        mask_us: 0,
+        unmask_us,
+        store_us: 0,
     }
 }
 
@@ -541,19 +600,25 @@ async fn process_fresh_mask(
     let sys2 = sys.clone();
     let key2 = key.to_string();
     let payload2 = payload.to_string();
-    let (text, et) = run_detection(state, payload.len(), inline_max, deadline, move || {
+    let (text, et, detect_us, mask_us, store_us) = run_detection(state, payload.len(), inline_max, deadline, move || {
         let cfg = st.config.load();
         let registry = st.registry.load();
         let detector = st.detector.load();
+        let t0 = Instant::now();
         let entities = detector.detect(&payload2, &detect_options(&sys2));
+        let detect_us = t0.elapsed().as_micros() as u64;
+        let t1 = Instant::now();
         let res = mask_with(&payload2, &entities, &registry, &mask_options(&sys2), numbering(&sys2));
+        let mask_us = t1.elapsed().as_micros() as u64;
         let original_hash = hash_id(&payload2);
+        let t2 = Instant::now();
         st.store.insert_with_hash(&key2, res.text.clone(), res.mappings.clone(), original_hash);
+        let store_us = t2.elapsed().as_micros() as u64;
         let mut et = HashMap::new();
         for e in &entities {
             *et.entry(e.type_id.clone()).or_insert(0) += 1;
         }
-        (res.text, et)
+        (res.text, et, detect_us, mask_us, store_us)
     })
     .await?;
     let entity_count: usize = et.values().sum();
@@ -567,6 +632,10 @@ async fn process_fresh_mask(
         payload_bytes: payload.len(),
         direction: Direction::Mask,
         payload_id: payload_id.to_string(),
+        detect_us,
+        mask_us,
+        unmask_us: 0,
+        store_us,
     })
 }
 
@@ -588,26 +657,31 @@ async fn mask_handler(
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(resp) => {
-            log_request(&rid, &sys.id, Direction::Mask, &resp.session_id, &HashMap::new(), latency, 200);
+        Ok((resp, detect_us, mask_us, store_us)) => {
+            let t = timing(started, detect_us, mask_us, 0, store_us);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Mask, &resp.session_id, &HashMap::new(), &log, 200);
             finish_response(&rid, &sys, Direction::Mask, latency, 200, &HashMap::new(), Json(resp).into_response())
         }
         Err(resp) => {
             let status = resp.status();
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
+            let t = timing(started, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
             finish_response(&rid, &sys, Direction::Mask, latency, status.as_u16(), &HashMap::new(), *resp)
         }
     }
 }
 
 /// Parses the /v1/mask body, runs detection+masking (stateful or stateless) and persists mappings.
+/// Returns the response plus detect/mask/store timings in microseconds.
 async fn mask_inner(
     state: &Arc<AppState>,
     sys: &SystemConfig,
     body: &axum::body::Bytes,
     deadline: Duration,
     inline_max: usize,
-) -> Result<MaskResponse, Box<Response>> {
+) -> Result<(MaskResponse, u64, u64, u64), Box<Response>> {
     let req: MaskRequest = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Err(Box::new(error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"))),
@@ -634,23 +708,32 @@ async fn mask_inner(
         let cfg = st.config.load();
         let registry = st.registry.load();
         let detector = st.detector.load();
-        mask_with_seed(
+        let t0 = Instant::now();
+        let entities = detector.detect(&text2, &detect_options(&sys2));
+        let detect_us = t0.elapsed().as_micros() as u64;
+        let t1 = Instant::now();
+        let res = mask_with_seed(
             &text2,
-            &detector.detect(&text2, &detect_options(&sys2)),
+            &entities,
             &registry,
             &mask_options(&sys2),
             numbering(&sys2),
             &seed2,
-        )
+        );
+        let mask_us = t1.elapsed().as_micros() as u64;
+        (res, detect_us, mask_us)
     })
     .await?;
+    let (res, detect_us, mask_us) = res;
     let mut merged = seed;
     for m in &res.mappings {
         if !merged.iter().any(|x| x.masked == m.masked) {
             merged.push(m.clone());
         }
     }
+    let t2 = Instant::now();
     state.store.insert_with_hash(&store_key(&sys.id, &session_id), res.text.clone(), merged, hash_id(&req.text));
+    let store_us = t2.elapsed().as_micros() as u64;
     let out_entities = res
         .entities
         .iter()
@@ -666,12 +749,17 @@ async fn mask_inner(
                 .unwrap_or_default(),
         })
         .collect();
-    Ok(MaskResponse {
-        text: res.text,
-        session_id,
-        entities: out_entities,
-        mappings: res.mappings,
-    })
+    Ok((
+        MaskResponse {
+            text: res.text,
+            session_id,
+            entities: out_entities,
+            mappings: res.mappings,
+        },
+        detect_us,
+        mask_us,
+        store_us,
+    ))
 }
 
 async fn unmask_handler(
@@ -695,20 +783,24 @@ async fn unmask_handler(
         let text_len = req.text.len();
         match state.store.get(&store_key(&sys.id, &req.session_id)) {
             Some(entry) => {
+                let t0 = Instant::now();
                 let restored = unmask(&req.text, &entry.mappings);
+                let unmask_us = t0.elapsed().as_micros() as u64;
                 let unresolved = count_unresolved_tokens(&req.text, &entry.mappings);
-                Ok((false, unresolved, text_len, req.session_id, UnmaskResponse { text: restored }))
+                Ok((false, unresolved, text_len, req.session_id, unmask_us, UnmaskResponse { text: restored }))
             }
-            None => Ok((true, 0, text_len, req.session_id, UnmaskResponse { text: req.text })),
+            None => Ok((true, 0, text_len, req.session_id, 0, UnmaskResponse { text: req.text })),
         }
     })
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(Ok((not_found, unresolved, text_len, session_id, resp))) => {
+        Ok(Ok((not_found, unresolved, text_len, session_id, unmask_us, resp))) => {
             record_metrics(&sys.id, Direction::Unmask, 200, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Unmask, &session_id, &HashMap::new(), latency, 200);
+            let t = timing(started, 0, 0, unmask_us, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Unmask, &session_id, &HashMap::new(), &log, 200);
             record_payload_bytes(&sys.id, Direction::Unmask, text_len);
             record_unresolved(&sys.id, unresolved);
             let mut resp = Json(resp).into_response();
@@ -720,14 +812,18 @@ async fn unmask_handler(
         }
         Ok(Err((status, msg))) => {
             record_metrics(&sys.id, Direction::Unmask, status.as_u16(), latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), latency, status.as_u16());
+            let t = timing(started, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = error_response(status, &msg, "bad_request");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
         }
         Err(_) => {
             record_metrics(&sys.id, Direction::Unmask, 503, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), latency, 503);
+            let t = timing(started, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Unmask, "", &HashMap::new(), &log, 503);
             let mut resp = error_response(StatusCode::SERVICE_UNAVAILABLE, "request deadline exceeded", "timeout");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -757,10 +853,13 @@ async fn detect_handler(
         let st = state.clone();
         let sys2 = sys.clone();
         let text2 = req.text.clone();
-        let entities = run_detection(&state, req.text.len(), inline_max, deadline, move || {
+        let (entities, detect_us) = run_detection(&state, req.text.len(), inline_max, deadline, move || {
             let cfg = st.config.load();
             let detector = st.detector.load();
-            detector.detect(&text2, &detect_options(&sys2))
+            let t0 = Instant::now();
+            let entities = detector.detect(&text2, &detect_options(&sys2));
+            let detect_us = t0.elapsed().as_micros() as u64;
+            (entities, detect_us)
         })
         .await?;
         let out: Vec<DetectEntity> = entities
@@ -772,15 +871,17 @@ async fn detect_handler(
                 confidence: e.confidence,
             })
             .collect();
-        Ok(DetectResponse { entities: out })
+        Ok((DetectResponse { entities: out }, detect_us))
     }
     .await;
 
     let latency = started.elapsed().as_millis() as u64;
     match result {
-        Ok(resp) => {
+        Ok((resp, detect_us)) => {
             record_metrics(&sys.id, Direction::Mask, 200, latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, 200);
+            let t = timing(started, detect_us, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, 200);
             let mut resp = Json(resp).into_response();
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -788,7 +889,9 @@ async fn detect_handler(
         Err(resp) => {
             let status = resp.status();
             record_metrics(&sys.id, Direction::Mask, status.as_u16(), latency, &HashMap::new());
-            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), latency, status.as_u16());
+            let t = timing(started, 0, 0, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Mask, "", &HashMap::new(), &log, status.as_u16());
             let mut resp = *resp;
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp
@@ -798,6 +901,15 @@ async fn detect_handler(
 
 async fn healthz() -> &'static str {
     "ok"
+}
+
+/// Serves the self-contained demo page embedded at compile time.
+async fn demo_handler() -> Response {
+    let body = Body::from(include_str!("../../static/demo.html"));
+    let mut resp = Response::new(body);
+    resp.headers_mut()
+        .insert(header::CONTENT_TYPE, "text/html; charset=utf-8".parse().unwrap());
+    resp
 }
 
 /// OpenAI-compatible chat completions proxy: masks request messages, forwards to the upstream LLM
@@ -821,8 +933,13 @@ async fn chat_completions_handler(
         Err(_) => return error_response(StatusCode::BAD_REQUEST, "invalid json", "bad_request"),
     };
     let want_stream = req.stream.unwrap_or(false);
+    let want_debug = headers
+        .get("x-detox-debug")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false);
 
-    let masked = mask_chat_request(&state, &sys, &req, &rid);
+    let (masked, mask_us) = mask_chat_request(&state, &sys, &req, &rid);
     let upstream_body = build_upstream_body(&body, &masked, &req, llm_cfg.case_hints);
 
     let api_key = llm_cfg
@@ -848,7 +965,9 @@ async fn chat_completions_handler(
         Ok(text) => (200, text),
         Err(_) => {
             let latency = started.elapsed().as_millis() as u64;
-            log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, 502);
+            let t = timing(started, 0, mask_us, 0, 0);
+            let log = RequestLog { latency_ms: latency, timing: t };
+            log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, 502);
             let mut resp = error_response(StatusCode::BAD_GATEWAY, "upstream error", "upstream");
             resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
             resp.headers_mut()
@@ -857,28 +976,67 @@ async fn chat_completions_handler(
         }
     };
 
-    let restored = unmask(&model_text, &masked.mappings);
+    let t0 = Instant::now();
+    let restored = if sys.unmask_enabled {
+        unmask(&model_text, &masked.mappings)
+    } else {
+        model_text.clone()
+    };
+    let unmask_us = t0.elapsed().as_micros() as u64;
     let model = req.model.clone().unwrap_or_default();
 
-    let mut resp = build_chat_response(want_stream, &rid, model, restored);
+    let detox = build_detox_debug(want_debug, want_stream, &req, &masked, model_text);
+
+    let mut resp = build_chat_response(want_stream, &rid, model, restored, detox);
     resp.headers_mut().insert("x-request-id", rid.parse().unwrap());
     resp.headers_mut()
         .insert("x-detox-masked-entities", masked.entity_count.to_string().parse().unwrap());
 
     let latency = started.elapsed().as_millis() as u64;
-    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, latency, status);
+    let t = timing(started, 0, mask_us, unmask_us, 0);
+    let log = RequestLog { latency_ms: latency, timing: t };
+    log_request(&rid, &sys.id, Direction::Mask, "", &masked.entity_types, &log, status);
     resp
 }
 
-/// Masks all chat messages, persists the shared mapping table and returns the masked result.
+/// Builds the `detox` debug view when the client requested it for a non-streaming response.
+/// Contains only masked texts and the raw model output — never original PII values.
+fn build_detox_debug(
+    want_debug: bool,
+    want_stream: bool,
+    req: &crate::llm::ChatRequest,
+    masked: &crate::llm::MaskedMessages,
+    model_text: String,
+) -> Option<crate::llm::DetoxDebug> {
+    if !want_debug || want_stream {
+        return None;
+    }
+    let masked_messages: Vec<crate::llm::MaskedMessage> = req
+        .messages
+        .iter()
+        .zip(masked.texts.iter())
+        .map(|(m, t)| crate::llm::MaskedMessage {
+            role: m.role.clone(),
+            content: t.clone(),
+        })
+        .collect();
+    Some(crate::llm::DetoxDebug {
+        masked_messages,
+        model_output: model_text,
+    })
+}
+
+/// Masks all chat messages, persists the shared mapping table and returns the masked result
+/// plus the masking duration in microseconds.
 fn mask_chat_request(
     state: &Arc<AppState>,
     sys: &SystemConfig,
     req: &crate::llm::ChatRequest,
     rid: &str,
-) -> crate::llm::MaskedMessages {
+) -> (crate::llm::MaskedMessages, u64) {
     let registry = state.registry.load();
     let detector = state.detector.load();
+    let t0 = Instant::now();
     let masked = crate::llm::mask_messages(
         &req.messages,
         &detector,
@@ -887,9 +1045,10 @@ fn mask_chat_request(
         &mask_options(sys),
         &numbering(sys),
     );
+    let mask_us = t0.elapsed().as_micros() as u64;
     let store_key = store_key(&sys.id, &format!("chat:{}", rid));
     state.store.insert(&store_key, String::new(), masked.mappings.clone());
-    masked
+    (masked, mask_us)
 }
 
 /// System message prepended to the upstream request when `llm.case_hints` is enabled. Tells the
@@ -920,7 +1079,13 @@ fn build_upstream_body(
 }
 
 /// Builds the client response as SSE (streaming) or JSON (non-streaming).
-fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: String) -> Response {
+fn build_chat_response(
+    want_stream: bool,
+    rid: &str,
+    model: String,
+    restored: String,
+    detox: Option<crate::llm::DetoxDebug>,
+) -> Response {
     if want_stream {
         let chunk = serde_json::json!({
             "id": rid,
@@ -951,6 +1116,7 @@ fn build_chat_response(want_stream: bool, rid: &str, model: String, restored: St
                 },
                 finish_reason: "stop",
             }],
+            detox,
         };
         Json(json).into_response()
     }
@@ -1076,6 +1242,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/admin/reload", post(reload_handler))
         .route("/healthz", get(healthz))
+        .route("/demo", get(demo_handler))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_handler))
         .layer(middleware::from_fn_with_state(state.clone(), body_limit_middleware))
@@ -1091,6 +1258,7 @@ pub async fn run(config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let store = Arc::new(crate::store::MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
+        cfg.server.encrypt_mappings,
     ));
 
     let state = Arc::new(AppState {

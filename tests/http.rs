@@ -35,6 +35,7 @@ fn build_state_with_path(cfg: Config, config_path: std::path::PathBuf) -> Arc<Ap
     let store = Arc::new(MappingStore::new(
         Duration::from_secs(cfg.server.mapping_ttl_sec),
         cfg.server.mapping_max_entries,
+        cfg.server.encrypt_mappings,
     ));
     Arc::new(AppState {
         config: ConfigStore::new(cfg.clone()),
@@ -453,6 +454,21 @@ allowlist_file: data/allowlist.yaml
 }
 
 #[tokio::test]
+async fn demo_page_served() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let client = reqwest::Client::new();
+    let resp = client.get(format!("{}/demo", base)).send().await.expect("send");
+    assert_eq!(resp.status().as_u16(), 200);
+    let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert!(ct.starts_with("text/html"), "content-type: {ct}");
+    let body = resp.text().await.expect("text");
+    assert!(body.contains("/v1/detect"), "demo body missing /v1/detect");
+    assert!(body.contains("payload_id"), "demo body missing payload_id");
+}
+
+#[tokio::test]
 async fn metrics_and_health() {
     let cfg = load_root_config();
     let base = spawn_app(build_state(cfg)).await;
@@ -523,6 +539,38 @@ async fn log_contains_payload_id_not_pii() {
     let data = buf.lock().unwrap().clone();
     let text = String::from_utf8_lossy(&data).to_string();
     assert!(text.contains("log-check-123"), "log missing payload_id: {text}");
+    assert!(!text.contains("7707083893"), "log leaked PII: {text}");
+}
+
+#[tokio::test]
+async fn log_contains_stage_timings() {
+    let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = buf.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || {
+                let w = writer.clone();
+                std::io::BufWriter::new(TestWriter(w))
+            })
+            .json()
+            .finish(),
+    );
+
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+    post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": "ИНН 7707083893", "payload_id": "timing-check"}),
+        &[],
+    )
+    .await;
+
+    std::thread::sleep(Duration::from_millis(100));
+    let data = buf.lock().unwrap().clone();
+    let text = String::from_utf8_lossy(&data).to_string();
+    assert!(text.contains("detect_us"), "log missing detect_us: {text}");
+    assert!(text.contains("total_us"), "log missing total_us: {text}");
     assert!(!text.contains("7707083893"), "log leaked PII: {text}");
 }
 

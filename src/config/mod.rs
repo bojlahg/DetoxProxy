@@ -72,6 +72,9 @@ pub struct ServerConfig {
     pub mapping_ttl_sec: u64,
     #[serde(default = "default_mapping_max_entries")]
     pub mapping_max_entries: usize,
+    /// Encrypt the `original` values of stored mappings at rest. Defaults to true.
+    #[serde(default = "default_encrypt_mappings")]
+    pub encrypt_mappings: bool,
     #[serde(default = "default_request_deadline_ms")]
     pub request_deadline_ms: u64,
     /// Birth dates older than this many years are treated as historical (confidence penalty).
@@ -95,6 +98,7 @@ fn default_max_body_bytes() -> usize { 4 * 1024 * 1024 }
 fn default_max_inflight() -> usize { 2048 }
 fn default_mapping_ttl_sec() -> u64 { 900 }
 fn default_mapping_max_entries() -> usize { 200_000 }
+fn default_encrypt_mappings() -> bool { true }
 fn default_request_deadline_ms() -> u64 { 5000 }
 fn default_historical_date_years() -> u32 { 120 }
 fn default_inline_max_bytes() -> usize { 16384 }

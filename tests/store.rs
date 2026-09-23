@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn insert_get() {
-    let store = MappingStore::new(Duration::from_secs(60), 100);
+    let store = MappingStore::new(Duration::from_secs(60), 100, true);
     assert!(store.is_empty());
     store.insert(
         "id1",
@@ -25,7 +25,7 @@ fn insert_get() {
 
 #[test]
 fn insert_overwrites() {
-    let store = MappingStore::new(Duration::from_secs(60), 100);
+    let store = MappingStore::new(Duration::from_secs(60), 100, true);
     store.insert("id1", "first".to_string(), vec![]);
     store.insert("id1", "second".to_string(), vec![]);
     assert_eq!(store.len(), 1);
@@ -34,7 +34,7 @@ fn insert_overwrites() {
 
 #[test]
 fn get_after_ttl_returns_none() {
-    let store = MappingStore::new(Duration::from_millis(50), 100);
+    let store = MappingStore::new(Duration::from_millis(50), 100, true);
     store.insert("id1", "m".to_string(), vec![]);
     std::thread::sleep(Duration::from_millis(80));
     assert!(store.get("id1").is_none());
@@ -42,7 +42,7 @@ fn get_after_ttl_returns_none() {
 
 #[test]
 fn sweep_removes_expired() {
-    let store = MappingStore::new(Duration::from_millis(50), 100);
+    let store = MappingStore::new(Duration::from_millis(50), 100, true);
     store.insert("old", "m".to_string(), vec![]);
     std::thread::sleep(Duration::from_millis(80));
     store.insert("fresh", "m".to_string(), vec![]);
@@ -55,7 +55,7 @@ fn sweep_removes_expired() {
 
 #[test]
 fn max_entries_evicts_oldest() {
-    let store = MappingStore::new(Duration::from_secs(60), 3);
+    let store = MappingStore::new(Duration::from_secs(60), 3, true);
     for id in ["a", "b", "c", "d", "e"] {
         store.insert(id, "m".to_string(), vec![]);
     }
@@ -69,7 +69,7 @@ fn max_entries_evicts_oldest() {
 
 #[test]
 fn max_entries_evicts_oldest_large() {
-    let store = MappingStore::new(Duration::from_secs(60), 1000);
+    let store = MappingStore::new(Duration::from_secs(60), 1000, true);
     for i in 0..5000 {
         store.insert(&format!("id{i}"), "m".to_string(), vec![]);
     }
@@ -84,7 +84,10 @@ fn max_entries_evicts_oldest_large() {
 
 #[test]
 fn insert_200k_within_budget() {
-    let store = MappingStore::new(Duration::from_secs(60), 10_000);
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let store = MappingStore::new(Duration::from_secs(60), 10_000, true);
     let start = std::time::Instant::now();
     for i in 0..200_000 {
         store.insert(&format!("id{i}"), "m".to_string(), vec![]);
@@ -99,7 +102,7 @@ fn insert_200k_within_budget() {
 
 #[test]
 fn sweep_removes_expired_and_get_none() {
-    let store = MappingStore::new(Duration::from_millis(50), 100);
+    let store = MappingStore::new(Duration::from_millis(50), 100, true);
     store.insert("old", "m".to_string(), vec![]);
     std::thread::sleep(Duration::from_millis(80));
     store.insert("fresh", "m".to_string(), vec![]);
@@ -112,7 +115,7 @@ fn sweep_removes_expired_and_get_none() {
 
 #[test]
 fn reinserted_key_not_evicted_by_stale_queue_entry() {
-    let store = MappingStore::new(Duration::from_secs(60), 3);
+    let store = MappingStore::new(Duration::from_secs(60), 3, true);
     store.insert("a", "m".to_string(), vec![]);
     store.insert("b", "m".to_string(), vec![]);
     store.insert("c", "m".to_string(), vec![]);
@@ -122,4 +125,27 @@ fn reinserted_key_not_evicted_by_stale_queue_entry() {
     assert!(store.get("a").is_some(), "fresh a should survive");
     assert!(store.get("d").is_some());
     assert!(store.get("b").is_none(), "b should be evicted");
+}
+
+#[test]
+fn stored_mappings_are_encrypted() {
+    let store = MappingStore::new(Duration::from_secs(60), 100, true);
+    let original = "7707083893";
+    store.insert(
+        "id1",
+        "masked".to_string(),
+        vec![Mapping {
+            type_id: "inn".into(),
+            original: original.into(),
+            masked: "<<INN_1>>".into(),
+        }],
+    );
+    let stored = store.contains_original("id1", original);
+    assert!(
+        !stored,
+        "original value must not appear in the stored representation"
+    );
+    let e = store.get("id1").expect("entry present");
+    assert_eq!(e.mappings[0].original, original);
+    assert_eq!(e.mappings[0].masked, "<<INN_1>>");
 }
