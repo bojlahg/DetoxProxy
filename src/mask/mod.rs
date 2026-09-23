@@ -364,6 +364,27 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
     result
 }
 
+/// Resolves a token with a grammatical-case suffix (`<<FIO_1:дат>>`) to the restored original.
+/// Returns `None` when the suffix is not a recognized case or the type is not inflectable.
+/// When the original already stands in the requested case it is returned as-is; otherwise it is
+/// inflected. Case matching is kind-aware: persons use `detect_person_case`, places and countries
+/// use `detect_place_case`, streets are always inflected.
+fn resolve_case_suffix(m: &Mapping, suffix: &str) -> Option<String> {
+    let case = morph::Case::parse(suffix)?;
+    let Some(kind) = kind_for_type(&m.type_id, &m.original) else {
+        return Some(m.original.clone());
+    };
+    let matches_case = match kind {
+        morph::Kind::Person => morph::detect_person_case(&m.original) == case,
+        morph::Kind::Place | morph::Kind::Country => morph::detect_place_case(&m.original) == case,
+        morph::Kind::Street => false,
+    };
+    if matches_case {
+        return Some(m.original.clone());
+    }
+    Some(morph::inflect(&m.original, kind, case).unwrap_or_else(|| m.original.clone()))
+}
+
 /// Replaces token-format masks (`<<LABEL_N>>`, with optional case suffix) in `text` using the
 /// token mappings. Unknown tokens are left untouched.
 fn replace_tokens(text: &str, mappings: &[Mapping]) -> String {
@@ -379,12 +400,8 @@ fn replace_tokens(text: &str, mappings: &[Mapping]) -> String {
             let matched = token_map.get(&norm_compare(&base_token)).copied();
             match (matched, caps.get(3)) {
                 (Some(m), Some(suffix)) => {
-                    if let Some(case) = morph::Case::parse(suffix.as_str()) {
-                        if let Some(kind) = kind_for_type(&m.type_id, &m.original) {
-                            return morph::inflect(&m.original, kind, case)
-                                .unwrap_or_else(|| m.original.clone());
-                        }
-                        return m.original.clone();
+                    if let Some(restored) = resolve_case_suffix(m, suffix.as_str()) {
+                        return restored;
                     }
                     token.to_string()
                 }
@@ -1193,4 +1210,53 @@ fn norm_compare(s: &str) -> String {
         .filter(|c| !c.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unmask_case_suffix_matching_original_case_returns_original() {
+        let mapping = Mapping {
+            type_id: "fio".to_string(),
+            original: "Иванову Ивану Ивановичу".to_string(),
+            masked: "<<FIO_1>>".to_string(),
+        };
+        let restored = unmask("<<FIO_1:дат>>", &[mapping]);
+        assert_eq!(restored, "Иванову Ивану Ивановичу");
+    }
+
+    #[test]
+    fn unmask_place_nominative_suffix_returns_nominative() {
+        let mapping = Mapping {
+            type_id: "birth_place".to_string(),
+            original: "Москве".to_string(),
+            masked: "<<BPLACE_1>>".to_string(),
+        };
+        let restored = unmask("<<BPLACE_1:им>>", &[mapping]);
+        assert_eq!(restored, "Москва");
+    }
+
+    #[test]
+    fn unmask_place_prepositional_suffix_returns_prepositional() {
+        let mapping = Mapping {
+            type_id: "birth_place".to_string(),
+            original: "Москве".to_string(),
+            masked: "<<BPLACE_1>>".to_string(),
+        };
+        let restored = unmask("<<BPLACE_1:пр>>", &[mapping]);
+        assert_eq!(restored, "Москве");
+    }
+
+    #[test]
+    fn unmask_fio_dative_suffix_returns_dative() {
+        let mapping = Mapping {
+            type_id: "fio".to_string(),
+            original: "Иванов Иван Иванович".to_string(),
+            masked: "<<FIO_1>>".to_string(),
+        };
+        let restored = unmask("<<FIO_1:дат>>", &[mapping]);
+        assert_eq!(restored, "Иванову Ивану Ивановичу");
+    }
 }

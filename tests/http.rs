@@ -488,6 +488,84 @@ async fn metrics_and_health() {
 }
 
 #[tokio::test]
+async fn metrics_tokens_after_process_mask_unmask() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let payload = "ИНН 7707083893, тел. +7 912 345-67-89 xy";
+    assert_eq!(payload.chars().count(), 40, "payload must be 40 chars");
+    let id = "tokens-check";
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": payload, "payload_id": id}),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+    let masked = json["result"].as_str().unwrap().to_string();
+
+    let (st, json, _) = post_json(
+        &base,
+        "/process",
+        &serde_json::json!({"payload": masked, "payload_id": id}),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(json["result"].as_str().unwrap(), payload);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+    assert!(
+        body.contains("pii_tokens_total{system=\"autotest\",direction=\"mask\"}"),
+        "metrics missing mask tokens: {body}"
+    );
+    assert!(
+        body.contains("pii_tokens_total{system=\"autotest\",direction=\"unmask\"}"),
+        "metrics missing unmask tokens: {body}"
+    );
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
+async fn metrics_llm_demo_chat_completions() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, _json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &serde_json::json!({
+            "model": "demo",
+            "messages": [{"role": "user", "content": "ИНН 7707083893"}],
+            "stream": false
+        }),
+        &[],
+    )
+    .await;
+    assert_eq!(st, 200);
+
+    let (st, body) = get(&base, "/metrics").await;
+    assert_eq!(st, 200);
+    assert!(
+        body.contains("pii_llm_tokens_total{system=\"autotest\",kind=\"prompt\"}"),
+        "metrics missing prompt tokens: {body}"
+    );
+    assert!(
+        body.contains("pii_llm_tokens_total{system=\"autotest\",kind=\"completion\"}"),
+        "metrics missing completion tokens: {body}"
+    );
+    assert!(body.contains("pii_llm_seconds_count"), "metrics missing llm_seconds: {body}");
+    assert!(
+        body.contains("pii_llm_tokens_per_second_count"),
+        "metrics missing llm_tokens_per_second: {body}"
+    );
+    assert!(!body.contains("7707083893"), "metrics leaked PII: {body}");
+}
+
+#[tokio::test]
 async fn logs_do_not_contain_pii() {
     let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
     let writer = buf.clone();
@@ -992,4 +1070,196 @@ allowlist_file: data/allowlist.yaml
     let (st, _) = get(&base, "/healthz").await;
     assert_eq!(st, 200, "server must stay alive without a shutdown signal");
     assert!(!serve_task.is_finished(), "server shut down without a signal");
+}
+
+const CASE_HINTS_CFG: &str = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+llm:
+  case_hints: true
+  case_hints_prompt: "В тексте персональные данные заменены метками вида <<FIO_1>>. Не изменяй и не раскрывай метки, не пытайся угадать их значения. Если метке нужен падеж, укажи его внутри скобок: <<FIO_1:им>>, <<FIO_1:род>>, <<FIO_1:дат>>, <<FIO_1:вин>>, <<FIO_1:твор>>, <<FIO_1:пр>>. Метка с падежом в запросе показывает, в каком падеже стояло исходное слово."
+"#;
+
+const CASE_HINTS_OFF_CFG: &str = r#"
+version: 1
+server:
+  listen: "127.0.0.1:0"
+  max_body_bytes: 4194304
+  max_inflight: 2048
+  mapping_ttl_sec: 900
+  mapping_max_entries: 200000
+  request_deadline_ms: 5000
+default_system: autotest
+systems:
+  - id: autotest
+    enabled: true
+    mask_mode: token
+    unmask_enabled: true
+    types: all
+    overrides: {}
+    combination_rule: false
+    min_confidence: 0.3
+    allow_substrings: []
+    session_mode: stateless
+    token_numbering: sequential
+pii_types_file: data/pii_types.yaml
+allowlist_file: data/allowlist.yaml
+llm:
+  case_hints: false
+"#;
+
+fn chat_case_body() -> serde_json::Value {
+    serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо с отказом Иванову Ивану Ивановичу, ИНН 500100732259"}
+        ],
+        "stream": false
+    })
+}
+
+#[tokio::test]
+async fn case_hints_upstream_messages_and_restore() {
+    let mut cfg = Config::from_yaml(CASE_HINTS_CFG).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &chat_case_body(),
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let sys = &detox["upstream_messages"][0];
+    assert_eq!(sys["role"], "system", "upstream_messages[0]: {sys}");
+    let prompt = sys["content"].as_str().unwrap();
+    assert!(prompt.contains("<<FIO_1:дат>>"), "system prompt: {prompt}");
+
+    let user = &detox["upstream_messages"][1];
+    assert_eq!(user["role"], "user", "upstream_messages[1]: {user}");
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:дат>>"), "upstream content: {content}");
+    assert!(!content.contains("Иванов"), "upstream leaked original: {content}");
+
+    let resp_content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(resp_content.contains("Иванов Иван Иванович"), "resp: {resp_content}");
+    assert!(resp_content.contains("Иванову Ивану Ивановичу"), "resp: {resp_content}");
+}
+
+#[tokio::test]
+async fn case_hints_disabled_no_system_message_no_suffix() {
+    let mut cfg = Config::from_yaml(CASE_HINTS_OFF_CFG).expect("parse");
+    cfg.validate().expect("validate");
+    let base = spawn_app(build_state(cfg)).await;
+
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &chat_case_body(),
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let msgs = detox["upstream_messages"].as_array().unwrap();
+    assert!(
+        msgs.iter().all(|m| m["role"] != "system"),
+        "no system message expected: {msgs:?}"
+    );
+    let content = msgs[0]["content"].as_str().unwrap();
+    assert!(!content.contains("<<FIO_1:дат>>"), "no suffix expected: {content}");
+}
+
+#[tokio::test]
+async fn demo_mode_declension_table_and_mode() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши поздравление Ивану Иванову"}
+        ],
+        "stream": false
+    });
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &body,
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    assert_eq!(detox["mode"], "demo", "mode: {detox}");
+
+    let user = &detox["upstream_messages"][1];
+    assert_eq!(user["role"], "user", "upstream_messages[1]: {user}");
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:дат>>"), "upstream content: {content}");
+    assert!(!content.contains("Иванов"), "upstream leaked original: {content}");
+
+    let resp_content = json["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(resp_content.contains("им: Иван Иванов"), "resp: {resp_content}");
+    assert!(resp_content.contains("род: Ивана Иванова"), "resp: {resp_content}");
+    assert!(resp_content.contains("дат: Ивану Иванову"), "resp: {resp_content}");
+    assert!(resp_content.contains("твор: Иваном Ивановым"), "resp: {resp_content}");
+}
+
+#[tokio::test]
+async fn demo_mode_nominative_fio_gets_nom_suffix() {
+    let cfg = load_root_config();
+    let base = spawn_app(build_state(cfg)).await;
+
+    let body = serde_json::json!({
+        "model": "demo",
+        "messages": [
+            {"role": "user", "content": "Напиши письмо Иван Иванов"}
+        ],
+        "stream": false
+    });
+    let (st, json, _) = post_json(
+        &base,
+        "/v1/chat/completions",
+        &body,
+        &[("X-System-Id", "autotest"), ("X-Detox-Debug", "1")],
+    )
+    .await;
+    assert_eq!(st, 200, "body: {json}");
+
+    let detox = &json["detox"];
+    assert!(detox.is_object(), "detox missing: {json}");
+    let user = &detox["upstream_messages"][1];
+    let content = user["content"].as_str().unwrap();
+    assert!(content.contains("<<FIO_1:им>>"), "upstream content: {content}");
 }

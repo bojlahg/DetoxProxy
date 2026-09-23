@@ -48,3 +48,6 @@ systems:
 pii_types_file: data/pii_types.yaml
 allowlist_file: data/allowlist.yaml
 dictionaries_dir: data/dict
+llm:
+  case_hints: true
+  case_hints_prompt: "В тексте персональные данные заменены метками вида <<FIO_1>>. Не изменяй и не раскрывай метки, не пытайся угадать их значения. Если метке нужен падеж, укажи его внутри скобок: <<FIO_1:им>>, <<FIO_1:род>>, <<FIO_1:дат>>, <<FIO_1:вин>>, <<FIO_1:твор>>, <<FIO_1:пр>>. Метка с падежом в запросе показывает, в каком падеже стояло исходное слово."

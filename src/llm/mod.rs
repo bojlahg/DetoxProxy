@@ -42,7 +42,10 @@ pub struct ChatCompletionResponse {
 #[derive(Debug, Serialize)]
 pub struct DetoxDebug {
     pub masked_messages: Vec<MaskedMessage>,
+    pub upstream_messages: Vec<MaskedMessage>,
     pub model_output: String,
+    /// `"demo"` when no upstream LLM is configured, `"upstream"` otherwise.
+    pub mode: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,76 +146,72 @@ fn token_with_case(token: &str, case: &str) -> String {
     format!("{}:{}>>", trimmed, case)
 }
 
-/// Short Russian display names for PII types, used in the demo response. Unknown types fall back
-/// to the bare token.
-fn type_display_name(type_id: &str) -> Option<&'static str> {
-    Some(match type_id {
-        "fio" => "ФИО",
-        "birth_date" => "дата рождения",
-        "birth_place" => "место рождения",
-        "citizenship" => "гражданство",
-        "passport" => "паспорт",
-        "passport_issuer" => "кем выдан",
-        "passport_issue_date" => "дата выдачи",
-        "subdivision_code" => "код подразделения",
-        "driver_license" => "водительское удостоверение",
-        "snils" => "СНИЛС",
-        "inn" => "ИНН",
-        "phone" => "телефон",
-        "email" => "email",
-        "address" => "адрес",
-        "card_number" => "карта",
-        "cvv" => "CVV",
-        "card_pin" => "PIN",
-        "card_holder" => "держатель карты",
-        _ => return None,
-    })
-}
-
-/// Builds the demo-mode model text from the token mappings so that restoration is visible on
-/// every masked type. Only token entries (`<<LABEL_N>>`) are referenced; the type display name
-/// comes from `type_display_name`, otherwise the bare token is used.
-pub fn demo_response(mappings: &[Mapping]) -> String {
-    let mut fio: Option<String> = None;
-    let mut others: Vec<(String, String)> = Vec::new();
-    for m in mappings {
-        let Some(caps) = TOKEN_RE.captures(&m.masked) else { continue };
-        let token = format!("<<{}_{}>>", &caps[1], &caps[2]);
-        if m.type_id == "fio" {
-            if fio.is_none() {
-                fio = Some(token);
+/// True if the value contains at least one alphabetic character and every alphabetic character is
+/// Cyrillic (rejects Latin words and pure digits). Used to decide whether a `card_holder` value is
+/// declinable.
+fn is_cyrillic(s: &str) -> bool {
+    let mut has_alpha = false;
+    for c in s.chars() {
+        if c.is_alphabetic() {
+            has_alpha = true;
+            let l = c.to_lowercase().next().unwrap_or(c);
+            if !(('а'..='я').contains(&l) || l == 'ё') {
+                return false;
             }
-        } else {
-            let name = type_display_name(&m.type_id).unwrap_or("").to_string();
-            others.push((name, token));
         }
     }
+    has_alpha
+}
 
-    let mut out = String::new();
-    match &fio {
-        Some(t) => out.push_str(&format!("Уважаемый {}!", token_with_case(t, "им"))),
-        None => out.push_str("Здравствуйте!"),
+/// True if a mapping's type is declinable in the demo table. `card_holder` is declinable only when
+/// the original is Cyrillic (Latin card-holder names are not inflected).
+fn is_declinable(m: &Mapping) -> bool {
+    match m.type_id.as_str() {
+        "fio" | "birth_place" | "citizenship" => true,
+        "card_holder" => is_cyrillic(&m.original),
+        _ => false,
     }
-    out.push_str(" Ваше обращение рассмотрено.");
-    if !others.is_empty() {
-        out.push_str(" Проверены данные: ");
-        let parts: Vec<String> = others
-            .iter()
-            .map(|(n, t)| {
-                if n.is_empty() {
-                    t.clone()
-                } else {
-                    format!("{} {}", n, t)
-                }
-            })
-            .collect();
-        out.push_str(&parts.join(", "));
-        out.push('.');
+}
+
+/// Builds the demo-mode model text from the token mappings so that restoration is visible on every
+/// declinable type. For each declinable label, in order of appearance, a block lists the token and
+/// its six grammatical-case forms:
+///
+/// ```text
+/// <<FIO_1>>
+/// им: <<FIO_1:им>>
+/// род: <<FIO_1:род>>
+/// дат: <<FIO_1:дат>>
+/// вин: <<FIO_1:вин>>
+/// твор: <<FIO_1:твор>>
+/// пр: <<FIO_1:пр>>
+/// ```
+///
+/// Blocks are separated by a blank line. When no declinable label is present the text is
+/// `Склоняемых меток в запросе нет.` The caller restores the result via `unmask`.
+pub fn demo_response(mappings: &[Mapping]) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    for m in mappings {
+        let Some(caps) = TOKEN_RE.captures(&m.masked) else { continue };
+        if !is_declinable(m) {
+            continue;
+        }
+        let token = format!("<<{}_{}>>", &caps[1], &caps[2]);
+        let mut block = String::new();
+        block.push_str(&token);
+        for case in ["им", "род", "дат", "вин", "твор", "пр"] {
+            block.push('\n');
+            block.push_str(case);
+            block.push_str(": ");
+            block.push_str(&token_with_case(&token, case));
+        }
+        blocks.push(block);
     }
-    if let Some(t) = &fio {
-        out.push_str(&format!(" Копия письма направлена {}.", token_with_case(t, "дат")));
+
+    if blocks.is_empty() {
+        return "Склоняемых меток в запросе нет.".to_string();
     }
-    out
+    blocks.join("\n\n")
 }
 
 /// Classification of an upstream failure. Never carries upstream body text.

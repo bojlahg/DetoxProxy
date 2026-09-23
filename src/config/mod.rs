@@ -168,6 +168,9 @@ pub struct LlmConfig {
     /// Prepend a system message telling the model how to request a grammatical case for a token.
     #[serde(default = "default_case_hints")]
     pub case_hints: bool,
+    /// Custom system prompt for case hints. When absent, the built-in `CASE_HINTS_PROMPT` is used.
+    #[serde(default)]
+    pub case_hints_prompt: Option<String>,
 }
 fn default_llm_timeout_ms() -> u64 { 60_000 }
 fn default_case_hints() -> bool { true }
