@@ -237,6 +237,15 @@ fn address_full() {
 }
 
 #[test]
+fn address_company_legal_address_not_detected() {
+    // A legal/company address is an organization address, not a personal one, and must not
+    // be masked at the production confidence threshold (0.3).
+    assert_not_found_prod("Комментарий: Юридический адрес компании: г. Омск, пр. Мира, д. 1.", "address");
+    assert_not_found_prod("Адрес организации: г. Омск, ул. Мира, д. 1", "address");
+    assert_span("Проживает: г. Омск, пр. Мира, д. 1", "address", "г. Омск, пр. Мира, д. 1");
+}
+
+#[test]
 fn address_bare_index_not_entity() {
     assert_not_found("101000", "address");
 }
@@ -344,8 +353,102 @@ fn public_person_with_pii_context_still_masked() {
     );
 }
 
+#[test]
+fn street_name_matching_surname_is_address_not_fio() {
+    assert_span("проживает на улице Ленина, д. 5", "address", "улице Ленина, д. 5");
+    assert_not_found("проживает на улице Ленина, д. 5", "fio");
+    assert_span("Клиентка проживает на улице Ленина, д. 5, Екатеринбург", "address", "улице Ленина, д. 5, Екатеринбург");
+    assert_not_found("Клиентка проживает на улице Ленина, д. 5, Екатеринбург", "fio");
+    assert_span("живу на проспекте Гагарина 12", "address", "проспекте Гагарина 12");
+    assert_not_found("живу на проспекте Гагарина 12", "fio");
+    assert_span("переулок Чехова, дом 3", "address", "переулок Чехова, дом 3");
+    assert_not_found("переулок Чехова, дом 3", "fio");
+}
+
+#[test]
+fn street_name_matching_surname_with_fio_marker_stays_fio() {
+    assert_span("Клиент Ленина Анна Петровна, тел. 89123456789", "fio", "Ленина Анна Петровна");
+}
+
+#[test]
+fn street_address_extends_with_city_before() {
+    // A city before the street (with or without a comma) is included in the address span.
+    assert_span("адрес Московская область г. Химки ул. Победы 23", "address", "г. Химки ул. Победы 23");
+    assert_span("адрес Екатеринбург ул. Ленина 99", "address", "Екатеринбург ул. Ленина 99");
+    assert_span("В Коростене ул. Шевченко 12 переводят", "address", "Коростене ул. Шевченко 12");
+}
+
+#[test]
+fn street_address_extends_with_city_after() {
+    // A city after the street (after a comma) is included in the address span.
+    assert_span("По адресу ш Щетинкина 1, Псебай", "address", "ш Щетинкина 1, Псебай");
+    assert_not_found("По адресу ш Щетинкина 1, Псебай", "fio");
+    assert_span("По адресу ш. Щетинкина 1, Псебай", "address", "ш. Щетинкина 1, Псебай");
+    assert_not_found("По адресу ш. Щетинкина 1, Псебай", "fio");
+}
+
+#[test]
+fn площадь_as_size_is_not_an_address() {
+    // "площадь" as a size (общая площадь 42 кв.м) is not a street marker.
+    assert_not_found("Общая площадь 42 кв.м., третий этаж", "address");
+}
+
+#[test]
+fn house_number_with_letter_is_included() {
+    // A house number with a letter (дом 1А) is part of the address span.
+    assert_span("на улице Карьерной, дом 1А,", "address", "улице Карьерной, дом 1А");
+}
+
+#[test]
+fn address_span_trims_trailing_punctuation() {
+    // The address span must end on a letter or digit, not on punctuation.
+    assert_span("ш Королева 176, Камышин.", "address", "ш Королева 176, Камышин");
+    assert_span("ул. Тверская 5, Москва?", "address", "ул. Тверская 5, Москва");
+    assert_span("пер. Чкалова 21, Ершов.\"}", "address", "пер. Чкалова 21, Ершов");
+}
+
+#[test]
+fn address_trailing_word_must_be_city() {
+    // A non-city capitalized word after the street is not attached to the address.
+    assert_span("ул. Гончарова 754 Лидия", "address", "ул. Гончарова 754");
+}
+
+#[test]
+fn address_house_number_with_korpus() {
+    // A house number with a корпус/строение suffix (69к3, 17к2с1, 92/3, 1А) is fully included.
+    assert_span("ул. Павлова, д. 69к3, кв. 216", "address", "ул. Павлова, д. 69к3, кв. 216");
+    assert_span("ул. Павлова, д. 17к2с1", "address", "ул. Павлова, д. 17к2с1");
+    assert_span("ул. Павлова, д. 92/3", "address", "ул. Павлова, д. 92/3");
+    assert_span("ул. Павлова, д. 1А", "address", "ул. Павлова, д. 1А");
+}
+
+#[test]
+fn address_city_marker_included() {
+    // The "г." marker before a city is part of the address span.
+    assert_span("г. Мелеуз, пр. Мая 1, д. 39", "address", "г. Мелеуз, пр. Мая 1, д. 39");
+}
+
 fn assert_not_found_with_allowlist(text: &str, type_id: &str) {
     let entities = detect_with_allowlist(text);
+    assert!(
+        !entities.iter().any(|e| e.type_id == type_id),
+        "type {type_id} should not be found in {text:?}, got {:?}",
+        entities
+    );
+}
+
+fn detect_prod(text: &str) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.3,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector().detect(text, &opts)
+}
+
+fn assert_not_found_prod(text: &str, type_id: &str) {
+    let entities = detect_prod(text);
     assert!(
         !entities.iter().any(|e| e.type_id == type_id),
         "type {type_id} should not be found in {text:?}, got {:?}",
