@@ -9,6 +9,13 @@ cargo build --release
 ./target/release/detox-proxy --config config.yaml     # слушает 0.0.0.0:8080
 ```
 
+Без Rust — в Docker (сборка 3–5 минут, образ запускается от непривилегированного пользователя):
+
+```bash
+docker build -t detoxproxy .
+docker run --rm -p 8080:8080 detoxproxy
+```
+
 Проверка, что живой:
 
 ```bash

@@ -17,7 +17,7 @@ if ! curl -s -m 3 http://localhost:19000/api/system/status | grep -q '"status":"
 fi
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
-for p in README.md Cargo.toml Cargo.lock config.yaml src data static tests tools/check_process.py \
+for p in README.md Dockerfile Cargo.toml Cargo.lock config.yaml src data static tests tools/check_process.py \
          tools/check_modes.py tools/big_text_check.py tools/run_manual_cases.py tools/manual_accept.sh tools/eval_dataset.py; do
   [ -e "$p" ] && cp -r --parents "$p" "$stage/"
 done

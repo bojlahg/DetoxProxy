@@ -23,6 +23,8 @@ curl -s localhost:8080/process -H 'Content-Type: application/json' \
 # {"result":"Клиент Иванов Иван Иванович, ИНН 500100732259"}
 ```
 
+Без установленного Rust — в Docker: `docker build -t detoxproxy . && docker run --rm -p 8080:8080 detoxproxy`.
+
 Сборка под Linux из Windows/macOS (glibc, результат — `target/linux/release/detox-proxy`):
 
 ```bash
