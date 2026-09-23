@@ -145,7 +145,7 @@ LLM на стенде не подключена, поэтому ответ мо�
 ```bash
 cargo test                                                   # модульные и HTTP-тесты
 python3 tools/check_process.py --bin target/release/detox-proxy --config config.yaml
-                                                             # контракт /process: 54 проверки
+                                                             # контракт /process: 55 проверок
 bash tools/manual_accept.sh                                  # 25 ручных кейсов с ловушками
 python3 tools/big_text_check.py --bin target/release/detox-proxy
                                                              # текст ~100 000 токенов: маска и точное восстановление
