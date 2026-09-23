@@ -351,12 +351,28 @@ fn hash_token(salt: &str, normalized: &str) -> String {
 /// case and the type is inflectable, the original is inflected to that case. Unknown tokens are
 /// left untouched.
 pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
+    let mut result = replace_tokens(text, mappings);
+    let (mut pairs, mut exact) = build_non_token_pairs(mappings);
+    pairs.sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
+    for (from, to) in pairs {
+        result = replace_inflected(&result, &from, &to);
+    }
+    exact.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
+    for m in exact {
+        result = result.replace(&m.masked, &m.original);
+    }
+    result
+}
+
+/// Replaces token-format masks (`<<LABEL_N>>`, with optional case suffix) in `text` using the
+/// token mappings. Unknown tokens are left untouched.
+fn replace_tokens(text: &str, mappings: &[Mapping]) -> String {
     let token_map: HashMap<String, &Mapping> = mappings
         .iter()
         .filter(|m| TOKEN_RE.is_match(&m.masked))
         .map(|m| (norm_compare(&m.masked), m))
         .collect();
-    let mut result = TOKEN_RE
+    TOKEN_RE
         .replace_all(text, |caps: &regex::Captures| {
             let token = &caps[0];
             let base_token = format!("<<{}_{}>>", &caps[1], &caps[2]);
@@ -376,8 +392,12 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
                 (None, _) => token.to_string(),
             }
         })
-        .to_string();
+        .to_string()
+}
 
+/// Builds the substitution pairs for non-token mappings: inflectable masks produce inflection
+/// pairs, everything else is restored by exact match.
+fn build_non_token_pairs(mappings: &[Mapping]) -> (Vec<(String, String)>, Vec<&Mapping>) {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut exact: Vec<&Mapping> = Vec::new();
     for m in mappings {
@@ -390,15 +410,7 @@ pub fn unmask(text: &str, mappings: &[Mapping]) -> String {
             exact.push(m);
         }
     }
-    pairs.sort_by_key(|(from, _)| std::cmp::Reverse(from.len()));
-    for (from, to) in pairs {
-        result = replace_inflected(&result, &from, &to);
-    }
-    exact.sort_by_key(|m| std::cmp::Reverse(m.masked.len()));
-    for m in exact {
-        result = result.replace(&m.masked, &m.original);
-    }
-    result
+    (pairs, exact)
 }
 
 /// Builds (substitution, original) pairs for an inflectable non-token mapping: the exact
@@ -447,25 +459,25 @@ fn person_part_pairs(m: &Mapping) -> Vec<(String, String)> {
         if m_part.chars().count() < 3 || o_part.chars().count() < 3 {
             continue;
         }
-        for case in ALL_CASES {
-            if let (Some(mi), Some(oi)) = (
-                morph::inflect(m_part, morph::Kind::Person, case),
-                morph::inflect(o_part, morph::Kind::Person, case),
-            ) {
-                pairs.push((mi, oi));
-            }
-        }
+        pairs.extend(case_pairs(m_part, o_part));
     }
     if !mp.name.is_empty() && !mp.patronymic.is_empty() && !op.name.is_empty() && !op.patronymic.is_empty() {
         let m_np = format!("{} {}", mp.name, mp.patronymic);
         let o_np = format!("{} {}", op.name, op.patronymic);
-        for case in ALL_CASES {
-            if let (Some(mi), Some(oi)) = (
-                morph::inflect(&m_np, morph::Kind::Person, case),
-                morph::inflect(&o_np, morph::Kind::Person, case),
-            ) {
-                pairs.push((mi, oi));
-            }
+        pairs.extend(case_pairs(&m_np, &o_np));
+    }
+    pairs
+}
+
+/// Builds (substitution, original) pairs for a single person part in all six grammatical cases.
+fn case_pairs(masked_part: &str, original_part: &str) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for case in ALL_CASES {
+        if let (Some(mi), Some(oi)) = (
+            morph::inflect(masked_part, morph::Kind::Person, case),
+            morph::inflect(original_part, morph::Kind::Person, case),
+        ) {
+            pairs.push((mi, oi));
         }
     }
     pairs
