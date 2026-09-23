@@ -677,21 +677,41 @@ impl Detector {
     ) {
         // Anchor 1: a lowercase word ending in a patronymic suffix.
         for m in LOWERCASE_PATRONYMIC_RE.find_iter(text) {
-            if let Some((start, end)) = self.lowercase_fio_patronymic(text, opts, spec, m.start(), m.end()) {
-                if let Some(e) = self.fio_lowercase_entity(text, opts, spec, start, end, 3) {
-                    candidates.push(e);
-                }
+            if let Some(e) = self
+                .lowercase_fio_anchor(text, opts, spec, m.start(), m.end(), 3)
+                .and_then(|(s, e)| self.fio_lowercase_entity(text, opts, spec, s, e, 3))
+            {
+                candidates.push(e);
             }
         }
         // Anchor 2: a FIO marker followed by two lowercase words (surname + first name).
         if let Some(re) = &self.fio_marker_re {
             for m in re.find_iter(text) {
-                if let Some((start, end)) = self.lowercase_fio_marker(text, opts, spec, m.end()) {
-                    if let Some(e) = self.fio_lowercase_entity(text, opts, spec, start, end, 2) {
-                        candidates.push(e);
-                    }
+                if let Some(e) = self
+                    .lowercase_fio_anchor(text, opts, spec, m.start(), m.end(), 2)
+                    .and_then(|(s, e)| self.fio_lowercase_entity(text, opts, spec, s, e, 2))
+                {
+                    candidates.push(e);
                 }
             }
+        }
+    }
+
+    /// Runs the anchor check for a lowercase FIO and returns the validated span, or None when
+    /// rejected. `comps` selects the rule: 3 = patronymic anchor ("Ф И О" / "И О Ф"), 2 = marker
+    /// anchor (surname + first name after a FIO marker).
+    fn lowercase_fio_anchor(
+        &self,
+        text: &str,
+        opts: &DetectOptions<'_>,
+        spec: &TypeSpec,
+        anchor_start: usize,
+        anchor_end: usize,
+        comps: usize,
+    ) -> Option<(usize, usize)> {
+        match comps {
+            3 => self.lowercase_fio_patronymic(text, opts, spec, anchor_start, anchor_end),
+            _ => self.lowercase_fio_marker(text, opts, spec, anchor_end),
         }
     }
 
@@ -1079,51 +1099,77 @@ impl Detector {
         conf
     }
 
-    /// Returns (qualifies_as_fio, component_count).
+    /// Returns (qualifies_as_fio, component_count). Dispatches to per-case helpers.
     fn fio_qualifies(&self, window: &[NameToken]) -> (bool, usize) {
         let comps = window.len();
-        let any_dict = window.iter().any(|t| self.in_any_name_dict(&t.lower));
-        let any_patronymic = window.iter().any(|t| self.is_patronymic(&t.lower));
-        let any_surname_suffix = window.iter().any(|t| self.is_surname_suffix(&t.lower));
-        let any_first_name = window.iter().any(|t| self.dicts.contains("first_names", &t.lower));
-        let any_initial = window.iter().any(|t| t.is_initial);
-        if any_dict || any_patronymic {
+        if self.fio_qualifies_dict_or_patronymic(window) {
             return (true, comps);
         }
-        if any_surname_suffix && (any_first_name || any_initial) {
+        if self.fio_qualifies_surname_suffix(window) {
             return (true, comps);
         }
-        // A single word with a surname suffix (e.g. "Морозов", "Ефимов") qualifies as a FIO
-        // when it carries PII context (handled by the caller: single words require a marker).
-        if comps == 1 && any_surname_suffix {
+        if self.fio_qualifies_single_surname_suffix(window) {
             return (true, comps);
         }
-        // Two adjacent capitalized words, one a first name and one a surname in any case
-        // (oblique forms like "Ивану Петрову") qualify as a FIO.
-        if comps == 2 {
-            let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
-            let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
-            if any_first_case && any_surname_case {
-                return (true, comps);
-            }
-        }
-        // Two adjacent Latin capitalized words (e.g. "Theodore Weaver") qualify as a FIO
-        // when near a PII marker (handled by the caller).
-        if comps == 2 && window.iter().all(|t| t.is_latin) {
+        if self.fio_qualifies_two_words(window) {
             return (true, comps);
         }
-        // 3 capitalized words with no dictionary hit: only with PII context (handled by caller).
-        if comps == 3 && !any_initial {
-            // A mixed-script phrase (both Cyrillic and Latin words, e.g. "Сервис Online
-            // Banking") is a brand/service name, not a FIO.
-            let has_cyr = window.iter().any(|t| !t.is_latin);
-            let has_lat = window.iter().any(|t| t.is_latin);
-            if has_cyr && has_lat {
-                return (false, comps);
-            }
+        if self.fio_qualifies_three_words(window) {
             return (true, comps);
         }
         (false, comps)
+    }
+
+    /// True when any word is in a name dictionary or is a patronymic.
+    fn fio_qualifies_dict_or_patronymic(&self, window: &[NameToken]) -> bool {
+        window.iter().any(|t| self.in_any_name_dict(&t.lower))
+            || window.iter().any(|t| self.is_patronymic(&t.lower))
+    }
+
+    /// True when a surname-suffixed word is paired with a first name or an initial.
+    fn fio_qualifies_surname_suffix(&self, window: &[NameToken]) -> bool {
+        let any_surname_suffix = window.iter().any(|t| self.is_surname_suffix(&t.lower));
+        if !any_surname_suffix {
+            return false;
+        }
+        let any_first_name = window.iter().any(|t| self.dicts.contains("first_names", &t.lower));
+        let any_initial = window.iter().any(|t| t.is_initial);
+        any_first_name || any_initial
+    }
+
+    /// True for a single word with a surname suffix (e.g. "Морозов", "Ефимов"). The caller
+    /// requires PII context for single-word FIOs.
+    fn fio_qualifies_single_surname_suffix(&self, window: &[NameToken]) -> bool {
+        window.len() == 1 && window.iter().any(|t| self.is_surname_suffix(&t.lower))
+    }
+
+    /// True for two words that are a first name + surname in any case (oblique forms like
+    /// "Ивану Петрову"), or two adjacent Latin capitalized words (e.g. "Theodore Weaver").
+    fn fio_qualifies_two_words(&self, window: &[NameToken]) -> bool {
+        if window.len() != 2 {
+            return false;
+        }
+        let any_first_case = window.iter().any(|t| self.first_name_in_any_case(&t.lower));
+        let any_surname_case = window.iter().any(|t| self.surname_in_any_case(&t.lower));
+        if any_first_case && any_surname_case {
+            return true;
+        }
+        window.iter().all(|t| t.is_latin)
+    }
+
+    /// True for three words with no initials and no mixed alphabet. A mixed-script phrase
+    /// (both Cyrillic and Latin words, e.g. "Сервис Online Banking") is a brand/service name.
+    fn fio_qualifies_three_words(&self, window: &[NameToken]) -> bool {
+        if window.len() != 3 {
+            return false;
+        }
+        let any_initial = window.iter().any(|t| t.is_initial);
+        if any_initial {
+            return false;
+        }
+        let has_cyr = window.iter().any(|t| !t.is_latin);
+        let has_lat = window.iter().any(|t| t.is_latin);
+        !(has_cyr && has_lat)
     }
 
     fn is_city(&self, lower: &str) -> bool {
