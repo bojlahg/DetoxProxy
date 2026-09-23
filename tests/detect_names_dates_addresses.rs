@@ -1,5 +1,5 @@
 use detox_proxy::config::TrapPolicy;
-use detox_proxy::detect::{DetectOptions, Detector, Dictionaries};
+use detox_proxy::detect::{Allowlist, DetectOptions, Detector, Dictionaries};
 use detox_proxy::registry::Registry;
 use detox_proxy::types::Entity;
 use std::sync::Arc;
@@ -11,6 +11,15 @@ fn detector() -> Detector {
     Detector::new(reg, dicts)
 }
 
+fn detector_with_allowlist() -> Detector {
+    let yaml = std::fs::read_to_string("data/pii_types.yaml").expect("read pii_types.yaml");
+    let reg = Arc::new(Registry::from_yaml(&yaml).expect("parse registry"));
+    let dicts = Arc::new(Dictionaries::load_dir(std::path::Path::new("data/dict")).expect("load dicts"));
+    let allowlist_text = std::fs::read_to_string("data/allowlist.yaml").expect("read allowlist");
+    let allowlist = Allowlist::from_yaml(&allowlist_text).expect("parse allowlist");
+    Detector::with_allowlist(reg, dicts, allowlist)
+}
+
 fn detect(text: &str) -> Vec<Entity> {
     let opts = DetectOptions {
         enabled_types: None,
@@ -19,6 +28,16 @@ fn detect(text: &str) -> Vec<Entity> {
         trap_policy: TrapPolicy::PreferMask,
     };
     detector().detect(text, &opts)
+}
+
+fn detect_with_allowlist(text: &str) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.0,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector_with_allowlist().detect(text, &opts)
 }
 
 fn assert_span(text: &str, type_id: &str, expected: &str) {
@@ -178,6 +197,30 @@ fn citizenship() {
 }
 
 #[test]
+fn citizenship_inflected_forms() {
+    assert_span("Клиент гражданин России", "citizenship", "России");
+    assert_span("Клиент, гражданин Российской Федерации", "citizenship", "Российской Федерации");
+    assert_span("гражданин Республики Беларусь", "citizenship", "Республики Беларусь");
+    assert_span("гражданство: Россия, гражданин РФ", "citizenship", "Россия");
+}
+
+#[test]
+fn citizenship_not_part_of_fio() {
+    let text = "гражданка России Иванова Мария";
+    let entities = detect(text);
+    let cit = entities
+        .iter()
+        .find(|e| e.type_id == "citizenship")
+        .unwrap_or_else(|| panic!("citizenship not found in {:?}", entities));
+    assert_eq!(&text[cit.start..cit.end], "России");
+    let fio = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio not found in {:?}", entities));
+    assert_eq!(&text[fio.start..fio.end], "Иванова Мария");
+}
+
+#[test]
 fn passport_issuer() {
     assert_span("выдан ОУФМС России по г. Москве 12.05.2010", "passport_issuer", "ОУФМС России по г. Москве");
     assert_span("выдано Отделом УФМС", "passport_issuer", "Отделом УФМС");
@@ -191,6 +234,15 @@ fn address_full() {
     assert_span("ул. Тверская, д. 1", "address", "ул. Тверская, д. 1");
     assert_span("проживает: Санкт-Петербург, Невский пр-т, 28", "address", "Санкт-Петербург, Невский пр-т, 28");
     assert_span("отделение банка: ул. Тверская, 1", "address", "ул. Тверская, 1");
+}
+
+#[test]
+fn address_company_legal_address_not_detected() {
+    // A legal/company address is an organization address, not a personal one, and must not
+    // be masked at the production confidence threshold (0.3).
+    assert_not_found_prod("Комментарий: Юридический адрес компании: г. Омск, пр. Мира, д. 1.", "address");
+    assert_not_found_prod("Адрес организации: г. Омск, ул. Мира, д. 1", "address");
+    assert_span("Проживает: г. Омск, пр. Мира, д. 1", "address", "г. Омск, пр. Мира, д. 1");
 }
 
 #[test]
@@ -239,4 +291,167 @@ fn complex_sentence() {
             w[1]
         );
     }
+}
+
+#[test]
+fn public_persons_with_initials_and_cases_not_masked() {
+    // Public persons written with initials or in an oblique case are biographical references,
+    // not clients, and must not be masked.
+    assert_not_found_with_allowlist("В свое время Пушкин А.С. написал немало рассказов и сказок.", "fio");
+    assert_not_found_with_allowlist("В свое время Пушкин А. С. написал немало сказок.", "fio");
+    assert_not_found_with_allowlist("В свое время А.С. Пушкин написал немало сказок.", "fio");
+    assert_not_found_with_allowlist("Стихи А. С. Пушкина мы учили в школе.", "fio");
+    assert_not_found_with_allowlist("Толстой Л.Н. написал «Войну и мир».", "fio");
+    assert_not_found_with_allowlist("Мы читали стихи Александра Сергеевича Пушкина.", "fio");
+}
+
+#[test]
+fn public_person_full_name_parts_not_masked() {
+    // A full public-person name is a biographical reference; its parts ("Лев", "Николаевич")
+    // must not remain as separate FIO candidates.
+    assert_not_found_with_allowlist("Лев Николаевич Толстой родился в 1828 году.", "fio");
+    assert_not_found_with_allowlist("Александр Сергеевич Пушкин родился в 1934 году.", "fio");
+}
+
+#[test]
+fn public_person_without_surname_is_regular_fio() {
+    // A name or name+patronymic that coincides with a public person's given name and patronymic
+    // but lacks the surname is a regular FIO, not a known person, and must be masked.
+    let entities = detect_with_allowlist("Борис Наседкин, сын Ивана Петровича, мечтал о дальних странах.");
+    let spans: Vec<&str> = entities
+        .iter()
+        .filter(|e| e.type_id == "fio")
+        .map(|e| text_span("Борис Наседкин, сын Ивана Петровича, мечтал о дальних странах.", e))
+        .collect();
+    assert!(
+        spans.contains(&"Ивана Петровича"),
+        "fio 'Ивана Петровича' should be found, got {:?}",
+        spans
+    );
+
+    let entities = detect_with_allowlist("Уважаемый Лев Николаевич, ваша заявка принята.");
+    let ent = entities
+        .iter()
+        .find(|e| e.type_id == "fio")
+        .unwrap_or_else(|| panic!("fio should be found: {:?}", entities));
+    assert_eq!(text_span("Уважаемый Лев Николаевич, ваша заявка принята.", ent), "Лев Николаевич");
+}
+
+fn text_span<'a>(text: &'a str, ent: &Entity) -> &'a str {
+    &text[ent.start..ent.end]
+}
+
+#[test]
+fn public_person_with_pii_context_still_masked() {
+    // A public person with a strong PII marker ("клиент") and a confident neighbor (passport)
+    // is a client and is still masked.
+    let entities = detect_with_allowlist("Клиент Пушкин А.С., паспорт 4509 123456, обратился в банк.");
+    assert!(
+        entities.iter().any(|e| e.type_id == "fio"),
+        "fio should be found: {:?}",
+        entities
+    );
+}
+
+#[test]
+fn street_name_matching_surname_is_address_not_fio() {
+    assert_span("проживает на улице Ленина, д. 5", "address", "улице Ленина, д. 5");
+    assert_not_found("проживает на улице Ленина, д. 5", "fio");
+    assert_span("Клиентка проживает на улице Ленина, д. 5, Екатеринбург", "address", "улице Ленина, д. 5, Екатеринбург");
+    assert_not_found("Клиентка проживает на улице Ленина, д. 5, Екатеринбург", "fio");
+    assert_span("живу на проспекте Гагарина 12", "address", "проспекте Гагарина 12");
+    assert_not_found("живу на проспекте Гагарина 12", "fio");
+    assert_span("переулок Чехова, дом 3", "address", "переулок Чехова, дом 3");
+    assert_not_found("переулок Чехова, дом 3", "fio");
+}
+
+#[test]
+fn street_name_matching_surname_with_fio_marker_stays_fio() {
+    assert_span("Клиент Ленина Анна Петровна, тел. 89123456789", "fio", "Ленина Анна Петровна");
+}
+
+#[test]
+fn street_address_extends_with_city_before() {
+    // A city before the street (with or without a comma) is included in the address span.
+    assert_span("адрес Московская область г. Химки ул. Победы 23", "address", "г. Химки ул. Победы 23");
+    assert_span("адрес Екатеринбург ул. Ленина 99", "address", "Екатеринбург ул. Ленина 99");
+    assert_span("В Коростене ул. Шевченко 12 переводят", "address", "Коростене ул. Шевченко 12");
+}
+
+#[test]
+fn street_address_extends_with_city_after() {
+    // A city after the street (after a comma) is included in the address span.
+    assert_span("По адресу ш Щетинкина 1, Псебай", "address", "ш Щетинкина 1, Псебай");
+    assert_not_found("По адресу ш Щетинкина 1, Псебай", "fio");
+    assert_span("По адресу ш. Щетинкина 1, Псебай", "address", "ш. Щетинкина 1, Псебай");
+    assert_not_found("По адресу ш. Щетинкина 1, Псебай", "fio");
+}
+
+#[test]
+fn площадь_as_size_is_not_an_address() {
+    // "площадь" as a size (общая площадь 42 кв.м) is not a street marker.
+    assert_not_found("Общая площадь 42 кв.м., третий этаж", "address");
+}
+
+#[test]
+fn house_number_with_letter_is_included() {
+    // A house number with a letter (дом 1А) is part of the address span.
+    assert_span("на улице Карьерной, дом 1А,", "address", "улице Карьерной, дом 1А");
+}
+
+#[test]
+fn address_span_trims_trailing_punctuation() {
+    // The address span must end on a letter or digit, not on punctuation.
+    assert_span("ш Королева 176, Камышин.", "address", "ш Королева 176, Камышин");
+    assert_span("ул. Тверская 5, Москва?", "address", "ул. Тверская 5, Москва");
+    assert_span("пер. Чкалова 21, Ершов.\"}", "address", "пер. Чкалова 21, Ершов");
+}
+
+#[test]
+fn address_trailing_word_must_be_city() {
+    // A non-city capitalized word after the street is not attached to the address.
+    assert_span("ул. Гончарова 754 Лидия", "address", "ул. Гончарова 754");
+}
+
+#[test]
+fn address_house_number_with_korpus() {
+    // A house number with a корпус/строение suffix (69к3, 17к2с1, 92/3, 1А) is fully included.
+    assert_span("ул. Павлова, д. 69к3, кв. 216", "address", "ул. Павлова, д. 69к3, кв. 216");
+    assert_span("ул. Павлова, д. 17к2с1", "address", "ул. Павлова, д. 17к2с1");
+    assert_span("ул. Павлова, д. 92/3", "address", "ул. Павлова, д. 92/3");
+    assert_span("ул. Павлова, д. 1А", "address", "ул. Павлова, д. 1А");
+}
+
+#[test]
+fn address_city_marker_included() {
+    // The "г." marker before a city is part of the address span.
+    assert_span("г. Мелеуз, пр. Мая 1, д. 39", "address", "г. Мелеуз, пр. Мая 1, д. 39");
+}
+
+fn assert_not_found_with_allowlist(text: &str, type_id: &str) {
+    let entities = detect_with_allowlist(text);
+    assert!(
+        !entities.iter().any(|e| e.type_id == type_id),
+        "type {type_id} should not be found in {text:?}, got {:?}",
+        entities
+    );
+}
+
+fn detect_prod(text: &str) -> Vec<Entity> {
+    let opts = DetectOptions {
+        enabled_types: None,
+        min_confidence: 0.3,
+        allow_substrings: &[],
+        trap_policy: TrapPolicy::PreferMask,
+    };
+    detector().detect(text, &opts)
+}
+
+fn assert_not_found_prod(text: &str, type_id: &str) {
+    let entities = detect_prod(text);
+    assert!(
+        !entities.iter().any(|e| e.type_id == type_id),
+        "type {type_id} should not be found in {text:?}, got {:?}",
+        entities
+    );
 }
