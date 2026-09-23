@@ -256,6 +256,21 @@
 {"id": "trk-lowercase-04-0", "text": "Из письма: иван иванович сказал, что перезвонит. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "lowercase"]}
 {"id": "trk-lowercase-04-1", "text": "Комментарий: иван иванович сказал, что перезвонит. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "lowercase"]}
 {"id": "trk-lowercase-04-2", "text": "Комментарий: иван иванович сказал, что перезвонит. Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "lowercase"]}
+{"id": "trk-titlecase-00-0", "text": "Запись в журнале: Встреча Отдела Продаж Прошла В Москве, Обсудили Новые Условия Кредита.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-00-1", "text": "Сообщение оператора: Встреча Отдела Продаж Прошла В Москве, Обсудили Новые Условия Кредита. Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-00-2", "text": "Сообщение оператора: Встреча Отдела Продаж Прошла В Москве, Обсудили Новые Условия Кредита. Подробности в приложении.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-01-0", "text": "Новые Условия Кредита Для Малого Бизнеса", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-01-1", "text": "Комментарий: Новые Условия Кредита Для Малого Бизнеса Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-01-2", "text": "Комментарий: Новые Условия Кредита Для Малого Бизнеса", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-02-0", "text": "Итоги Года: Рост Выручки И Новые Клиенты Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-02-1", "text": "Запись в журнале: Итоги Года: Рост Выручки И Новые Клиенты Просьба учесть.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-02-2", "text": "Сообщение оператора: Итоги Года: Рост Выручки И Новые Клиенты Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-03-0", "text": "Сообщение оператора: Правила Внутреннего Трудового Распорядка Утверждены Приказом", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-03-1", "text": "Из письма: Правила Внутреннего Трудового Распорядка Утверждены Приказом Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-03-2", "text": "Сообщение оператора: Правила Внутреннего Трудового Распорядка Утверждены Приказом Спасибо.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-04-0", "text": "Запись в журнале: Горячие Предложения Недели По Вкладам И Картам", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-04-1", "text": "Из письма: Горячие Предложения Недели По Вкладам И Картам Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
+{"id": "trk-titlecase-04-2", "text": "Горячие Предложения Недели По Вкладам И Картам Конец записи.", "entities": [], "source": "own/tricky", "tags": ["hard-negative", "titlecase"]}
 {"id": "trk-control-00", "text": "Страховой номер 112-233-445 95 указан в анкете.", "entities": [{"type": "SNILS", "start": 16, "end": 30, "text": "112-233-445 95"}], "source": "own/tricky", "tags": ["control", "positive"]}
 {"id": "trk-control-01", "text": "Мой СНИЛС 123 - 456 - 789 01, проверьте пожалуйста.", "entities": [{"type": "SNILS", "start": 10, "end": 28, "text": "123 - 456 - 789 01"}], "source": "own/tricky", "tags": ["control", "positive"]}
 {"id": "trk-control-02", "text": "Паспорт клиента 45 03 123456 выдан вчера.", "entities": [{"type": "PASSPORT", "start": 16, "end": 28, "text": "45 03 123456"}], "source": "own/tricky", "tags": ["control", "positive"]}
@@ -285,3 +300,4 @@
 {"id": "trk-control-26", "text": "иванов иван иванович, тел 89123456789", "entities": [{"type": "FIO", "start": 0, "end": 20, "text": "иванов иван иванович"}, {"type": "PHONE", "start": 26, "end": 37, "text": "89123456789"}], "source": "own/tricky", "tags": ["control", "positive"]}
 {"id": "trk-control-27", "text": "клиент петрова анна сергеевна просит перезвонить.", "entities": [{"type": "FIO", "start": 7, "end": 29, "text": "петрова анна сергеевна"}], "source": "own/tricky", "tags": ["control", "positive"]}
 {"id": "trk-control-28", "text": "клиент петров иван оставил заявку.", "entities": [{"type": "FIO", "start": 7, "end": 18, "text": "петров иван"}], "source": "own/tricky", "tags": ["control", "positive"]}
+{"id": "trk-control-29", "text": "Встреча С Клиентом Сидоровым Петром Ивановичем Перенесена", "entities": [{"type": "FIO", "start": 19, "end": 46, "text": "Сидоровым Петром Ивановичем"}], "source": "own/tricky", "tags": ["control", "positive"]}
