@@ -1,0 +1,6 @@
+target
+.work
+logs
+.git
+tests/data
+data/dict/raw
